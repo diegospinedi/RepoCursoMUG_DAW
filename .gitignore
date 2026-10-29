@@ -1,0 +1,36 @@
+# BEGIN DDW — pipeline runtime, NOT committed (managed by DDW)
+#   .ddw-state.json  = which phase you are in; yours, not the repo's
+#   .ddw-paused/     = paused tickets
+#   .ddw-sessions/   = live session markers
+#   .ddw-work/       = scratch the pipeline writes and re-reads (the commit message)
+#   .ddw-journal.jsonl = transitions that landed; outlives the state file
+#   .ddw/**/__pycache__/ = bytecode from running the method's own scripts
+.ddw-state.json
+.ddw-paused/
+.ddw-sessions/
+.ddw-work/
+.ddw-journal.jsonl
+.ddw/**/__pycache__/
+# END DDW
+
+# Datos sensibles — no versionar
+# Certificados y claves de ARCA
+*.pfx
+*.p12
+*.key
+*.crt
+*.pem
+*.csr
+# Base SQLite (datos de clientes y facturas) y sus backups
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+# Configuración con secretos
+.env
+.env.*
+appsettings.Development.json
+appsettings.Production.json
+appsettings.*.local.json
+secrets.json
