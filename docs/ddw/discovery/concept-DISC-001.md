@@ -1,0 +1,81 @@
+# Concepto: Dividir PRD-001 en PRDs implementables
+
+| Métrica | Valor |
+|---------|-------|
+| Ticket | DISC-001 |
+| Fecha | 2026-10-29 |
+| Estado | Explorando |
+| PRD de origen | `PRD.md` (PRD-001) |
+
+## Visión
+Llevar a Óptica Sistema de presupuestos a mano y facturación manual en el sitio de ARCA a una
+aplicación web local que arma presupuestos desde un catálogo con precio de venta calculado y emite
+la factura electrónica a consumidor final desde el presupuesto Final.
+
+## Problema / Oportunidad
+PRD-001 describe el producto completo en un solo documento: 94 requerimientos funcionales, 13
+no funcionales vigentes y 92 criterios de aceptación. Es demasiado grande para un único ticket de
+implementación: no entra en una sola spec revisable y mezcla módulos con riesgos muy distintos
+(cálculo de precios, integración con ARCA, backups). Hay que dividirlo en PRDs del tamaño de un
+ticket, cada uno con sus RF, RNF y AC trazables a PRD-001.
+
+## Usuarios objetivo
+Las dos dueñas de la óptica, que operan el sistema todos los días desde la PC del local o la red
+local. No hay roles: un único acceso con contraseña (RNF-04).
+
+## Features candidatas
+- Acceso, configuración y marca: contraseña, bloqueo, sesión, parámetros de negocio, logo y colores.
+- Catálogo de artículos y precio de venta calculado (Responsable Inscripto y Monotributo).
+- Actualización de precios de costo por planilla Excel.
+- Presupuestos: alta, edición en Borrador, líneas, cálculos y paso a Final.
+- Búsqueda de presupuestos y PDF del presupuesto.
+- Emisión de factura B/C a consumidor final vía WSFEv1.
+- Recuperación de emisiones sin respuesta de ARCA (consulta de último comprobante, sin duplicados).
+- PDF, listado y búsqueda de facturas.
+- Backup diario, retención, restauración y aviso de backup faltante.
+
+## Restricciones y consideraciones
+- Stack fijo según `AGENTS.md`: .NET 10 + EF Core 10 + SQLite, React 19 + Vite. Monolito modular.
+- Datos personales de clientes (DNI, domicilio, teléfono, email) alcanzados por la Ley 25.326:
+  el acceso protegido tiene que existir antes que cualquier pantalla con esos datos.
+- Certificado digital y punto de venta de ARCA fuera de la interfaz (RF-64) y fuera del repositorio.
+- Todo desarrollo contra homologación de ARCA, nunca producción.
+- Registros cerrados inmutables: presupuesto Final y factura con CAE.
+- La marca (RF-34) está en `Marca/`: `branding.json` (primario #0903A0, fondo #FFFFFF),
+  `logo.png` y el original `Marca.jpg`.
+- Requisitos transversales que aplican a todos los PRDs: RF-35 (mensajes de validación) y
+  RNF-03 (Chrome y Edge).
+
+## Decisiones tomadas
+- 2026-10-29: Se clasifica como DISCOVERY y no como FEATURE — PRD-001 cubre todo el producto y
+  hay que dividirlo antes de implementar.
+- 2026-10-29: División aprobada en 9 PRDs. El acceso (01) va primero porque ninguna pantalla con
+  datos personales debe existir sin login; la recuperación por timeout (07) se separa de la
+  emisión (06) por su riesgo de comprobante duplicado no anulable.
+- 2026-10-29: RF-35 y RNF-03 son transversales: cada PRD los referencia para sus propias pantallas.
+- 2026-10-29 (PRD 01): la contraseña se puede cambiar desde la aplicación pidiendo la actual; si se
+  olvida, se restablece con un procedimiento documentado ejecutado solo en la PC del local; los
+  parámetros arrancan en IVA 21, Responsable Inscripto y múltiplo 0,01, y el tope se carga a mano.
+
+## Dependencias entre PRDs
+- 02 depende de 01 (parámetros de configuración).
+- 03 depende de 02 (artículos existentes).
+- 04 depende de 02 (selecciona artículos del catálogo).
+- 05 depende de 04.
+- 06 depende de 04 (factura desde presupuesto Final) y de 01 (condición fiscal, tope, IVA).
+- 07 y 08 dependen de 06.
+- 09 depende solo de que exista la base; puede ir en paralelo.
+
+## PRDs identificados
+
+| # | Título | Archivo | Estado |
+|---|--------|---------|--------|
+| 01 | Acceso, configuración y marca | prd-DISC-001-01.md | validado |
+| 02 | Catálogo de artículos y precio de venta | prd-DISC-001-02.md | identificado |
+| 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | identificado |
+| 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | identificado |
+| 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | identificado |
+| 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | identificado |
+| 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | identificado |
+| 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | identificado |
+| 09 | Backup y restauración | prd-DISC-001-09.md | identificado |
