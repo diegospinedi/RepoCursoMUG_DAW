@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-10-30 |
 | PRD de origen | `PRD.md` (PRD-001) |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001
@@ -258,7 +258,7 @@ por la Ley 25.326 de Protección de Datos Personales.
   clientes (NFR-05) y mensajes de validación junto al campo (FR-16).
 - PRD 02 (DISC-001): artículos con precio de venta guardado, estado activo o inactivo y búsqueda
   por Código o Descripción.
-- PRD 05 depende de este: busca por número, fecha y datos del cliente, y genera el PDF solo de
+- PRD 05 depende de este: busca por fecha y datos del cliente, y genera el PDF solo de
   presupuestos en Final.
 - PRD 06 depende de este: factura únicamente presupuestos en Final y envía a ARCA el DNI guardado
   sin puntos (FR-04).

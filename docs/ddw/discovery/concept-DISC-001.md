@@ -67,6 +67,10 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
   confirmación y todo presupuesto exige al menos una línea; DNI de 7 u 8 dígitos guardado sin
   puntos y email con formato válido si se carga; numeración desde 1; los artículos inactivos no se
   ofrecen al cargar una línea.
+- 2026-10-30 (PRD 05): el PDF del presupuesto es completo (número, fecha, datos del cliente
+  cargados, líneas con sus 7 campos, total y leyenda) con solo logo y colores en el encabezado;
+  la búsqueda usa solo los filtros de PRD-001 (fecha, Apellido, Nombre, DNI), sin filtros lista
+  todos, ordenados por número descendente en páginas de 50.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -85,7 +89,7 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 02 | Catálogo de artículos y precio de venta | prd-DISC-001-02.md | validado |
 | 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | validado |
 | 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | validado |
-| 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | identificado |
+| 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | validado |
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | identificado |
 | 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | identificado |
 | 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | identificado |
