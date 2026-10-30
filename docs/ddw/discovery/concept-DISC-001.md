@@ -71,6 +71,12 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
   cargados, líneas con sus 7 campos, total y leyenda) con solo logo y colores en el encabezado;
   la búsqueda usa solo los filtros de PRD-001 (fecha, Apellido, Nombre, DNI), sin filtros lista
   todos, ordenados por número descendente en páginas de 50.
+- 2026-10-30 (PRD 06): una sola factura por presupuesto; neto e IVA de la Factura B calculados
+  sobre el total (IVA = total − neto); fecha del comprobante siempre la del día; la operadora
+  elige en cada factura el concepto "Productos" o "Productos y servicios", y con servicios las
+  tres fechas que exige ARCA son la del comprobante; sin tope cargado no se factura; una emisión
+  sin respuesta queda pendiente hasta la verificación del PRD 07, que debe implementarse antes de
+  usar el PRD 06 en producción.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -90,7 +96,7 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | validado |
 | 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | validado |
 | 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | validado |
-| 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | identificado |
+| 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | validado |
 | 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | identificado |
 | 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | identificado |
 | 09 | Backup y restauración | prd-DISC-001-09.md | identificado |
