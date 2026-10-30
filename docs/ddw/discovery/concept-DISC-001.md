@@ -81,6 +81,12 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
   "Verificar con ARCA" y, si el número no estaba autorizado, emite en esa misma acción; al
   ingresar se avisa de las emisiones pendientes; con importe distinto en ARCA, la operadora puede
   descartar la emisión pendiente tras confirmar, y el descarte queda registrado con fecha y hora.
+- 2026-10-30 (PRD 08): los datos del emisor (razón social, domicilio comercial, CUIT, Ingresos
+  Brutos, inicio de actividades) se cargan en la configuración; la leyenda "COMPROBANTE SIMULADO —
+  SIN VALIDEZ FISCAL" va en los PDF emitidos en el entorno simulado y en homologación; la Factura
+  B muestra el IVA contenido de la Ley 27.743 (a confirmar con el contador); la búsqueda de
+  facturas funciona igual que la de presupuestos. El PRD 06 guarda con cada factura el entorno de
+  ARCA en que se emitió.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -102,5 +108,5 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | validado |
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | validado |
 | 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | validado |
-| 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | identificado |
+| 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | validado |
 | 09 | Backup y restauración | prd-DISC-001-09.md | identificado |

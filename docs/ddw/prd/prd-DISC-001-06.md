@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-10-30 |
 | PRD de origen | `PRD.md` (PRD-001) |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001
@@ -82,8 +82,10 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
   facturación electrónica de ARCA (WSFEv1), con el certificado digital de la empresa y el punto de
   venta habilitado para web services. [PRD-001 RF-28]
 - FR-18: El sistema debe guardar la factura autorizada con su tipo, punto de venta, número, fecha,
-  concepto, identificación del receptor, líneas, importes, CAE y fecha de vencimiento del CAE,
-  vinculada al presupuesto que le dio origen. [PRD-001 RF-29]
+  concepto, identificación del receptor, líneas, importes, CAE, fecha de vencimiento del CAE y
+  entorno de ARCA en que se emitió (simulado, homologación o producción), vinculada al presupuesto
+  que le dio origen. [PRD-001 RF-29; el entorno lo usa el PRD 08 para la leyenda de comprobante
+  simulado]
 - FR-19: El sistema debe mostrar, al autorizarse la factura, un mensaje de confirmación con el tipo,
   el punto de venta y el número del comprobante. [PRD-001 AC-18]
 - FR-20: El sistema debe mostrar en el presupuesto el tipo, el punto de venta y el número de la
@@ -163,8 +165,8 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
   sistema SHALL solicitar a ARCA una Factura C con importe total $1.815,00 y sin desglose de neto e
   IVA. [PRD-001 AC-84]
 - AC-18 (FR-17, FR-18, FR-19): WHEN la operadora presiona Facturar y ARCA autoriza el comprobante,
-  THE sistema SHALL guardar la factura con su tipo, punto de venta, número, CAE y vencimiento del
-  CAE vinculada al presupuesto, y mostrar un mensaje de confirmación con el tipo, el punto de venta
+  THE sistema SHALL guardar la factura con su tipo, punto de venta, número, CAE, vencimiento del
+  CAE y entorno de ARCA en que se emitió, vinculada al presupuesto, y mostrar un mensaje de confirmación con el tipo, el punto de venta
   y el número del comprobante. [PRD-001 AC-18]
 - AC-19 (FR-20): WHEN la operadora abre un presupuesto desde el que se emitió la Factura B
   0003-00000125, THE sistema SHALL mostrar en el presupuesto "Factura B 0003-00000125".
