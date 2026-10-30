@@ -87,6 +87,11 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
   B muestra el IVA contenido de la Ley 27.743 (a confirmar con el contador); la búsqueda de
   facturas funciona igual que la de presupuestos. El PRD 06 guarda con cada factura el entorno de
   ARCA en que se emitió.
+- 2026-10-30 (PRD 09): la ubicación del backup se elige en la configuración y no puede estar en el
+  disco de la base; si falta el backup del día anterior, se intenta al iniciar; como copia mensual
+  queda la última de cada mes terminado; las copias se guardan sin cifrar (riesgo de datos
+  personales aceptado por las dueñas, mitigado con resguardo físico y verificación en dos pasos
+  en la nube).
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -109,4 +114,4 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | validado |
 | 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | validado |
 | 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | validado |
-| 09 | Backup y restauración | prd-DISC-001-09.md | identificado |
+| 09 | Backup y restauración | prd-DISC-001-09.md | validado |
