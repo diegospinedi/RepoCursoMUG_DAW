@@ -62,6 +62,11 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 - 2026-10-29 (PRD 03): la planilla actualiza también artículos inactivos; encabezados "Codigo en
   el proveedor" y "Precio de Costo Nuevo"; un código repetido en la planilla no se aplica; solo
   se aceptan archivos .xlsx.
+- 2026-10-30 (PRD 04): las líneas salen solo del catálogo, con precio unitario fijo y descuento
+  por línea; la fecha del presupuesto es la del primer grabado y no se edita; el paso a Final pide
+  confirmación y todo presupuesto exige al menos una línea; DNI de 7 u 8 dígitos guardado sin
+  puntos y email con formato válido si se carga; numeración desde 1; los artículos inactivos no se
+  ofrecen al cargar una línea.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -79,7 +84,7 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 01 | Acceso, configuración y marca | prd-DISC-001-01.md | validado |
 | 02 | Catálogo de artículos y precio de venta | prd-DISC-001-02.md | validado |
 | 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | validado |
-| 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | identificado |
+| 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | validado |
 | 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | identificado |
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | identificado |
 | 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | identificado |
