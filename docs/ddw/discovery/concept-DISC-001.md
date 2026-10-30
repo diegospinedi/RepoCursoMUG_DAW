@@ -56,6 +56,12 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 - 2026-10-29 (PRD 01): la contraseña se puede cambiar desde la aplicación pidiendo la actual; si se
   olvida, se restablece con un procedimiento documentado ejecutado solo en la PC del local; los
   parámetros arrancan en IVA 21, Responsable Inscripto y múltiplo 0,01, y el tope se carga a mano.
+- 2026-10-29 (PRD 02): margen de utilidad de 0 a 1.000 % (PRD-001 decía 0 a 100); costo ≤ 0
+  admitido a mano con advertencia, igual que por planilla; código en el proveedor único y
+  obligatorio; los artículos se desactivan y reactivan, no se eliminan.
+- 2026-10-29 (PRD 03): la planilla actualiza también artículos inactivos; encabezados "Codigo en
+  el proveedor" y "Precio de Costo Nuevo"; un código repetido en la planilla no se aplica; solo
+  se aceptan archivos .xlsx.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -71,8 +77,8 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | # | Título | Archivo | Estado |
 |---|--------|---------|--------|
 | 01 | Acceso, configuración y marca | prd-DISC-001-01.md | validado |
-| 02 | Catálogo de artículos y precio de venta | prd-DISC-001-02.md | identificado |
-| 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | identificado |
+| 02 | Catálogo de artículos y precio de venta | prd-DISC-001-02.md | validado |
+| 03 | Actualización de costos por planilla Excel | prd-DISC-001-03.md | validado |
 | 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | identificado |
 | 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | identificado |
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | identificado |
