@@ -34,3 +34,18 @@ appsettings.Development.json
 appsettings.Production.json
 appsettings.*.local.json
 secrets.json
+
+# Marca real de la óptica: se instala fuera del repositorio. La barra inicial limita la regla a la
+# carpeta de la raíz, para no ignorar las carpetas de código llamadas Marca.
+/Marca/
+
+# Salidas de compilación, pruebas y herramientas
+bin/
+obj/
+TestResults/
+coverage/
+node_modules/
+web/dist/
+src/Optica.Api/wwwroot/
+e2e/test-results/
+e2e/playwright-report/
