@@ -77,6 +77,10 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
   tres fechas que exige ARCA son la del comprobante; sin tope cargado no se factura; una emisión
   sin respuesta queda pendiente hasta la verificación del PRD 07, que debe implementarse antes de
   usar el PRD 06 en producción.
+- 2026-10-30 (PRD 07): la verificación de una emisión sin respuesta la pide la operadora con
+  "Verificar con ARCA" y, si el número no estaba autorizado, emite en esa misma acción; al
+  ingresar se avisa de las emisiones pendientes; con importe distinto en ARCA, la operadora puede
+  descartar la emisión pendiente tras confirmar, y el descarte queda registrado con fecha y hora.
 
 ## Dependencias entre PRDs
 - 02 depende de 01 (parámetros de configuración).
@@ -97,6 +101,6 @@ local. No hay roles: un único acceso con contraseña (RNF-04).
 | 04 | Presupuestos: alta, líneas y cálculos | prd-DISC-001-04.md | validado |
 | 05 | Búsqueda y PDF de presupuestos | prd-DISC-001-05.md | validado |
 | 06 | Emisión de factura a consumidor final (ARCA WSFEv1) | prd-DISC-001-06.md | validado |
-| 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | identificado |
+| 07 | Recuperación de emisiones sin respuesta | prd-DISC-001-07.md | validado |
 | 08 | PDF, listado y búsqueda de facturas | prd-DISC-001-08.md | identificado |
 | 09 | Backup y restauración | prd-DISC-001-09.md | identificado |
