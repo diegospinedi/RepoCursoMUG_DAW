@@ -4,7 +4,7 @@
 |---------|-------|
 | Ticket | DISC-001 |
 | Fecha | 2026-10-29 |
-| Estado | Explorando |
+| Estado | Cerrado |
 | PRD de origen | `PRD.md` (PRD-001) |
 
 ## Visión
