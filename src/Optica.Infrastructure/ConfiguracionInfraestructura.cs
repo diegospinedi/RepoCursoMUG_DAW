@@ -2,9 +2,14 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Optica.Application.Acceso;
+using Optica.Application.Comun;
+using Optica.Domain.Acceso;
 using Optica.Infrastructure.Persistencia;
+using Optica.Infrastructure.Seguridad;
 
 namespace Optica.Infrastructure;
 
@@ -17,6 +22,15 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton(_ => new FabricaConexion(configuracion[FabricaConexion.ClaveDirectorio]));
         servicios.AddDbContext<OpticaDbContext>((proveedor, opciones) =>
             proveedor.GetRequiredService<FabricaConexion>().Configurar(opciones));
+
+        // Acceso: los repositorios y la unidad de trabajo comparten el OpticaDbContext del alcance.
+        servicios.AddScoped<ICredencialAccesoRepository, CredencialAccesoRepository>();
+        servicios.AddScoped<IRegistroEventosAcceso, RegistroEventosAccesoEf>();
+        servicios.AddScoped<IUnidadDeTrabajo, UnidadDeTrabajoEf>();
+        servicios.AddSingleton<IHasherContrasena, HasherContrasenaPbkdf2>();
+
+        // Reloj UTC del sistema, salvo que la raíz de composición (o una prueba) registre otro.
+        servicios.TryAddSingleton(TimeProvider.System);
         return servicios;
     }
 
