@@ -59,7 +59,7 @@ def _promised_tests(spec_text):
             # An identifier, which is what excludes the paths: `/` and `.` are
             # not word characters, so `tests/fakes.py` — a file holding no test
             # at all — cannot pass this and be counted as one.
-            if re.fullmatch(r"test[\w-]+", name, re.IGNORECASE):
+            if re.fullmatch(r"[A-Za-z_][\w-]*", name):
                 names.append(name)
     return list(dict.fromkeys(names))
 
