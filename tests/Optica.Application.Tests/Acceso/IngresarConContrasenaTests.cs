@@ -20,7 +20,7 @@ public class IngresarConContrasenaTests
     {
         var resultado = await CrearCasoDeUso().EjecutarAsync("cualquier-clave");
 
-        Assert.Equal(ResultadoIngreso.SinCredencial, resultado);
+        Assert.Equal(ResultadoIngreso.SinCredencial, resultado.Tipo);
         Assert.Empty(_almacen.Eventos);
         Assert.Equal(0, _hasher.Verificaciones);
     }
@@ -32,7 +32,7 @@ public class IngresarConContrasenaTests
 
         var resultado = await CrearCasoDeUso().EjecutarAsync("clave-incorrecta");
 
-        Assert.Equal(ResultadoIngreso.Rechazo, resultado);
+        Assert.Equal(ResultadoIngreso.Rechazo, resultado.Tipo);
         var evento = Assert.Single(_almacen.Eventos);
         Assert.Equal(TipoEventoAcceso.Ingreso, evento.Tipo);
         Assert.Equal(ResultadoEventoAcceso.Rechazo, evento.Resultado);
@@ -47,7 +47,7 @@ public class IngresarConContrasenaTests
 
         var resultado = await CrearCasoDeUso().EjecutarAsync("clave-correcta");
 
-        Assert.Equal(ResultadoIngreso.Exito, resultado);
+        Assert.Equal(ResultadoIngreso.Exito, resultado.Tipo);
         var evento = Assert.Single(_almacen.Eventos);
         Assert.Equal(TipoEventoAcceso.Ingreso, evento.Tipo);
         Assert.Equal(ResultadoEventoAcceso.Exito, evento.Resultado);
@@ -55,12 +55,12 @@ public class IngresarConContrasenaTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("1234567")]
-    [InlineData("x129")]
-    [InlineData("sustituto-suelto")]
-    [InlineData("un-millon")]
-    public async Task IngresarConContrasena_FueraDePolitica_RechazadaSinCalcularHash(string? contrasena)
+    [InlineData(null, ValidacionContrasena.AccionMuyCorta)]
+    [InlineData("1234567", ValidacionContrasena.AccionMuyCorta)]
+    [InlineData("x129", ValidacionContrasena.AccionMuyLarga)]
+    [InlineData("sustituto-suelto", ValidacionContrasena.AccionCaracteresInvalidos)]
+    [InlineData("un-millon", ValidacionContrasena.AccionMuyLarga)]
+    public async Task IngresarConContrasena_FueraDePolitica_InvalidoSinEventoNiHash(string? contrasena, string accion)
     {
         // Los valores que no entran en un atributo (sustitutos sueltos) o son enormes se arman acá.
         contrasena = contrasena switch
@@ -72,16 +72,28 @@ public class IngresarConContrasenaTests
         };
 
         DefinirCredencial("clave-correcta");
-        var verificacionesAntes = _hasher.Verificaciones;
 
         var resultado = await CrearCasoDeUso().EjecutarAsync(contrasena);
 
-        Assert.Equal(ResultadoIngreso.Rechazo, resultado);
-        var evento = Assert.Single(_almacen.Eventos);
-        Assert.Equal(TipoEventoAcceso.Ingreso, evento.Tipo);
-        Assert.Equal(ResultadoEventoAcceso.Rechazo, evento.Resultado);
-        Assert.Equal(verificacionesAntes, _hasher.Verificaciones);
+        // Decisión del usuario (2026-10-31, ADR-005): 400 con campo y acción, sin evento y sin calcular el hash.
+        Assert.Equal(ResultadoIngreso.Invalido, resultado.Tipo);
+        var error = Assert.Single(resultado.Errores);
+        Assert.Equal(ValidacionContrasena.Campo, error.Campo);
+        Assert.Equal(accion, error.Accion);
+        Assert.Empty(_almacen.Eventos);
+        Assert.Equal(0, _almacen.Confirmaciones);
         Assert.Equal(0, _hasher.Verificaciones);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_FueraDePoliticaSinCredencial_InvalidoSinConsultarLaBase()
+    {
+        var resultado = await CrearCasoDeUso().EjecutarAsync("corta");
+
+        Assert.Equal(ResultadoIngreso.Invalido, resultado.Tipo);
+        Assert.Equal(ValidacionContrasena.AccionMuyCorta, Assert.Single(resultado.Errores).Accion);
+        Assert.Equal(0, _almacen.Consultas);
+        Assert.Empty(_almacen.Eventos);
     }
 
     [Theory]
@@ -96,7 +108,7 @@ public class IngresarConContrasenaTests
 
         var resultado = await CrearCasoDeUso().EjecutarAsync(ingresada);
 
-        Assert.Equal(ResultadoIngreso.Exito, resultado);
+        Assert.Equal(ResultadoIngreso.Exito, resultado.Tipo);
         Assert.Equal(ResultadoEventoAcceso.Exito, _almacen.Eventos[^1].Resultado);
     }
 }

@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Optica.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Optica.Application\Optica.Application.csproj" />
     <ProjectReference Include="..\Optica.Infrastructure\Optica.Infrastructure.csproj" />
   </ItemGroup>

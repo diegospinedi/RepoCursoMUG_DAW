@@ -177,7 +177,8 @@ public class AccesoPersistenciaTests
         Assert.Empty(Filas(cadena, "SELECT Id FROM CredencialAcceso"));
         Assert.Empty(Filas(cadena, "SELECT Id FROM EventoAcceso"));
 
-        // Ingresar: con una contraseña válida definida, el sustituto suelto se rechaza y queda el evento.
+        // Ingresar: con una contraseña válida definida, el sustituto suelto es inválido, sin excepción y sin evento
+        // (decisión del usuario del 2026-10-31, ADR-005).
         Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
         var contexto = baseTemporal.CrearContexto();
         var ingresar = new IngresarConContrasena(
@@ -186,12 +187,12 @@ public class AccesoPersistenciaTests
             hasher,
             new UnidadDeTrabajoEf(contexto),
             new Reloj());
-        ResultadoIngreso? ingreso = null;
+        IntentoIngreso? ingreso = null;
         var errorAlIngresar = await Record.ExceptionAsync(async () => ingreso = await ingresar.EjecutarAsync(invalida));
         Assert.Null(errorAlIngresar);
-        Assert.Equal(ResultadoIngreso.Rechazo, ingreso);
+        Assert.Equal(ResultadoIngreso.Invalido, ingreso?.Tipo);
         Assert.Equal(
-            [["definicion", "exito"], ["ingreso", "rechazo"]],
+            [["definicion", "exito"]],
             Filas(cadena, "SELECT Tipo, Resultado FROM EventoAcceso ORDER BY Id"));
     }
 
@@ -212,8 +213,8 @@ public class AccesoPersistenciaTests
 
         var ingresar = new IngresarConContrasena(
             repositorio, new RegistroEventosAccesoEf(contexto), hasher, new UnidadDeTrabajoEf(contexto), new Reloj());
-        Assert.Equal(ResultadoIngreso.Rechazo, await ingresar.EjecutarAsync("otra-clave"));
-        Assert.Equal(ResultadoIngreso.Exito, await ingresar.EjecutarAsync("clave-valida"));
+        Assert.Equal(ResultadoIngreso.Rechazo, (await ingresar.EjecutarAsync("otra-clave")).Tipo);
+        Assert.Equal(ResultadoIngreso.Exito, (await ingresar.EjecutarAsync("clave-valida")).Tipo);
         await new CerrarSesion(new RegistroEventosAccesoEf(contexto), new UnidadDeTrabajoEf(contexto), new Reloj())
             .EjecutarAsync();
 

@@ -22,6 +22,7 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton(_ => new FabricaConexion(configuracion[FabricaConexion.ClaveDirectorio]));
         servicios.AddDbContext<OpticaDbContext>((proveedor, opciones) =>
             proveedor.GetRequiredService<FabricaConexion>().Configurar(opciones));
+        servicios.AddSingleton<IDatosLocales>(proveedor => new DatosLocales(proveedor.GetRequiredService<FabricaConexion>()));
 
         // Acceso: los repositorios y la unidad de trabajo comparten el OpticaDbContext del alcance.
         servicios.AddScoped<ICredencialAccesoRepository, CredencialAccesoRepository>();
@@ -61,12 +62,15 @@ public static class ConfiguracionInfraestructura
         }
         catch (SqliteException error) when (fabrica is not null)
         {
+            // Sin la excepción adjunta: su texto puede traer la ruta expandida, con el nombre de usuario de la PC. El
+            // código de error de SQLite alcanza para el diagnóstico y no lleva datos personales.
             registro.LogCritical(
-                error,
                 "La Api no puede arrancar: no se pudo abrir o migrar la base {Archivo} en el directorio de datos {Ruta} " +
-                "(puede estar en solo lectura, bloqueada o dañada). Revisá ese archivo o la clave de configuración {Clave}.",
+                "(código de error de SQLite {CodigoSqlite}; puede estar en solo lectura, bloqueada o dañada). Revisá " +
+                "ese archivo o la clave de configuración {Clave}.",
                 FabricaConexion.NombreArchivo,
                 fabrica.RutaVisible,
+                error.SqliteErrorCode,
                 FabricaConexion.ClaveDirectorio);
             throw;
         }

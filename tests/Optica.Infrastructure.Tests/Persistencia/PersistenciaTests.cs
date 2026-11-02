@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Optica.Application.Comun;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Infrastructure.Tests.Persistencia;
@@ -112,12 +113,14 @@ public class PersistenciaTests
 
                 var error = Assert.Throws<DirectorioDatosInvalidoException>(() => servicios.InicializarBaseDeDatos());
 
-                Assert.Contains(ruta, error.Message, StringComparison.Ordinal);
+                // La ruta como se muestra: en Windows, la carpeta temporal está dentro de la del usuario.
+                var visible = RutasPrivadas.Ocultar(ruta);
+                Assert.Contains(visible, error.Message, StringComparison.Ordinal);
                 Assert.Contains(FabricaConexion.ClaveDirectorio, error.Message, StringComparison.Ordinal);
-                Assert.Equal(ruta, error.Ruta);
+                Assert.Equal(visible, error.Ruta);
                 Assert.Contains(registro.Entradas, e =>
                     e.Nivel >= LogLevel.Error
-                    && e.Mensaje.Contains(ruta, StringComparison.Ordinal)
+                    && e.Mensaje.Contains(visible, StringComparison.Ordinal)
                     && e.Mensaje.Contains(FabricaConexion.ClaveDirectorio, StringComparison.Ordinal));
             }
         }
@@ -296,13 +299,16 @@ public class PersistenciaTests
             var registro = new RegistroCapturado();
             using var servicios = BaseTemporal.CrearServicios(directorio, registro);
 
-            Assert.Throws<SqliteException>(() => servicios.InicializarBaseDeDatos());
+            var error = Assert.Throws<SqliteException>(() => servicios.InicializarBaseDeDatos());
 
+            // El error propio nombra el directorio visible, la clave y el código de SQLite, sin la excepción cruda
+            // adjunta (su texto puede traer la ruta con el nombre de usuario).
             Assert.Contains(registro.Entradas, e =>
                 e.Nivel == LogLevel.Critical
-                && e.Mensaje.Contains(directorio, StringComparison.Ordinal)
+                && e.Mensaje.Contains(RutasPrivadas.Ocultar(directorio), StringComparison.Ordinal)
                 && e.Mensaje.Contains(FabricaConexion.ClaveDirectorio, StringComparison.Ordinal)
-                && e.Excepcion is not null);
+                && e.Mensaje.Contains($"código de error de SQLite {error.SqliteErrorCode}", StringComparison.Ordinal));
+            Assert.DoesNotContain(registro.Entradas, e => e.Nivel > LogLevel.Debug && e.Excepcion is not null);
         }
         finally
         {

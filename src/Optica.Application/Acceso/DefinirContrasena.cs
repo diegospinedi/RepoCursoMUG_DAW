@@ -14,22 +14,12 @@ public sealed class DefinirContrasena(
     IUnidadDeTrabajo unidadDeTrabajo,
     TimeProvider reloj)
 {
-    public const string Campo = "contrasena";
-    public const string AccionMuyCorta = "Ingresá una contraseña de 8 caracteres o más";
-    public const string AccionMuyLarga = "Ingresá una contraseña de 128 caracteres o menos";
-    public const string AccionCaracteresInvalidos = "La contraseña tiene caracteres no válidos. Escribila de nuevo.";
-
     public async Task<Resultado> EjecutarAsync(string? contrasena, CancellationToken cancelacion = default)
     {
-        var infraccion = PoliticaContrasena.Evaluar(contrasena, out var normalizada);
-        switch (infraccion)
+        var error = ValidacionContrasena.Validar(contrasena, out var normalizada);
+        if (error is not null)
         {
-            case InfraccionContrasena.MuyCorta:
-                return Resultado.Invalido(new ErrorValidacion(Campo, AccionMuyCorta));
-            case InfraccionContrasena.MuyLarga:
-                return Resultado.Invalido(new ErrorValidacion(Campo, AccionMuyLarga));
-            case InfraccionContrasena.CaracteresInvalidos:
-                return Resultado.Invalido(new ErrorValidacion(Campo, AccionCaracteresInvalidos));
+            return Resultado.Invalido(error);
         }
 
         // Si ya existe, conflicto sin calcular el hash ni tocar la credencial.

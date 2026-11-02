@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Optica.Application.Comun;
 
 namespace Optica.Infrastructure.Persistencia;
 
@@ -28,7 +29,7 @@ public sealed class FabricaConexion
     {
         EsPorDefecto = string.IsNullOrWhiteSpace(directorioConfigurado);
         Directorio = ResolverDirectorio(directorioConfigurado, carpetaDatosLocales);
-        RutaVisible = EsPorDefecto ? MostrarRutaPorDefecto(carpetaDatosLocales) : Directorio;
+        RutaVisible = EsPorDefecto ? MostrarRutaPorDefecto(carpetaDatosLocales) : RutasPrivadas.Ocultar(Directorio);
         CadenaConexion = new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(Directorio, NombreArchivo),
@@ -42,9 +43,9 @@ public sealed class FabricaConexion
     public string Directorio { get; }
 
     /// <summary>
-    /// La ruta como se muestra en mensajes y en el log. Si se configuró, es la ruta tal cual; si es la de
-    /// por defecto, va sin expandir la carpeta del usuario (por ejemplo <c>%LOCALAPPDATA%\OpticaSistema</c>),
-    /// para no dejar el nombre de usuario de la PC en los registros.
+    /// La ruta como se muestra en mensajes y en el log, sin el nombre de usuario de la PC. Si se configuró, es la
+    /// ruta con la carpeta del usuario reemplazada (<see cref="RutasPrivadas"/>); si es la de por defecto, va sin
+    /// expandir la carpeta del usuario (por ejemplo <c>%LOCALAPPDATA%\OpticaSistema</c>).
     /// </summary>
     public string RutaVisible { get; }
 
@@ -135,27 +136,33 @@ public sealed class FabricaConexion
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            // El mensaje de la excepción original trae la ruta expandida: no se copia al mensaje propio, y en
-            // la ruta por defecto tampoco se adjunta como causa (llegaría al log con el nombre de usuario).
+            // El mensaje de la excepción original trae la ruta expandida: no se copia al mensaje propio ni se adjunta
+            // como causa (llegaría al log con el nombre de usuario), tampoco para un directorio configurado.
             throw new DirectorioDatosInvalidoException(
                 RutaVisible,
                 $"No se puede crear o escribir en el directorio de datos '{RutaVisible}' ({error.GetType().Name}). " +
-                $"Corregí la clave de configuración '{ClaveDirectorio}' o los permisos de esa carpeta.",
-                EsPorDefecto ? null : error);
+                $"Corregí la clave de configuración '{ClaveDirectorio}' o los permisos de esa carpeta.");
         }
     }
 
     /// <summary>
     /// Configura EF Core con SQLite y el interceptor que fija los PRAGMA de cada conexión.
-    /// <c>ConnectionError</c> se baja a Debug: su texto lleva el DataSource completo, que en la ruta por defecto
-    /// incluye el nombre de usuario de la PC. El diagnóstico queda en el error propio, con <see cref="RutaVisible"/>
-    /// y la clave de configuración, y en la excepción que se propaga.
+    /// Los eventos de error de EF Core se bajan a Debug: <c>ConnectionError</c> lleva el DataSource completo, que en la
+    /// ruta por defecto incluye el nombre de usuario de la PC, y los demás adjuntan la excepción de SQLite tal cual. El
+    /// diagnóstico queda en el error propio, con <see cref="RutaVisible"/> y la clave de configuración (ver
+    /// <see cref="DatosLocales"/>), y en la excepción que se propaga. Nunca activar <c>EnableSensitiveDataLogging</c>
+    /// ni <c>EnableDetailedErrors</c>.
     /// </summary>
     public void Configurar(DbContextOptionsBuilder opciones) =>
         opciones
             .UseSqlite(CadenaConexion)
             .AddInterceptors(PragmasAlAbrir.Instancia)
-            .ConfigureWarnings(avisos => avisos.Log((RelationalEventId.ConnectionError, LogLevel.Debug)));
+            .ConfigureWarnings(avisos => avisos.Log(
+                (RelationalEventId.ConnectionError, LogLevel.Debug),
+                (RelationalEventId.CommandError, LogLevel.Debug),
+                (RelationalEventId.TransactionError, LogLevel.Debug),
+                (CoreEventId.SaveChangesFailed, LogLevel.Debug),
+                (CoreEventId.QueryIterationFailed, LogLevel.Debug)));
 
     /// <summary>Activa <c>foreign_keys</c> y <c>journal_mode = WAL</c> en cada conexión que se abre.</summary>
     private sealed class PragmasAlAbrir : DbConnectionInterceptor

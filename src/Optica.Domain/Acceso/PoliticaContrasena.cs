@@ -71,7 +71,7 @@ public static class PoliticaContrasena
 
     public static InfraccionContrasena Evaluar(string? contrasena) => Evaluar(contrasena, out _);
 
-    public static bool EsValida(string? contrasena) => Evaluar(contrasena) == InfraccionContrasena.Ninguna;
+    internal static bool EsValida(string? contrasena) => Evaluar(contrasena) == InfraccionContrasena.Ninguna;
 
     /// <summary>
     /// Forma canónica de la contraseña: Unicode NFC, para que "ñ" precompuesta y "n" + tilde combinante sean la
@@ -80,7 +80,7 @@ public static class PoliticaContrasena
     /// <exception cref="ArgumentException">
     /// El texto no es Unicode válido. El mensaje es genérico: no lleva caracteres ni posiciones de la contraseña.
     /// </exception>
-    public static string Normalizar(string contrasena)
+    internal static string Normalizar(string contrasena)
     {
         ArgumentNullException.ThrowIfNull(contrasena);
         if (!TryNormalizar(contrasena, out var nfc))

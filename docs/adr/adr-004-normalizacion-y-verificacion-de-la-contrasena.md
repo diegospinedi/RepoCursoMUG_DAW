@@ -4,7 +4,7 @@
 |-------|-------|
 | Date | 2026-10-31 |
 | Ticket | FEAT-001a |
-| Status | Accepted |
+| Status | Superseded by ADR-005 |
 
 ## Context
 La spec de FEAT-001a (Block 2) fijó 8 a 128 caracteres "contados sin recortar espacios" y ADR-002

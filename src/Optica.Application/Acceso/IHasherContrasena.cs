@@ -2,9 +2,8 @@ namespace Optica.Application.Acceso;
 
 /// <summary>
 /// Cálculo y verificación del hash con sal de la contraseña. El llamador pasa la contraseña ya validada y
-/// normalizada con <c>PoliticaContrasena.Evaluar(contrasena, out normalizada)</c> o
-/// <c>PoliticaContrasena.Normalizar</c> (Unicode NFC); el hasher calcula el hash de lo que recibe, sin
-/// normalizar.
+/// normalizada con <c>PoliticaContrasena.Evaluar(contrasena, out normalizada)</c> (Unicode NFC); el hasher calcula
+/// el hash de lo que recibe, sin normalizar.
 /// </summary>
 public interface IHasherContrasena
 {

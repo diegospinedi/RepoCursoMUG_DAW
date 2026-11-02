@@ -19,9 +19,20 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
 
     public int Confirmaciones { get; private set; }
 
-    public Task<bool> ExisteAsync(CancellationToken cancelacion = default) => Task.FromResult(Credencial is not null);
+    /// <summary>Cuántas veces se consultó la credencial guardada.</summary>
+    public int Consultas { get; private set; }
 
-    public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default) => Task.FromResult(Credencial);
+    public Task<bool> ExisteAsync(CancellationToken cancelacion = default)
+    {
+        Consultas++;
+        return Task.FromResult(Credencial is not null);
+    }
+
+    public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default)
+    {
+        Consultas++;
+        return Task.FromResult(Credencial);
+    }
 
     public void Agregar(CredencialAcceso credencial) => _credencialPendiente = credencial;
 
