@@ -117,3 +117,27 @@ Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026
 - `GET /api/marca/logo` es anónimo por diseño: cualquier archivo válido que se deje como logo se sirve sin sesión a la red local; en la carpeta de marca va solo la marca.
 - Pendiente para el Block 5 o 6: sin `Cache-Control`/`ETag` en `/api/marca` y `/api/marca/logo`; `nosniff` global en lugar de por endpoint. Si el `<img>` del logo se pide con la cookie, renueva la sesión (pendiente del Block 3).
 - El filtro de excepciones críticas de `Cargar` no tiene prueba: la lectura es estática sobre `File`/`FileInfo` y no hay costura para inyectar la falla.
+
+## Block 5 — Interfaz web: definir contraseña, ingresar, sesión y marca
+
+Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026-11-02 — Block 5:
+
+- Archivos fuera de la lista de la spec: `src/acceso/politicaContrasena.ts` (regla de largo, espejo de la del servidor), `src/componentes/FormularioContrasena.tsx` (formulario compartido por definir e ingresar), `src/pruebas/servidorFalso.tsx` y `src/pruebas/formulario.ts` (ayudas de prueba, excluidas de la cobertura junto con `src/main.tsx`), `src/App.test.tsx`, `src/configuracionVite.test.ts` y `src/api/cliente.test.ts`.
+- El navegador valida 8 a 128 unidades UTF-16 sobre `normalize('NFC')`, sin recortar espacios (ADR-004); la spec solo pedía el mínimo. No revisa sustitutos sueltos: ese caso lo informa el 400 del servidor junto al campo.
+- Mensajes que la spec no fija: 409 en definir "Ya hay una contraseña definida. Ingresá con ella." (enlace "Ir al ingreso"); 409 en ingresar "Todavía no hay una contraseña. Definí la contraseña primero." (enlace "Definir la contraseña"); 413 "La contraseña es demasiado larga. Ingresá una de 128 caracteres o menos." junto al campo; 429 "El sistema está ocupado. Intentá de nuevo en un momento."; 403, 415 y 400 sin `errors` comparten el mensaje general "No se pudo completar la operación. Recargá la página y reintentá."; 5xx y red usan el texto de la spec. El 413 se traduce siempre al campo `contrasena` (hoy es el único POST con cuerpo).
+- 401 con `errors` → error del campo (contraseña incorrecta); 401 vacío o con cuerpo sin `errors` → "sin sesión": navega a `/ingreso` con `replace` y desmonta la pantalla protegida. `Arranque` también navega ante "sin sesión" porque su efecto corre antes de que `App` registre el manejador global.
+- Los errores de campo del servidor se muestran junto a la contraseña aunque traigan otro campo (hoy la Api solo usa `contrasena`).
+- `esEjemplo` no se muestra en pantalla (la spec no lo pide); queda disponible en `useMarca()`, sin consumidores en la aplicación.
+- Después de definir (201) o ingresar (204) se navega a `/`, que vuelve a consultar estado y sesión una vez; no hay consultas periódicas (prueba con reloj falso que avanza 61 minutos).
+- `fetch` con `credentials: 'same-origin'` y `cache: 'no-store'`; todo POST lleva `Content-Type: application/json`, incluido `salir` sin cuerpo; el formulario declara `method="post"` como defensa en profundidad.
+- Colores de marca aplicados por CSSOM solo si cumplen `^#[0-9A-Fa-f]{6}$`; logo por `<img src="/api/marca/logo">`; build sin sourcemaps; `index.html` con `referrer` `no-referrer`. Compatible con una CSP `default-src 'self'` (Block 6).
+- Dependencias con versiones exactas desde registry.npmjs.org: react y react-dom 19.3.1, react-router 8.5.1; de desarrollo vite 8.3.5, @vitejs/plugin-react 6.2.1, typescript 7.0.2, vitest y @vitest/coverage-v8 5.0.5, jsdom 30.1.3, @testing-library/react 16.3.3, @testing-library/dom 10.4.2, @types/react y @types/react-dom 19.3.0. `engines.node` `^22.22.2` (lo exigen jsdom y vite; queda dentro de "Node 22" de `AGENTS.md`).
+- Proxy de desarrollo de Vite hacia `OPTICA_API_URL` (por defecto `https://localhost:5001`): `secure: false` solo para `localhost` o `127.0.0.1`; cualquier otro host exige un certificado TLS de confianza. Una `OPTICA_API_URL` inválida hace fallar la carga de la configuración.
+- `vite.config.ts` queda fuera de `tsc` para no sumar `@types/node`; la prueba del proxy lo importa con una ruta no literal.
+
+### Restricciones y pendientes que deja el Block 5
+
+- No usar `npm run dev` contra una Api con datos reales en una red no confiable; ante un error de TLS con otro host, instalar un certificado de confianza en lugar de volver a `secure: false`.
+- El `<img>` del logo se pide con la cookie y renueva la sesión una vez por carga de pantalla (no es periódico).
+- Menor: `vite.config.ts` sin verificación de tipos (un `tsconfig.node.json` con `@types/node` lo resolvería); no hay ESLint configurado, el control estático es `tsc` estricto.
+- Menor: `Politica_SieteCaracteresConEspaciosALosLados_SeRechaza` (`' abcde '`) no distingue un `trim()`; la regla "los espacios cuentan" la protege `Politica_SieteEspaciosYUnaLetra_SeAcepta`. Se puede reemplazar por `' abcdef '` (8 con espacios, se acepta).

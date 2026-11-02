@@ -1,0 +1,82 @@
+/* Colores por defecto; MarcaProvider los reemplaza con los de la marca instalada o la de ejemplo. */
+:root {
+  --color-primario: #5a5a5a;
+  --color-fondo: #f5f5f5;
+  --color-texto: #1f1f1f;
+  --color-error: #b00020;
+  font-family: system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
+  color: var(--color-texto);
+  background-color: var(--color-fondo);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-fondo);
+}
+
+.marco {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.encabezado {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 1rem;
+  border-bottom: 4px solid var(--color-primario);
+  margin-bottom: 1.5rem;
+}
+
+.encabezado__logo {
+  max-height: 5rem;
+  max-width: 100%;
+}
+
+.pantalla h1 {
+  color: var(--color-primario);
+  font-size: 1.5rem;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.campo input {
+  font-size: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #8a8a8a;
+  border-radius: 4px;
+}
+
+.campo input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.campo__error,
+.mensaje-general {
+  color: var(--color-error);
+  margin: 0.25rem 0;
+}
+
+button {
+  font-size: 1rem;
+  padding: 0.5rem 1.25rem;
+  color: #ffffff;
+  background-color: var(--color-primario);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+a {
+  color: var(--color-primario);
+}
