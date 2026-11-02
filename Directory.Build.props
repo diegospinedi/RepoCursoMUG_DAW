@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Rutas de compilación fuera de lo que se publica.
+
+    Los PDB, la ruta del PDB que queda en cada ensamblado y el JSON de Source Link llevan, por defecto, la ruta absoluta
+    de los fuentes; en la PC de quien compila esa ruta incluye su carpeta de usuario (su nombre) y aparece en cada traza
+    de excepción. En Release (lo que produce `dotnet publish`, que es lo que se instala) ContinuousIntegrationBuild
+    activa DeterministicSourcePaths: el SDK reemplaza las raíces de fuentes (SourceRoot) por /_/ en los tres lugares.
+    Un PathMap escrito a mano no alcanza: cambia los documentos del PDB, pero no el JSON de Source Link, que sigue
+    mapeando la ruta local a la URL del repositorio.
+
+    Source Link se desactiva en Release: su JSON guarda la URL del repositorio en GitHub
+    (raw.githubusercontent.com/<usuario>/...), que lleva el nombre de usuario de GitHub de quien compiló, y esa URL no
+    sirve en la PC del local (no hay depurador ni acceso al repositorio). Las rutas siguen reemplazadas por /_/.
+
+    En Debug no se toca nada: la depuración local y la cobertura de `dotnet test` necesitan las rutas reales para
+    encontrar los fuentes, y esa salida no sale de la PC de desarrollo.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+
+  <!-- Sin .git (por ejemplo, fuentes descargados como .zip) Source Link no informa la raíz de los fuentes, y las rutas
+       deterministas la necesitan: se declara la carpeta del repositorio. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release' And !Exists('$(MSBuildThisFileDirectory).git')">
+    <SourceRoot Include="$(MSBuildThisFileDirectory)" />
+  </ItemGroup>
+
+</Project>
