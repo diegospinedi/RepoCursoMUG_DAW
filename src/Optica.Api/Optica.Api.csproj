@@ -11,6 +11,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Marca de ejemplo versionada (sin la marca real): se copia a la salida y a la publicación como
+         marca-ejemplo/, junto a los binarios; la usa la Api si no hay una marca instalada válida (ADR-003). -->
+    <None Include="..\..\marca-ejemplo\**" LinkBase="marca-ejemplo" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Optica.Application\Optica.Application.csproj" />
     <ProjectReference Include="..\Optica.Infrastructure\Optica.Infrastructure.csproj" />
   </ItemGroup>

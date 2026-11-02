@@ -93,3 +93,27 @@ Supuestos del implementador — aceptados por el orquestador — 2026-11-02 — 
 - Restricción para los módulos con datos de clientes (presupuestos, facturas): no poner datos personales (nombre, DNI, CUIT) en mensajes de excepción ni en las rutas de la Api; el manejador de errores registra el mensaje y la ruta.
 - Menor: el comentario de `RutasPrivadas` justifica mal su ubicación y sus pruebas están en `Optica.Api.Tests`; `PoliticaContrasena.Evaluar(string?)` solo la usan las pruebas; `Microsoft.EntityFrameworkCore.Design` sigue en la Api (Block 1); la prueba de arquitectura revisa referencias de ensamblado y constructores, no todo uso de Infrastructure; `LimitesDelCuerpo` aplica a todo POST (una subida multipart futura necesitará excepción).
 - Desvíos de proceso: el implementador borró por shell `src/Optica.Api/Errores/RutasPrivadas.cs` al moverla a Application, y el orquestador cambió un encabezado de este archivo con un script; contenido revisado y correcto.
+- Pendiente antes de los módulos con datos de clientes: subir `Microsoft.EntityFrameworkCore` a `Warning` en `appsettings.json`; hoy, en Information, EF registra el SQL de cada comando (sin valores de parámetros).
+
+## Block 4 — Marca instalada y marca de ejemplo
+
+Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026-11-02 — Block 4:
+
+- Logo: solo `.png`, `.jpg` y `.svg`, exactos y en minúsculas (`.jpeg` y `logo.PNG` usan la marca de ejemplo); el contenido tiene que corresponder al formato (firma PNG o JPEG; SVG como XML bien formado, sin DTD ni DOCTYPE, con raíz `svg` del espacio de nombres SVG). Tope de 1 MB inclusive, como dice la spec ("supera 1 MB"); el modelo de amenazas (R-09) dice "menos de 1 MB", y prevalece la spec.
+- `LogoMarca.cs` en Domain (no listado en la spec): la validación de formato y contenido es un invariante del logo para cualquier llamador; usa `System.Xml` en memoria, sin E/S, con `DtdProcessing.Prohibit` y `XmlResolver = null`.
+- `branding.json`: hasta 64 KB, JSON estricto (sin comentarios, comas finales ni propiedades repetidas; nombres con distinción de mayúsculas), BOM UTF-8 aceptado, campos extra ignorados.
+- `Optica:Marca:Directorio` tiene que ser una ruta absoluta; vacía, relativa, inexistente o anómala → marca de ejemplo con advertencia. Cualquier falla al leer la marca instalada (salvo `OutOfMemoryException` e `InsufficientExecutionStackException`) usa la de ejemplo; el 500 queda solo para la marca de ejemplo ilegible.
+- Contra path traversal: del campo `logo` se toma lo que sigue al último `/` o `\`; se rechazan vacío, `.`, `..`, caracteres de control, `<>:"|?*` y los nombres reservados de Windows (CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM/LPT con 0–9 o ¹²³, sin distinguir mayúsculas, tomando lo anterior al primer punto y sin espacios finales); después de `GetFullPath` la carpeta del archivo tiene que ser exactamente la carpeta de marca; se rechazan enlaces simbólicos y puntos de reanálisis en el logo y en `branding.json`.
+- La marca se lee una vez y queda en memoria hasta reiniciar la Api; una falla no se guarda y se reintenta en el pedido siguiente. Cambiar la marca exige reiniciar la Api (documentarlo en la instalación, Block 6).
+- Log sin rutas: las advertencias llevan un motivo fijo, el tipo de excepción y la clave `Optica:Marca:Directorio`; nunca el valor de la carpeta, valores leídos de los archivos, el mensaje de la excepción ni la excepción adjunta.
+- Encabezados del logo: `X-Content-Type-Options: nosniff` siempre; en el SVG, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`, más estricto que el `sandbox` de la spec y de R-10 (defensa en profundidad para navegadores sin soporte de `sandbox`).
+- Marca de ejemplo en `AppContext.BaseDirectory/marca-ejemplo` (no configurable), copiada a la salida y a la publicación por `Optica.Api.csproj`; colores #5A5A5A / #F5F5F5 y un logo SVG genérico, sin la marca real.
+- `IProveedorMarca` sincrónico, registrado como singleton; `ObtenerMarca` expone `Ejecutar()` → `MarcaVisible` y `ObtenerLogo()` → `LogoVisible`, para que la Api no dependa de Domain.
+- Archivos fuera de la lista de la spec: `LogoMarca.cs`, `ConfiguracionInfraestructura.cs`, `Program.cs`, `appsettings.json` (`Optica:Marca:Directorio` vacío) y `tests/Optica.Infrastructure.Tests/Marca/AtributosCondicionales.cs` (omite de forma visible las pruebas de enlaces simbólicos y de archivos con nombres no válidos donde el sistema no los permite). `NombreDeArchivo`, `EsNombreReservadoDeWindows` y `EstaEnLaCarpeta` son `internal` y se prueban directamente en todos los sistemas.
+
+### Restricciones y pendientes que deja el Block 4
+
+- Riesgo aceptado: TOCTOU y enlaces duros en la carpeta de marca (los atributos se revisan sobre la ruta antes de abrir el archivo). Pendiente para el Block 6: permisos NTFS de la carpeta de marca, de solo lectura para la cuenta de la Api y con escritura solo para quien administra.
+- `GET /api/marca/logo` es anónimo por diseño: cualquier archivo válido que se deje como logo se sirve sin sesión a la red local; en la carpeta de marca va solo la marca.
+- Pendiente para el Block 5 o 6: sin `Cache-Control`/`ETag` en `/api/marca` y `/api/marca/logo`; `nosniff` global en lugar de por endpoint. Si el `<img>` del logo se pide con la cookie, renueva la sesión (pendiente del Block 3).
+- El filtro de excepciones críticas de `Cargar` no tiene prueba: la lectura es estática sobre `File`/`FileInfo` y no hay costura para inyectar la falla.

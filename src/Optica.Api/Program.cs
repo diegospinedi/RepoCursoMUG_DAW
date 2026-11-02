@@ -10,6 +10,7 @@ using Optica.Api.Controllers;
 using Optica.Api.Errores;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
+using Optica.Application.Marca;
 using Optica.Infrastructure;
 
 // Raíz de composición única. HTTPS: Kestrel escucha solo en el endpoint Kestrel:Endpoints:Https de appsettings.json
@@ -31,6 +32,9 @@ builder.Services.AddScoped<ConsultarEstadoAcceso>();
 builder.Services.AddScoped<DefinirContrasena>();
 builder.Services.AddScoped<IngresarConContrasena>();
 builder.Services.AddScoped<CerrarSesion>();
+
+// Marca (colores y logo), anónima: la de Optica:Marca:Directorio o la de ejemplo.
+builder.Services.AddScoped<ObtenerMarca>();
 
 // Data Protection (cifra la cookie): claves en <directorio de datos>/claves, fuera del repo, y en Windows
 // protegidas con DPAPI. Fuera de Windows solo se usa en pruebas, con el directorio de datos temporal.

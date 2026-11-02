@@ -7,7 +7,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
+using Optica.Application.Marca;
 using Optica.Domain.Acceso;
+using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Persistencia;
 using Optica.Infrastructure.Seguridad;
 
@@ -29,6 +31,13 @@ public static class ConfiguracionInfraestructura
         servicios.AddScoped<IRegistroEventosAcceso, RegistroEventosAccesoEf>();
         servicios.AddScoped<IUnidadDeTrabajo, UnidadDeTrabajoEf>();
         servicios.AddSingleton<IHasherContrasena, HasherContrasenaPbkdf2>();
+
+        // Marca: la instalada en Optica:Marca:Directorio o la de ejemplo copiada junto a los binarios. Singleton: se lee
+        // una vez y queda en memoria hasta reiniciar la Api.
+        servicios.AddSingleton<IProveedorMarca>(proveedor => new ProveedorMarcaArchivo(
+            configuracion[ProveedorMarcaArchivo.ClaveDirectorio],
+            Path.Combine(AppContext.BaseDirectory, ProveedorMarcaArchivo.CarpetaEjemplo),
+            proveedor.GetRequiredService<ILogger<ProveedorMarcaArchivo>>()));
 
         // Reloj UTC del sistema, salvo que la raíz de composición (o una prueba) registre otro.
         servicios.TryAddSingleton(TimeProvider.System);
