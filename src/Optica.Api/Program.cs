@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Optica.Api.Acceso;
 using Optica.Api.Controllers;
 using Optica.Api.Errores;
+using Optica.Api.Web;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
 using Optica.Application.Marca;
@@ -18,6 +19,8 @@ using Optica.Infrastructure;
 // :Subject=OpticaSistema, que se fijan al instalar (variables de entorno o un appsettings.Production.json local,
 // ignorado por git); sin esas claves, en desarrollo, usa el certificado de desarrollo de .NET. Ni el certificado ni
 // ninguna contraseña van en appsettings ni en el repo.
+// AllowedHosts es "localhost" en appsettings.json; al instalar se amplía con el nombre (y, si se usa, la IP) de la PC
+// en la red local (docs/instalacion.md). Un pedido con otro Host recibe 400.
 // Sin CORS: la SPA se sirve desde el mismo origen. Nunca se registra el cuerpo de los pedidos (definir e ingresar
 // traen la contraseña en claro): no agregar HttpLogging de cuerpos.
 var builder = WebApplication.CreateBuilder(args);
@@ -117,6 +120,13 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// La SPA compilada (Optica:Web:Directorio, por defecto wwwroot), anónima, con X-Content-Type-Options: nosniff y con la
+// Content-Security-Policy de SpaEstatica.PoliticaContenido (R-11): default-src 'self'; frame-ancestors 'none';
+// base-uri 'none'; form-action 'self'; object-src 'none'. Las rutas de /api siguen de largo al ruteo y a la
+// autorización.
+app.UsarSpa();
+
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();

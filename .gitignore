@@ -19,6 +19,7 @@
 *.p12
 *.key
 *.crt
+*.cer
 *.pem
 *.csr
 # Base SQLite (datos de clientes y facturas) y sus backups

@@ -137,6 +137,35 @@ public class PersistenciaTests
     }
 
     [Fact]
+    public void DirectorioDatos_Invalido_ErrorCriticoSinExcepcionAdjunta()
+    {
+        // El error crítico del arranque ya nombra la ruta visible y la clave. La excepción adjunta no agrega
+        // diagnóstico y su traza lleva rutas de compilación (con el usuario de quien compiló) si se publican los PDB.
+        var raiz = BaseTemporal.CrearDirectorioTemporal();
+        try
+        {
+            var archivo = Path.Combine(raiz, "soy-un-archivo");
+            File.WriteAllText(archivo, "x");
+            foreach (var ruta in new[] { Path.Combine(archivo, "datos"), Path.Combine("relativa", "datos") })
+            {
+                var registro = new RegistroCapturado();
+                using var servicios = BaseTemporal.CrearServicios(ruta, registro);
+
+                Assert.Throws<DirectorioDatosInvalidoException>(() => servicios.InicializarBaseDeDatos());
+
+                var critico = Assert.Single(registro.Entradas, e => e.Nivel == LogLevel.Critical);
+                Assert.Contains(RutasPrivadas.Ocultar(ruta), critico.Mensaje, StringComparison.Ordinal);
+                Assert.Contains(FabricaConexion.ClaveDirectorio, critico.Mensaje, StringComparison.Ordinal);
+                Assert.Null(critico.Excepcion);
+            }
+        }
+        finally
+        {
+            BaseTemporal.BorrarDirectorio(raiz);
+        }
+    }
+
+    [Fact]
     public void DirectorioDatos_PorDefecto_RutaAbsolutaFueraDelRepositorio()
     {
         // Sin configuración: la clave ausente y la clave vacía (como en appsettings.json).

@@ -55,7 +55,8 @@ public sealed class FabricaConexion
     public string CadenaConexion { get; }
 
     /// <summary>
-    /// Vacío o ausente: <c>LocalApplicationData/OpticaSistema</c>. Configurado: debe ser una ruta absoluta.
+    /// Vacío o ausente: <c>LocalApplicationData/OpticaSistema</c>. Configurado: debe ser una ruta absoluta. En los
+    /// errores, la ruta pasa por <see cref="RutasPrivadas"/>: llega al log y puede contener la carpeta del usuario.
     /// </summary>
     private static string ResolverDirectorio(string? directorioConfigurado, string datosLocales)
     {
@@ -64,7 +65,7 @@ public sealed class FabricaConexion
             if (string.IsNullOrEmpty(datosLocales) || !Path.IsPathFullyQualified(datosLocales))
             {
                 throw new DirectorioDatosInvalidoException(
-                    datosLocales,
+                    RutasPrivadas.Ocultar(datosLocales),
                     $"No se pudo determinar la carpeta de datos local del usuario. Configurá la clave '{ClaveDirectorio}' " +
                     "con una ruta absoluta.");
             }
@@ -74,9 +75,10 @@ public sealed class FabricaConexion
 
         if (!Path.IsPathFullyQualified(directorioConfigurado))
         {
+            var visible = RutasPrivadas.Ocultar(directorioConfigurado);
             throw new DirectorioDatosInvalidoException(
-                directorioConfigurado,
-                $"El directorio de datos '{directorioConfigurado}' no es una ruta absoluta. Corregí la clave de " +
+                visible,
+                $"El directorio de datos '{visible}' no es una ruta absoluta. Corregí la clave de " +
                 $"configuración '{ClaveDirectorio}' con una ruta absoluta, o dejala vacía para usar la ubicación por defecto.");
         }
 

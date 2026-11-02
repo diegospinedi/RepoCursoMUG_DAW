@@ -62,8 +62,9 @@ public static class ConfiguracionInfraestructura
         }
         catch (DirectorioDatosInvalidoException error)
         {
+            // Sin la excepción adjunta: el mensaje ya nombra la ruta visible y la clave, y su traza llevaría las rutas
+            // de compilación (con el usuario de quien compiló) si se publican los PDB sin PathMap.
             registro.LogCritical(
-                error,
                 "La Api no puede arrancar: no se puede usar el directorio de datos {Ruta}. Corregí la clave de configuración {Clave}.",
                 error.Ruta,
                 error.Clave);

@@ -72,6 +72,42 @@ public class FabricaConexionTests
         Assert.Equal(fabrica.RutaVisible, error.Ruta);
     }
 
+    [Fact]
+    public void ResolverDirectorio_ConfiguradoRelativoConLaCarpetaDelUsuario_ErrorSinElNombreDeUsuario()
+    {
+        // Una ruta relativa que contiene la carpeta del usuario (por ejemplo, un error de tipeo al instalar): no es
+        // absoluta, así que se rechaza, y ni la ruta del error ni su mensaje deben llevar el nombre de usuario.
+        var perfil = CarpetaDelUsuario();
+        var configurado = "relativa" + perfil + Path.DirectorySeparatorChar + "datos";
+        Assert.False(Path.IsPathFullyQualified(configurado));
+
+        var error = Assert.Throws<DirectorioDatosInvalidoException>(() => new FabricaConexion(configurado));
+
+        Assert.Null(error.InnerException);
+        Assert.Equal(RutasPrivadas.Ocultar(configurado), error.Ruta);
+        Assert.Contains(RutasPrivadas.Ocultar(configurado), error.Message, StringComparison.Ordinal);
+        Assert.Contains(FabricaConexion.ClaveDirectorio, error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(perfil, error.Ruta, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(perfil, error.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ResolverDirectorio_CarpetaLocalNoCalificadaConLaCarpetaDelUsuario_ErrorSinElNombreDeUsuario()
+    {
+        // La carpeta de datos locales que informa el sistema no es absoluta (caso anómalo) y contiene la del usuario.
+        var perfil = CarpetaDelUsuario();
+        var datosLocales = "relativa" + perfil;
+        Assert.False(Path.IsPathFullyQualified(datosLocales));
+
+        var error = Assert.Throws<DirectorioDatosInvalidoException>(() => new FabricaConexion(null, datosLocales));
+
+        Assert.Null(error.InnerException);
+        Assert.Equal(RutasPrivadas.Ocultar(datosLocales), error.Ruta);
+        Assert.Contains(FabricaConexion.ClaveDirectorio, error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(perfil, error.Ruta, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(perfil, error.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string CarpetaDelUsuario()
     {
         var perfil = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
