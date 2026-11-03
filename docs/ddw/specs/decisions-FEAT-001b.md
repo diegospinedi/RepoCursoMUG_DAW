@@ -279,3 +279,42 @@ Desvío de proceso, declarado por el implementador: en la ronda 1, las primeras 
 por Bash en lugar de Write o Edit, así que no pasaron por el hook PreToolUse. El auditor de
 arquitectura revisó los tres archivos: UTF-8 sin BOM, LF y sin cambios fuera de lugar. El
 verificador revisó su contenido final en el diff y es correcto.
+
+## Block 7 — Sin datos de ARCA en pantalla y pruebas de punta a punta
+
+Supuestos del implementador — aceptados por el orquestador — 2026-11-03 — Block 7:
+
+- La e2e del cambio reutiliza la contraseña que define la prueba serial anterior de FEAT-001a
+  (`primera vez define contraseña e ingresa`): la base es una por proyecto y no se puede definir dos
+  veces. La e2e del bloqueo usa la contraseña nueva y el reinicio de rechazos que deja la del cambio.
+  Ninguna de las dos se puede correr aislada con `-g`.
+- `ApiConSesion_NingunGet_DevuelveDatosArca` revisa solo los nombres de clave JSON (a cualquier
+  profundidad, nombre entero, sin distinguir mayúsculas), como dice la Logic del Block 7, y no los
+  valores, aunque el "API contract" del mismo bloque dice "sin claves ni valores". Es una
+  contradicción interna de la spec; AC-03 y FR-06 hablan de pantalla, y la prueba de la web revisa
+  el texto visible y los valores de los campos.
+- La prueba de la web acepta plurales ("certificados", "puntos de venta"), revisa los atributos `alt`,
+  `title`, `placeholder`, `aria-label` y `value`, y suma los estados de ingreso bloqueado y de inicio
+  con el aviso.
+- La e2e del bloqueo verifica los códigos HTTP además de los mensajes, porque dos rechazos seguidos
+  muestran el mismo texto.
+- Dos pruebas auxiliares que no pide la spec, `ClavesArca_ComparaNombresEnterosSinDistinguirMayusculas`
+  y `DatosArca_SoloPalabrasEnteras`, fijan los comparadores y están demostradas por mutación.
+- Ronda 2, por decisión del orquestador: `rutasDeLaApp()` comprueba que la cantidad de `<Route` de
+  `App.tsx` coincida con la de rutas extraídas, para que una ruta escrita de otra forma no quede sin
+  revisar (W1 del auditor, W-3 del verificador).
+
+Deuda aceptada por el orquestador — 2026-11-03 — Block 7:
+
+- msedge: en 11 corridas de `test:harness`, 9 en verde. Las 2 fallas fueron en
+  `primera vez define contraseña e ingresa` de FEAT-001a, con la misma causa que W-VER-03 (lentitud de
+  Edge en WSL). En las 5 corridas del verificador pasó 10/10. Las pruebas nuevas pasaron en msedge
+  14 de 14 veces. W-VER-03 se aceptó para FEAT-001a: **en VERIFY de FEAT-001b el usuario tiene que
+  volver a aceptarlo o pedir que se corrija.**
+- La prueba de la Api omite las respuestas que no son JSON (hoy solo el logo) y ejecuta todos los
+  GET registrados: cuando llegue el módulo ARCA, un GET con efectos se ejecutaría dentro de la prueba.
+- Las listas de claves de la Api y de la web tienen criterios distintos (plurales, "Pto. Vta.", espacios
+  que no sean el espacio simple).
+- Un único `it` recorre las 6 pantallas. La enumeración de endpoints ya tiene tres copias
+  (`ProteccionTests` y `SinDatosArcaTests`). `App.test.tsx` escribe la contraseña con `fireEvent` en
+  lugar de `escribirEn`.

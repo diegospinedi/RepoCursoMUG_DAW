@@ -1,6 +1,9 @@
-import { cleanup, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { json, renderizarApp, servidorFalso, vacia } from './pruebas/servidorFalso';
+import fuenteApp from './App.tsx?raw';
+import { MENSAJE_BLOQUEADO } from './api/cliente';
+import { MENSAJE_CAMBIADA } from './paginas/CambiarContrasena';
+import { json, problemaGeneral, renderizarApp, servidorFalso, vacia } from './pruebas/servidorFalso';
 
 afterEach(cleanup);
 
@@ -29,5 +32,144 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Cambiar la contraseña' })).toBeTruthy();
     expect(screen.getByTestId('ubicacion').textContent).toBe('/cambiar-contrasena');
     expect(screen.getByRole('img', { name: 'Logo de la óptica' }).getAttribute('src')).toBe('/api/marca/logo');
+  });
+});
+
+/**
+ * Palabras enteras (con su plural) de los datos de ARCA que ninguna pantalla muestra (FR-06, AC-03). Enteras para no
+ * confundir otras palabras que las contienen.
+ */
+const DATOS_ARCA = /(?<![\p{L}\p{N}])(certificados?|puntos? de venta)(?![\p{L}\p{N}])/iu;
+
+/** Atributos que el navegador muestra o que lee un lector de pantalla, además del texto. */
+const ATRIBUTOS_VISIBLES = ['alt', 'title', 'placeholder', 'aria-label', 'value'];
+
+/**
+ * El texto de la pantalla, nodo por nodo, y el de sus atributos visibles, sin la sonda de ubicación de las pruebas.
+ * Cada nodo va en su línea: `textContent` los pegaría ("contraseñaPunto de venta") y la búsqueda de palabras enteras
+ * no vería el límite.
+ */
+function textoDeLaPantalla(): string {
+  const cuerpo = document.body.cloneNode(true) as HTMLElement;
+  cuerpo.querySelectorAll('[data-testid="ubicacion"]').forEach((sonda) => sonda.remove());
+  const textos: string[] = [];
+  const recorrido = document.createTreeWalker(cuerpo, NodeFilter.SHOW_TEXT);
+  for (let nodo = recorrido.nextNode(); nodo !== null; nodo = recorrido.nextNode()) {
+    textos.push(nodo.nodeValue ?? '');
+  }
+  const atributos = [...cuerpo.querySelectorAll('*')].flatMap((elemento) =>
+    ATRIBUTOS_VISIBLES.map((atributo) => elemento.getAttribute(atributo) ?? ''),
+  );
+  return [...textos, ...atributos].join('\n');
+}
+
+/**
+ * Las rutas que declara App.tsx (sin el comodín), leídas de su código para que una ruta nueva no quede afuera. Solo
+ * reconoce `<Route path="literal"`: si hay más `<Route` que rutas reconocidas, alguna está escrita de otra forma
+ * (`path={CONSTANTE}`, comillas simples, otro orden de atributos) y la prueba falla en lugar de dejarla sin revisar.
+ */
+function rutasDeLaApp(): string[] {
+  const declaradas = fuenteApp.match(/<Route\s/g)?.length ?? 0;
+  const reconocidas = [...fuenteApp.matchAll(/<Route\s+path="([^"]+)"/g)].map((coincidencia) => coincidencia[1]!);
+  expect(
+    reconocidas.length,
+    'App.tsx tiene una ruta escrita de una forma que esta prueba no reconoce: agregala a PANTALLAS o adaptá la ' +
+      'extracción de rutasDeLaApp',
+  ).toBe(declaradas);
+  return reconocidas.filter((r) => r !== '*');
+}
+
+interface Pantalla {
+  ruta: string;
+  descripcion: string;
+  preparar: () => void;
+  titulo: string;
+  estadoNavegacion?: unknown;
+  /** Lo que hace la persona para llegar a ese estado de la pantalla (por ejemplo, un ingreso bloqueado). */
+  interactuar?: () => Promise<void>;
+}
+
+const PANTALLAS: Pantalla[] = [
+  {
+    ruta: '/',
+    descripcion: 'inicio',
+    preparar: () =>
+      servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }), 'GET /api/sesion': vacia(204) }),
+    titulo: 'Sesión iniciada',
+  },
+  {
+    ruta: '/',
+    descripcion: 'inicio con el aviso del cambio',
+    preparar: () =>
+      servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }), 'GET /api/sesion': vacia(204) }),
+    titulo: 'Sesión iniciada',
+    estadoNavegacion: { mensaje: MENSAJE_CAMBIADA },
+  },
+  {
+    ruta: '/definir-contrasena',
+    descripcion: 'definición',
+    preparar: () => servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: false }) }),
+    titulo: 'Definí la contraseña de acceso',
+  },
+  {
+    ruta: '/ingreso',
+    descripcion: 'ingreso',
+    preparar: () => servidorFalso({}),
+    titulo: 'Ingresá al sistema',
+  },
+  {
+    ruta: '/ingreso',
+    descripcion: 'ingreso bloqueado',
+    preparar: () => servidorFalso({ 'POST /api/acceso/ingresar': problemaGeneral(423, MENSAJE_BLOQUEADO) }),
+    titulo: 'Ingresá al sistema',
+    interactuar: async () => {
+      fireEvent.change(screen.getByLabelText('Contraseña'), { target: { value: 'ocho1234' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
+      expect(await screen.findByText(MENSAJE_BLOQUEADO)).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/cambiar-contrasena',
+    descripcion: 'cambio de contraseña',
+    preparar: () => servidorFalso({ 'GET /api/sesion': vacia(204) }),
+    titulo: 'Cambiar la contraseña',
+  },
+];
+
+describe('Sin datos de ARCA en pantalla', () => {
+  it('Pantallas_NingunaMuestraDatosArca', async () => {
+    // Cada ruta de la App tiene al menos una pantalla revisada: una ruta nueva sin revisar hace fallar la prueba.
+    const rutas = rutasDeLaApp();
+    expect(rutas.length).toBeGreaterThan(0);
+    expect(
+      rutas.filter((ruta) => !PANTALLAS.some((p) => p.ruta === ruta)),
+      'Rutas de App.tsx sin una pantalla en PANTALLAS',
+    ).toEqual([]);
+
+    for (const pantalla of PANTALLAS) {
+      pantalla.preparar();
+      renderizarApp(
+        pantalla.estadoNavegacion === undefined
+          ? pantalla.ruta
+          : { pathname: pantalla.ruta, state: pantalla.estadoNavegacion },
+      );
+      expect(await screen.findByRole('heading', { name: pantalla.titulo })).toBeTruthy();
+      await pantalla.interactuar?.();
+
+      const encontrado = DATOS_ARCA.exec(textoDeLaPantalla());
+      expect(
+        encontrado?.[0] ?? null,
+        `La pantalla de ${pantalla.descripcion} (${pantalla.ruta}) muestra un dato de ARCA`,
+      ).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('DatosArca_SoloPalabrasEnteras', () => {
+    expect(DATOS_ARCA.test('Punto de Venta 3')).toBe(true);
+    expect(DATOS_ARCA.test('certificados vencidos')).toBe(true);
+    expect(DATOS_ARCA.test('concepto y receptor')).toBe(false);
+    expect(DATOS_ARCA.test('precertificado')).toBe(false);
+    expect(DATOS_ARCA.test('certificadora')).toBe(false);
   });
 });
