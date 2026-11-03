@@ -59,4 +59,34 @@ Las 61 pruebas requeridas por la spec existen con su nombre exacto y pasan.
 - P-3, NFR-02 con la versión inmediata anterior de Chrome y Edge (155; solo se probó la 156): **riesgo aceptado sin verificar.**
 - P-2, intermitencia de msedge W-VER-03 (2/11 en CODE, 0/6 en VERIFY): **aceptada para FEAT-001b.**
 
-Result: PASSED — sin FAIL, pero el usuario decidió volver a CODE para corregir el WARN 2 antes de cerrar.
+Resultado de la ronda 1: PASSED, sin FAIL. El usuario decidió volver a CODE para corregir el WARN 2 antes de cerrar.
+
+## Ronda 2 — 2026-11-03 (HEAD `3050913`, después del loop correctivo)
+
+Loop correctivo: commit `04506ca` (`ConflictoAlConfirmarException` sin causa) y re-cierre de CODE en
+`3050913`, con `tests-FEAT-001b.md` en 760/760 y SAST PASSED. Verificación cruzada de
+`ddw-module-verifier` en un clon fuera de `/mnt/c`.
+
+- Diff `1ee61a4..HEAD` en código y pruebas: solo `IUnidadDeTrabajo.cs` (constructor `(string mensaje)`)
+  y la prueba nueva `ConflictoAlConfirmar_NoAdmiteCausa_NingunConstructorRecibeExcepcion`. Todos los
+  usos ya pasaban un solo argumento.
+- WARN 2 cerrado: la prueba falla con el constructor anterior (`1ee61a4`) y con constructores
+  `private` o `internal` que reciben `Exception` o una subclase.
+- Suite: .NET 634/634, web 91/91, e2e unidad 25/25, harness 10/10 (chrome 5/5, msedge 5/5). Los 7 AC
+  y las 61 pruebas requeridas siguen en verde.
+- Lint: `dotnet format --verify-no-changes` con salida 0, `dotnet build --no-incremental` sin
+  advertencias, `npm run build` sin errores.
+- Cobertura .NET (unión de coverlet sin migraciones): líneas 94,3 % (2003/2125), ramas 92,2 % (616/668),
+  funciones 93,9 % (290/309). Web: 99,56/98,5/100.
+
+Warnings nuevos (no bloquean):
+- N1: la prueba de regresión no detecta un constructor con un parámetro `object` o `Exception[]` que
+  pase la causa a `base(...)`. El riesgo es bajo. Se endurecería exigiendo la firma única `(string)`.
+- N2, alerta de datos sensibles, deuda aceptada en `decisions-FEAT-001b.md`: las `DbUpdateException`
+  que no son conflicto se propagan con sus `Entries`, que pueden traer el hash. Hoy no llegan al log
+  (`ManejadorErroresNoControlados.Describir` escribe solo el tipo, el mensaje y la traza).
+
+Siguen abiertos los warnings 1 y 3 a 9 de la ronda 1, y los riesgos que el usuario aceptó sin
+verificar: el candado en Windows nativo y NFR-02 con Chrome y Edge 155.
+
+Result: PASSED
