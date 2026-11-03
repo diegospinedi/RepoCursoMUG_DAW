@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { json, renderizarApp, servidorFalso, vacia } from '../pruebas/servidorFalso';
 
@@ -63,6 +63,33 @@ describe('Inicio', () => {
       await screen.findByText('No se pudo completar la operación. Recargá la página y reintentá.'),
     ).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Sesión iniciada' })).toBeTruthy();
+  });
+
+  it('Inicio_EnlaceCambiarLaContrasena_LlevaALaPantallaDeCambio', async () => {
+    servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Cambiar la contraseña' });
+    expect(enlace.getAttribute('href')).toBe('/cambiar-contrasena');
+    // Sin un cambio previo, el inicio no muestra el mensaje de éxito.
+    expect(screen.queryByText('La contraseña se cambió.')).toBeNull();
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Cambiar la contraseña' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/cambiar-contrasena');
+  });
+
+  it.each([
+    ['sin mensaje', { otro: 'La contraseña se cambió.' }],
+    ['mensaje que no es texto', { mensaje: 42 }],
+    ['estado que no es objeto', 'La contraseña se cambió.'],
+  ])('Inicio_EstadoDeNavegacionAjeno_%s_NoMuestraAviso', async (_caso, state) => {
+    servidorFalso(conSesion);
+    renderizarApp([{ pathname: '/', state }]);
+
+    const pantalla = (await screen.findByRole('heading', { name: 'Sesión iniciada' })).closest('section');
+    // Dentro de la pantalla: la sonda de ubicación de las pruebas también tiene el rol status.
+    expect(within(pantalla!).queryByRole('status')).toBeNull();
   });
 
   describe('con reloj falso', () => {

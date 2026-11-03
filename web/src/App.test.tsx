@@ -20,4 +20,14 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: titulo })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Logo de la óptica' }).getAttribute('src')).toBe('/api/marca/logo');
   });
+
+  it('App_RutaCambiarContrasena_MuestraLaPantallaConElLogo', async () => {
+    servidorFalso({ 'GET /api/sesion': vacia(204) });
+
+    renderizarApp('/cambiar-contrasena');
+
+    expect(await screen.findByRole('heading', { name: 'Cambiar la contraseña' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/cambiar-contrasena');
+    expect(screen.getByRole('img', { name: 'Logo de la óptica' }).getAttribute('src')).toBe('/api/marca/logo');
+  });
 });

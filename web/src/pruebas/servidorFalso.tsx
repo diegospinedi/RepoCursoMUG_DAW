@@ -72,8 +72,16 @@ export function servidorFalso(rutas: Record<string, Respuesta | Respuesta[]>) {
 
 function Ubicacion() {
   const ubicacion = useLocation();
-  return <output data-testid="ubicacion">{ubicacion.pathname + ubicacion.search + ubicacion.hash}</output>;
+  // El estado de la navegación va en un atributo para que las pruebas comprueben que no lleva contraseñas.
+  return (
+    <output data-testid="ubicacion" data-estado={JSON.stringify(ubicacion.state ?? null)}>
+      {ubicacion.pathname + ubicacion.search + ubicacion.hash}
+    </output>
+  );
 }
+
+/** Una entrada del historial: la ruta, o la ruta con el estado de la navegación. */
+type Entrada = string | { pathname: string; state?: unknown };
 
 let navegarEnPrueba: NavigateFunction | null = null;
 
@@ -93,7 +101,7 @@ function Navegador() {
  * Monta la aplicación completa en un router en memoria, con una sonda que muestra la ruta actual. Con una lista de
  * rutas arma ese historial y arranca en la última; `volver()` equivale al botón Atrás del navegador.
  */
-export function renderizarApp(ruta: string | string[] = '/') {
+export function renderizarApp(ruta: Entrada | Entrada[] = '/') {
   const historial = Array.isArray(ruta) ? ruta : [ruta];
   const resultado = render(
     <MemoryRouter initialEntries={historial} initialIndex={historial.length - 1}>

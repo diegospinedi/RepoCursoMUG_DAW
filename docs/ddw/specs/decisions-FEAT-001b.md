@@ -235,3 +235,47 @@ este bloque — aceptada por el orquestador — 2026-11-03 — Block 5:
 - R-14 sigue siendo un riesgo documentado, no mitigado: los eventos de acceso de las operadoras,
   que ahora incluyen `restablecimiento`, no tienen retención. Hay que decidir una política antes de
   cargar datos reales de clientes.
+
+## Block 6 — Interfaz web: mensaje de bloqueo y cambio de contraseña
+
+Decisiones del usuario — 2026-11-03 — Block 6:
+
+- El 409 de `POST /api/acceso/cambiar` se muestra como fija la spec: un único mensaje, "No hay una
+  contraseña definida. Volvé a ingresar.", con el enlace al ingreso. Esto vale también para el 409
+  por conflicto de concurrencia del Block 4 (dos pestañas, o las dos operadoras cambiándola a la
+  vez), aunque en ese caso el texto no es exacto. Queda como deuda: lo más probable es que el usuario
+  vea el 409 de concurrencia, porque después de un restablecimiento la sesión anterior recibe 401.
+  Ninguna prueba fija qué se muestra ante el cuerpo de concurrencia.
+- En la segunda ronda solo se hace limpieza menor: las constantes `CAMPO_*` en lugar de los literales,
+  y en `cliente.test.ts` se importa `cambiarContrasena` directamente. Quedan sin cambios, como deuda
+  aceptada:
+  - Carrera al desmontar durante el envío: si se sale de la pantalla mientras el POST está en
+    curso, la respuesta igual navega a `/` con el aviso.
+  - El aviso "La contraseña se cambió." viaja como texto en `history.state` y reaparece al recargar
+    o al ir hacia atrás y adelante. Además, `Inicio` muestra cualquier `mensaje` de texto que llegue
+    en el estado.
+  - La región `role="status"` del aviso se monta junto con su texto y puede no ser anunciada por
+    los lectores de pantalla.
+  - `CambiarContrasena_SeDejaLaPantallaAntesDeLaRespuesta_NoHaceNada` no detecta que se quite la
+    guarda `vigente`.
+  - Hay código duplicado entre `CambiarContrasena`, `FormularioContrasena` y `Arranque`.
+
+Supuestos del implementador — aceptados por el orquestador — 2026-11-03 — Block 6:
+
+- El 413 de `cambiar` va a `contrasenaActual`, porque la nueva ya está limitada a 128 caracteres en el
+  navegador; `definir` e `ingresar` no cambian (opción `campo413`).
+- El 423 muestra el texto fijo de la spec, no el `detail` del servidor.
+- Si el 400 de `cambiar` nombra un campo desconocido, el error va a la contraseña actual, igual que
+  en la Api.
+- Si `GET /api/sesion` falla por red o 5xx al abrir la pantalla, se muestran el mensaje general y el
+  formulario; el envío vuelve a verificar la sesión.
+- Se agregan el enlace "Volver al inicio" y el mensaje "Ingresá la contraseña actual." para el caso
+  en que la contraseña actual está vacía.
+- `web/src/pruebas/servidorFalso.tsx`, que no figura en la spec, expone el estado de la navegación en
+  `data-estado` para comprobar que ninguna contraseña viaja ahí. Solo cambian las pruebas.
+
+Desvío de proceso, declarado por el implementador: en la ronda 1, las primeras ediciones de
+`web/src/api/cliente.ts`, `cliente.test.ts` e `Ingreso.test.tsx` se hicieron con un script de Python
+por Bash en lugar de Write o Edit, así que no pasaron por el hook PreToolUse. El auditor de
+arquitectura revisó los tres archivos: UTF-8 sin BOM, LF y sin cambios fuera de lugar. El
+verificador revisó su contenido final en el diff y es correcto.

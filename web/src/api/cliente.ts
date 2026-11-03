@@ -3,8 +3,8 @@
  * nunca la lee. Traduce cada respuesta a un {@link Resultado} que las pantallas muestran tal cual.
  *
  * Reglas de este archivo:
- * - La contraseña solo viaja en el cuerpo JSON de `definir` e `ingresar`: nunca en la URL, en el almacenamiento del
- *   navegador ni en la consola.
+ * - La contraseña solo viaja en el cuerpo JSON de `definir`, `ingresar` y `cambiar`: nunca en la URL, en el
+ *   almacenamiento del navegador ni en la consola.
  * - No hay consultas periódicas: cualquier pedido con cookie renueva la sesión en la Api, y una consulta automática la
  *   mantendría abierta sin que nadie use el sistema.
  * - Hay dos 401: con `errors` en el cuerpo es un rechazo del campo (contraseña incorrecta); vacío, o sin `errors`, es
@@ -17,9 +17,14 @@ export const MENSAJE_PEDIDO_RECHAZADO = 'No se pudo completar la operación. Rec
 export const MENSAJE_CUERPO_GRANDE = 'La contraseña es demasiado larga. Ingresá una de 128 caracteres o menos.';
 export const MENSAJE_YA_DEFINIDA = 'Ya hay una contraseña definida. Ingresá con ella.';
 export const MENSAJE_SIN_CONTRASENA = 'Todavía no hay una contraseña. Definí la contraseña primero.';
+export const MENSAJE_BLOQUEADO = 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.';
+export const MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR = 'No hay una contraseña definida. Volvé a ingresar.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
+/** Campos del cuerpo y de `errors` de `cambiar`. */
+export const CAMPO_ACTUAL = 'contrasenaActual';
+export const CAMPO_NUEVA = 'contrasenaNueva';
 
 export type Resultado<T> =
   | { tipo: 'ok'; datos: T }
@@ -29,6 +34,8 @@ export type Resultado<T> =
   | { tipo: 'conflicto'; mensaje: string }
   /** Error que se muestra como mensaje general de la pantalla. */
   | { tipo: 'general'; mensaje: string }
+  /** 423: el ingreso está bloqueado por intentos fallidos; se muestra como mensaje general. */
+  | { tipo: 'bloqueado'; mensaje: string }
   /** 401 sin cuerpo: no hay sesión (o venció). */
   | { tipo: 'sinSesion' };
 
@@ -59,6 +66,8 @@ interface Opciones {
   ruta: string;
   cuerpo?: unknown;
   mensaje409?: string;
+  /** Campo del formulario donde se muestra un 413 (cuerpo demasiado grande); por defecto, {@link CAMPO_CONTRASENA}. */
+  campo413?: string;
 }
 
 /** Pedido cuya respuesta exitosa trae datos: `leer` valida la forma del JSON. */
@@ -78,7 +87,7 @@ async function pedirSinDatos(opciones: Opciones): Promise<Resultado<void>> {
 }
 
 /** Hace el pedido: devuelve la respuesta exitosa, o el fallo ya traducido. */
-async function enviar({ metodo, ruta, cuerpo, mensaje409 }: Opciones): Promise<
+async function enviar({ metodo, ruta, cuerpo, mensaje409, campo413 }: Opciones): Promise<
   { tipo: 'respuesta'; respuesta: Response } | Fallo
 > {
   const init: RequestInit = { method: metodo, credentials: 'same-origin', cache: 'no-store' };
@@ -97,10 +106,14 @@ async function enviar({ metodo, ruta, cuerpo, mensaje409 }: Opciones): Promise<
     return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
   }
 
-  return respuesta.ok ? { tipo: 'respuesta', respuesta } : traducirError(respuesta, mensaje409);
+  return respuesta.ok ? { tipo: 'respuesta', respuesta } : traducirError(respuesta, mensaje409, campo413);
 }
 
-async function traducirError(respuesta: Response, mensaje409: string | undefined): Promise<Fallo> {
+async function traducirError(
+  respuesta: Response,
+  mensaje409: string | undefined,
+  campo413: string = CAMPO_CONTRASENA,
+): Promise<Fallo> {
   switch (respuesta.status) {
     case 400: {
       const error = primerError(await leerJson(respuesta));
@@ -117,7 +130,10 @@ async function traducirError(respuesta: Response, mensaje409: string | undefined
     case 409:
       return { tipo: 'conflicto', mensaje: mensaje409 ?? MENSAJE_PEDIDO_RECHAZADO };
     case 413:
-      return { tipo: 'campo', campo: CAMPO_CONTRASENA, mensaje: MENSAJE_CUERPO_GRANDE };
+      return { tipo: 'campo', campo: campo413, mensaje: MENSAJE_CUERPO_GRANDE };
+    case 423:
+      // El texto es propio, no el `detail` del servidor: la Api no informa hasta cuándo dura el bloqueo.
+      return { tipo: 'bloqueado', mensaje: MENSAJE_BLOQUEADO };
     case 429:
       return { tipo: 'general', mensaje: MENSAJE_OCUPADO };
     default:
@@ -189,3 +205,16 @@ export const ingresar = (contrasena: string) =>
   });
 
 export const salir = () => pedirSinDatos({ metodo: 'POST', ruta: '/api/acceso/salir' });
+
+/**
+ * Cambia la contraseña con la sesión iniciada. Un 413 va al campo de la actual: la nueva ya se validó en el navegador
+ * (hasta 128 caracteres), así que solo la actual puede hacer que el cuerpo supere el límite de la Api.
+ */
+export const cambiarContrasena = (actual: string, nueva: string) =>
+  pedirSinDatos({
+    metodo: 'POST',
+    ruta: '/api/acceso/cambiar',
+    cuerpo: { [CAMPO_ACTUAL]: actual, [CAMPO_NUEVA]: nueva },
+    mensaje409: MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR,
+    campo413: CAMPO_ACTUAL,
+  });

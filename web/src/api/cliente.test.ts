@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { json, problema, problemaGeneral, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 import {
   alPerderLaSesion,
+  cambiarContrasena,
   consultarEstado,
   consultarMarca,
   consultarSesion,
@@ -132,6 +133,47 @@ describe('cliente de la Api', () => {
     expect(await definirContrasena('ocho1234')).toEqual({
       tipo: 'general',
       mensaje: 'No se pudo completar la operación. Recargá la página y reintentá.',
+    });
+  });
+
+  it('Cliente_423EnIngresar_BloqueadoConSuMensaje', async () => {
+    servidorFalso({ 'POST /api/acceso/ingresar': problemaGeneral(423, 'texto del servidor') });
+
+    expect(await ingresar('ocho1234')).toEqual({
+      tipo: 'bloqueado',
+      mensaje: 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.',
+    });
+  });
+
+  it('Cliente_Cambiar_EnviaLasDosEnElCuerpo', async () => {
+    const servidor = servidorFalso({ 'POST /api/acceso/cambiar': vacia(204) });
+
+    expect(await cambiarContrasena('anterior1', 'nueva12345')).toEqual({ tipo: 'ok', datos: undefined });
+    const [pedido] = servidor.pedidosA('POST', '/api/acceso/cambiar');
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ contrasenaActual: 'anterior1', contrasenaNueva: 'nueva12345' });
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it.each([
+    [409, { tipo: 'conflicto', mensaje: 'No hay una contraseña definida. Volvé a ingresar.' }],
+    [413, { tipo: 'campo', campo: 'contrasenaActual', mensaje: 'La contraseña es demasiado larga. Ingresá una de 128 caracteres o menos.' }],
+    [415, { tipo: 'general', mensaje: 'No se pudo completar la operación. Recargá la página y reintentá.' }],
+    [429, { tipo: 'general', mensaje: 'El sistema está ocupado. Intentá de nuevo en un momento.' }],
+    [500, { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION }],
+  ] as const)('Cliente_Cambiar%i_MensajeQueCorresponde', async (estado, esperado) => {
+    servidorFalso({ 'POST /api/acceso/cambiar': vacia(estado) });
+
+    expect(await cambiarContrasena('anterior1', 'nueva12345')).toEqual(esperado);
+  });
+
+  it('Cliente_Cambiar400_ErrorEnElCampoQueIndicaLaApi', async () => {
+    servidorFalso({ 'POST /api/acceso/cambiar': problema(400, 'contrasenaNueva', 'No es válida.') });
+
+    expect(await cambiarContrasena('anterior1', 'nueva12345')).toEqual({
+      tipo: 'campo',
+      campo: 'contrasenaNueva',
+      mensaje: 'No es válida.',
     });
   });
 

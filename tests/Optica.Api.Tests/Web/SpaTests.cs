@@ -75,7 +75,7 @@ public sealed class SpaTests : IDisposable
         var cliente = Cliente(conWeb);
 
         // La raíz, una ruta de la SPA (enlace directo o recarga) y un archivo estático.
-        foreach (var ruta in new[] { "/", "/ingreso", "/definir-contrasena" })
+        foreach (var ruta in new[] { "/", "/ingreso", "/definir-contrasena", "/cambiar-contrasena" })
         {
             var respuesta = await Http.GetAsync(cliente, ruta);
 
