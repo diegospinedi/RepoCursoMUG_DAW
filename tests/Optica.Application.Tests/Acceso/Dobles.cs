@@ -38,6 +38,11 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
 
     public void Registrar(EventoAcceso evento) => _eventosPendientes.Add(evento);
 
+    /// <summary>Como la consulta real, solo ve los eventos confirmados.</summary>
+    public Task<IReadOnlyList<DateTime>> ObtenerRechazosIngresoDesdeUltimoReinicioAsync(
+        CancellationToken cancelacion = default) =>
+        Task.FromResult(PoliticaBloqueo.RechazosDesdeUltimoReinicio(Eventos));
+
     public Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         Confirmaciones++;

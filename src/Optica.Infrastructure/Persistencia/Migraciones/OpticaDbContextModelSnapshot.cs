@@ -59,6 +59,8 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("FechaHora");
 
+                    b.HasIndex("Tipo", "Resultado");
+
                     b.ToTable("EventoAcceso", (string)null);
                 });
 #pragma warning restore 612, 618

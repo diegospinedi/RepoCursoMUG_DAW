@@ -48,3 +48,34 @@ bloque cumple como parte del bloque — aceptadas por el orquestador — 2026-11
 
 Desvío de proceso del orquestador: renumeró referencias a bloques del modelo de amenazas con `sed`
 en lugar de Edit; el documento se revalidó después.
+
+## Block 1 — Política de bloqueo y consulta de rechazos
+
+Supuestos del implementador (2 rondas) — aceptados por el orquestador — 2026-11-03 — Block 1:
+
+- `PoliticaBloqueo.RechazosDesdeUltimoReinicio(eventos)` queda en Domain como oráculo de referencia
+  de la consulta (no lo usa producción); lo usan el doble `AlmacenEnMemoria` y una prueba de
+  equivalencia que compara sus fechas con las del SQL en cuatro escenarios.
+- `PoliticaBloqueo.Evaluar` y `EstadoBloqueo.BloqueadoHasta` exigen fechas UTC (`ArgumentException`)
+  y no nulas; Block 2 pasa `reloj.GetUtcNow().UtcDateTime`.
+- El resultado es el record `EstadoBloqueo` (`EstaBloqueado`, `Hasta` nulo si no hay bloqueo).
+- La consulta solo ve eventos confirmados: para responder 423 en el quinto rechazo, Block 2 evalúa
+  la política con el rechazo recién registrado agregado a la lista.
+- La comparación de textos distingue mayúsculas (colación BINARY): `INGRESO` o `Exito` son textos
+  desconocidos, no cuentan ni reinician.
+- Fuente única: `PoliticaBloqueo.EventoQueCuenta` (`ingreso/rechazo`) y `EventosQueReinician`; la
+  consulta arma sus filtros desde ahí.
+- Excepción a "parameterized queries for all data values" (`AGENTS.md`): los textos del esquema
+  (`ingreso`, `rechazo`, `exito`, …) van como constantes en la expresión de EF, para que
+  `ToQueryString()` sea ejecutable en `EXPLAIN QUERY PLAN`. Salen de `TextoDe` sobre enums cerrados
+  del dominio, nunca de datos del usuario ni de la base; si `ArmarCoincideCon` llegara a recibir
+  valores externos, se vuelve a parametrizar. Las fechas y los Id no entran como literales.
+- Migración `20261103130011_IndiceEventoAccesoTipoResultado` generada con `dotnet ef`; la prueba
+  exige la lista exacta de migraciones a propósito para fijar el orden, y Block 3 la extiende con
+  `TokenConcurrenciaCredencial`. En tickets futuros conviene relajarla a "presentes y en orden".
+- `tests/Optica.Api.Tests/ArranqueYErroresTests.cs` y `RegistroTests.cs` no se tocaron: sus dobles no
+  implementan `IRegistroEventosAcceso` (la spec los listaba de más).
+
+Pendientes menores: `ArmarCoincideCon` usa `Aggregate` sin semilla y fallaría con una lista vacía
+(hoy no puede pasar); las guardas del constructor de `EventoAcceso` siguen sin prueba (FEAT-001a);
+el SAST de FEAT-001b tiene que mencionar la excepción de constantes en F-SAST-02.

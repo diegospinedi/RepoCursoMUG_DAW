@@ -3,6 +3,8 @@ using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
@@ -236,6 +238,281 @@ public class AccesoPersistenciaTests
         Assert.IsType<UnidadDeTrabajoEf>(proveedor.GetRequiredService<IUnidadDeTrabajo>());
         Assert.IsType<HasherContrasenaPbkdf2>(proveedor.GetRequiredService<IHasherContrasena>());
         Assert.NotNull(proveedor.GetRequiredService<TimeProvider>());
+    }
+
+    [Fact]
+    public async Task RegistroEventos_TextoDesconocido_IgnoradoSinError()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        // Filas de otra versión: textos que esta no conoce (y fechas ilegibles), entre rechazos conocidos. Ninguna
+        // cuenta ni reinicia, y como no se leen, su fecha no hace fallar la consulta. La comparación distingue
+        // mayúsculas: 'INGRESO'/'exito' no reinicia y 'ingreso'/'RECHAZO' no cuenta (su fecha es legible a propósito,
+        // para que contarla se vea en la lista y no como un error de lectura).
+        Ejecutar(cadena, """
+            INSERT INTO EventoAcceso (Tipo, Resultado, FechaHora) VALUES
+                ('ingreso', 'rechazo', '2026-11-03T12:00:00.0000000Z'),
+                ('futuro', 'exito', 'no es una fecha'),
+                ('ingreso', 'desconocido', 'tampoco'),
+                ('INGRESO', 'EXITO', '???'),
+                ('definicion', 'Exito', '???'),
+                ('ingreso', 'rechazo', '2026-11-03T12:00:10.0000000Z'),
+                ('INGRESO', 'exito', '???'),
+                ('ingreso', 'RECHAZO', '2026-11-03T12:00:15.0000000Z'),
+                ('ingreso', 'rechazo', '2026-11-03T12:00:20.0000000Z');
+            """);
+        var contexto = baseTemporal.CrearContexto();
+
+        IReadOnlyList<DateTime>? rechazos = null;
+        var error = await Record.ExceptionAsync(async () =>
+            rechazos = await new RegistroEventosAccesoEf(contexto).ObtenerRechazosIngresoDesdeUltimoReinicioAsync());
+
+        Assert.Null(error);
+        Assert.Equal(
+            [
+                new DateTime(2026, 11, 3, 12, 0, 0, DateTimeKind.Utc),
+                new DateTime(2026, 11, 3, 12, 0, 10, DateTimeKind.Utc),
+                new DateTime(2026, 11, 3, 12, 0, 20, DateTimeKind.Utc),
+            ],
+            rechazos);
+    }
+
+    [Fact]
+    public async Task RegistroEventos_RechazosDesdeUltimoReinicio_OrdenadosPorId()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var t0 = Instante.UtcDateTime;
+        var contexto = baseTemporal.CrearContexto();
+        var registro = new RegistroEventosAccesoEf(contexto);
+
+        // Sin eventos, la cuenta está vacía.
+        Assert.Empty(await registro.ObtenerRechazosIngresoDesdeUltimoReinicioAsync());
+
+        // El reinicio tiene una fecha anterior a la del rechazo previo, pero un Id mayor: manda el Id. Después, la hora
+        // de la PC se atrasa y los rechazos quedan con fechas fuera de orden. Bloqueado, el rechazo de un cambio y la
+        // salida no cuentan ni reinician.
+        await Registrar(contexto,
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, t0.AddMinutes(1)),
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Exito, t0.AddHours(-2)),
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, t0.AddMinutes(10)),
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, t0.AddHours(-1)),
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Bloqueado, t0.AddMinutes(11)),
+            (TipoEventoAcceso.CambioContrasena, ResultadoEventoAcceso.Rechazo, t0.AddMinutes(12)),
+            (TipoEventoAcceso.Salida, ResultadoEventoAcceso.Exito, t0.AddMinutes(13)),
+            (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, t0.AddMinutes(-30)));
+
+        var rechazos = await registro.ObtenerRechazosIngresoDesdeUltimoReinicioAsync();
+
+        Assert.Equal([t0.AddMinutes(10), t0.AddHours(-1), t0.AddMinutes(-30)], rechazos);
+        Assert.All(rechazos, fecha => Assert.Equal(DateTimeKind.Utc, fecha.Kind));
+
+        // Cada evento que reinicia deja la cuenta en cero, y el rechazo siguiente vuelve a contar.
+        foreach (var (tipo, resultado) in PoliticaBloqueo.EventosQueReinician)
+        {
+            await Registrar(contexto, (tipo, resultado, t0.AddMinutes(20)));
+            Assert.Empty(await registro.ObtenerRechazosIngresoDesdeUltimoReinicioAsync());
+
+            await Registrar(contexto, (TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, t0.AddMinutes(21)));
+            Assert.Equal([t0.AddMinutes(21)], await registro.ObtenerRechazosIngresoDesdeUltimoReinicioAsync());
+        }
+
+        // Los textos nuevos quedan como los declara la spec.
+        var textos = Filas(cadena, "SELECT DISTINCT Tipo || '/' || Resultado FROM EventoAcceso").Select(f => f[0]);
+        Assert.Contains("ingreso/bloqueado", textos);
+        Assert.Contains("cambio_contrasena/rechazo", textos);
+        Assert.Contains("cambio_contrasena/exito", textos);
+        Assert.Contains("restablecimiento/exito", textos);
+    }
+
+    [Fact]
+    public void RegistroEventos_CadaValorTieneTextoYUnoFueraDelEnumSeRechaza()
+    {
+        // Todo valor declarado tiene su texto, distinto de los demás: un valor nuevo sin texto rompe esta prueba.
+        var tipos = Enum.GetValues<TipoEventoAcceso>().Select(RegistroEventosAccesoEf.TextoDe).ToList();
+        var resultados = Enum.GetValues<ResultadoEventoAcceso>().Select(RegistroEventosAccesoEf.TextoDe).ToList();
+        Assert.Equal(tipos.Count, tipos.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(resultados.Count, resultados.Distinct(StringComparer.Ordinal).Count());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => RegistroEventosAccesoEf.TextoDe((TipoEventoAcceso)99));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RegistroEventosAccesoEf.TextoDe((ResultadoEventoAcceso)99));
+    }
+
+    [Fact]
+    public void Migracion_IndiceTipoResultado_CreadoYRevertible()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+
+        // Las migraciones del ensamblado, en orden, y todas aplicadas.
+        var migraciones = contexto.Database.GetMigrations().ToList();
+        Assert.Equal(["Inicial", "IndiceEventoAccesoTipoResultado"], migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
+        Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
+        Assert.Equal("20261030220627_Inicial", migraciones[0]);
+        Assert.Equal(migraciones, contexto.Database.GetAppliedMigrations());
+
+        // El índice existe, no es único, cubre (Tipo, Resultado) en ese orden y lo usa la consulta real de rechazos.
+        AfirmarIndiceTipoResultado(cadena);
+        AfirmarPlanUsaIndiceTipoResultado(contexto, cadena);
+
+        Ejecutar(cadena,
+            "INSERT INTO EventoAcceso (Tipo, Resultado, FechaHora) VALUES ('ingreso', 'rechazo', '2026-11-03T12:00:00.0000000Z')");
+        var migrador = contexto.GetService<IMigrator>();
+
+        // Revertir hasta Inicial elimina solo el índice: los datos y el índice de FechaHora quedan.
+        migrador.Migrate(migraciones[0]);
+        Assert.DoesNotContain("IX_EventoAcceso_Tipo_Resultado", Indices(cadena));
+        Assert.Contains("IX_EventoAcceso_FechaHora", Indices(cadena));
+        Assert.Single(Filas(cadena, "SELECT Id FROM EventoAcceso"));
+        Assert.Equal([migraciones[0]], contexto.Database.GetAppliedMigrations());
+
+        // Y volver a aplicarla lo recrea.
+        migrador.Migrate();
+        AfirmarIndiceTipoResultado(cadena);
+        Assert.Empty(contexto.Database.GetPendingMigrations());
+    }
+
+    [Fact]
+    public async Task RegistroEventos_ConsultaYOraculoDeDominio_MismasFechasEnElMismoOrden()
+    {
+        // Cada escenario: filas tal como quedan en la tabla (texto de Tipo, texto de Resultado, minuto respecto de
+        // Instante). Los minutos van fuera de orden a propósito: el orden que vale es el de registro (Id).
+        (string Nombre, (string Tipo, string Resultado, int Minuto)[] Filas)[] escenarios =
+        [
+            ("sin reinicio",
+            [
+                ("ingreso", "rechazo", 3), ("ingreso", "rechazo", -2), ("salida", "exito", 4),
+                ("cambio_contrasena", "rechazo", 5), ("ingreso", "rechazo", 1),
+            ]),
+            ("con reinicio en el medio",
+            [
+                ("ingreso", "rechazo", 1), ("ingreso", "rechazo", 2), ("ingreso", "exito", 3),
+                ("ingreso", "rechazo", 9), ("definicion", "exito", 4), ("ingreso", "rechazo", -5),
+                ("ingreso", "rechazo", 6), ("cambio_contrasena", "exito", 7), ("ingreso", "rechazo", 8),
+                ("restablecimiento", "exito", 0), ("ingreso", "rechazo", 10), ("ingreso", "rechazo", -1),
+            ]),
+            ("textos desconocidos",
+            [
+                ("ingreso", "rechazo", 1), ("INGRESO", "exito", 2), ("ingreso", "rechazo", 3),
+                ("ingreso", "RECHAZO", 4), ("futuro", "exito", 5), ("definicion", "Exito", 6),
+                ("ingreso", "desconocido", 7), ("ingreso", "rechazo", 0),
+            ]),
+            ("bloqueados intercalados",
+            [
+                ("ingreso", "rechazo", 1), ("ingreso", "bloqueado", 2), ("ingreso", "rechazo", 3),
+                ("ingreso", "bloqueado", 4), ("ingreso", "exito", 5), ("ingreso", "bloqueado", 6),
+                ("ingreso", "rechazo", 8), ("ingreso", "bloqueado", 9), ("ingreso", "rechazo", 7),
+                ("cambio_contrasena", "rechazo", 10), ("ingreso", "bloqueado", 11),
+            ]),
+        ];
+
+        var tipos = Enum.GetValues<TipoEventoAcceso>().ToDictionary(t => RegistroEventosAccesoEf.TextoDe(t), StringComparer.Ordinal);
+        var resultados = Enum.GetValues<ResultadoEventoAcceso>()
+            .ToDictionary(r => RegistroEventosAccesoEf.TextoDe(r), StringComparer.Ordinal);
+
+        foreach (var (nombre, filas) in escenarios)
+        {
+            using var baseTemporal = new BaseTemporal();
+            foreach (var (tipo, resultado, minuto) in filas)
+            {
+                InsertarFila(CadenaDe(baseTemporal), tipo, resultado, Instante.UtcDateTime.AddMinutes(minuto));
+            }
+
+            // Las filas con textos desconocidos no son eventos de esta versión: el oráculo no las ve.
+            var eventos = filas
+                .Where(f => tipos.ContainsKey(f.Tipo) && resultados.ContainsKey(f.Resultado))
+                .Select(f => new EventoAcceso(tipos[f.Tipo], resultados[f.Resultado], Instante.UtcDateTime.AddMinutes(f.Minuto)));
+            var oraculo = PoliticaBloqueo.RechazosDesdeUltimoReinicio(eventos);
+            Assert.NotEmpty(oraculo);
+
+            var consulta = await new RegistroEventosAccesoEf(baseTemporal.CrearContexto())
+                .ObtenerRechazosIngresoDesdeUltimoReinicioAsync();
+
+            Assert.Equal(Describir(nombre, oraculo), Describir(nombre, consulta));
+        }
+    }
+
+    private static string Describir(string escenario, IEnumerable<DateTime> fechas) =>
+        $"{escenario}: {string.Join(", ", fechas.Select(f => f.ToString("O", CultureInfo.InvariantCulture)))}";
+
+    private static void InsertarFila(string cadena, string tipo, string resultado, DateTime fecha)
+    {
+        using var conexion = new SqliteConnection(cadena);
+        conexion.Open();
+        using var comando = conexion.CreateCommand();
+        comando.CommandText = "INSERT INTO EventoAcceso (Tipo, Resultado, FechaHora) VALUES ($tipo, $resultado, $fecha)";
+        comando.Parameters.AddWithValue("$tipo", tipo);
+        comando.Parameters.AddWithValue("$resultado", resultado);
+        comando.Parameters.AddWithValue("$fecha", fecha.ToString("O", CultureInfo.InvariantCulture));
+        comando.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// <c>EXPLAIN QUERY PLAN</c> sobre el SQL que genera la consulta real: la principal y la subconsulta del último
+    /// reinicio buscan por <c>IX_EventoAcceso_Tipo_Resultado</c>, sin recorrer la tabla ni ordenar aparte.
+    /// </summary>
+    private static void AfirmarPlanUsaIndiceTipoResultado(OpticaDbContext contexto, string cadena)
+    {
+        var sql = new RegistroEventosAccesoEf(contexto).ConsultaRechazosIngresoDesdeUltimoReinicio().ToQueryString();
+        // Columnas: id, parent, notused, detail.
+        var plan = Filas(cadena, "EXPLAIN QUERY PLAN " + sql);
+        var resumen = string.Join(" | ", plan.Select(f => $"{f[0]}<{f[1]}: {f[3]}"));
+
+        Assert.DoesNotContain(plan, f => f[3].StartsWith("SCAN", StringComparison.Ordinal));
+        Assert.DoesNotContain(plan, f => f[3].Contains("TEMP B-TREE", StringComparison.Ordinal));
+        var busquedas = plan.Where(f => f[3].StartsWith("SEARCH", StringComparison.Ordinal)).ToList();
+        Assert.All(busquedas, f => Assert.Contains("IX_EventoAcceso_Tipo_Resultado", f[3], StringComparison.Ordinal));
+
+        // La principal busca en el nivel de arriba; la subconsulta, debajo de su nodo SUBQUERY.
+        Assert.True(busquedas.Any(f => f[1] == "0"), $"La consulta principal no busca por el índice: {resumen}");
+        var subconsultas = plan.Where(f => f[3].Contains("SUBQUERY", StringComparison.Ordinal)).Select(f => f[0]).ToHashSet();
+        Assert.True(subconsultas.Count > 0, $"No hay subconsulta en el plan: {resumen}");
+        Assert.True(
+            busquedas.Any(f => DesciendeDe(plan, f, subconsultas)),
+            $"La subconsulta no busca por el índice: {resumen}");
+    }
+
+    private static bool DesciendeDe(List<string[]> plan, string[] fila, HashSet<string> ancestros)
+    {
+        var padre = fila[1];
+        while (padre != "0")
+        {
+            if (ancestros.Contains(padre))
+            {
+                return true;
+            }
+
+            padre = plan.Single(f => f[0] == padre)[1];
+        }
+
+        return false;
+    }
+
+    private static async Task Registrar(
+        OpticaDbContext contexto, params (TipoEventoAcceso Tipo, ResultadoEventoAcceso Resultado, DateTime Fecha)[] eventos)
+    {
+        var registro = new RegistroEventosAccesoEf(contexto);
+        foreach (var (tipo, resultado, fecha) in eventos)
+        {
+            registro.Registrar(new EventoAcceso(tipo, resultado, fecha));
+        }
+
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+    }
+
+    private static List<string> Indices(string cadena) =>
+        [.. Filas(cadena, "SELECT name FROM pragma_index_list('EventoAcceso')").Select(f => f[0])];
+
+    private static void AfirmarIndiceTipoResultado(string cadena)
+    {
+        var indice = Assert.Single(Filas(cadena,
+            "SELECT \"unique\" FROM pragma_index_list('EventoAcceso') WHERE name = 'IX_EventoAcceso_Tipo_Resultado'"));
+        Assert.Equal("0", indice[0]);
+        Assert.Equal(
+            ["Tipo", "Resultado"],
+            Filas(cadena, "SELECT name FROM pragma_index_info('IX_EventoAcceso_Tipo_Resultado') ORDER BY seqno")
+                .Select(f => f[0]));
     }
 
     private static DefinirContrasena CrearDefinir(OpticaDbContext contexto, IHasherContrasena hasher) =>

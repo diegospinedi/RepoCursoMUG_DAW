@@ -6,6 +6,8 @@ public enum TipoEventoAcceso
     Definicion,
     Ingreso,
     Salida,
+    CambioContrasena,
+    Restablecimiento,
 }
 
 /// <summary>Resultado de un evento de acceso.</summary>
@@ -13,6 +15,9 @@ public enum ResultadoEventoAcceso
 {
     Exito,
     Rechazo,
+
+    /// <summary>El intento no se evaluó porque el ingreso estaba bloqueado (<see cref="PoliticaBloqueo"/>).</summary>
+    Bloqueado,
 }
 
 /// <summary>
