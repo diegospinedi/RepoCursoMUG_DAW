@@ -1,12 +1,13 @@
 # Instalación en la PC del local — Óptica Sistema
 
 Procedimiento para instalar la aplicación en la PC de la óptica (Windows 10 u 11). Corresponde a FEAT-001a
-(ingreso, sesión y marca). Seguí los pasos en orden: el paso 6 (definir la contraseña) se hace **antes** de conectar
-la aplicación a la red local.
+(ingreso, sesión y marca) y FEAT-001b (bloqueo por intentos fallidos, cambio y restablecimiento de la contraseña).
+Seguí los pasos en orden: el paso 6 (definir la contraseña) se hace **antes** de conectar la aplicación a la red local.
+Si se olvida la contraseña, el restablecimiento en la PC está en la sección 10.
 
-> **Antes de empezar.** Esta versión todavía no bloquea el acceso después de varios intentos fallidos; ese bloqueo
-> llega con FEAT-001b. **No cargues datos reales** (clientes, presupuestos, facturas) hasta que FEAT-001b esté
-> instalado (riesgo R-03 del modelo de amenazas).
+> **Bloqueo por intentos fallidos.** Desde FEAT-001b, después de 5 intentos de ingreso fallidos seguidos el ingreso
+> queda bloqueado 5 minutos, también si se reinicia la Api (riesgo R-03 del modelo de amenazas, ya mitigado). Antes de
+> cargar datos reales de clientes, revisá la sección 8.
 
 ## 1. Qué se instala y dónde
 
@@ -18,7 +19,11 @@ absolutas y fuera de la copia del código):
 | `C:\OpticaSistema\App` | La Api publicada (`Optica.Api.exe` y sus archivos) | — |
 | `C:\OpticaSistema\App\wwwroot` | La interfaz web compilada (`index.html` y `assets\`) | `Optica:Web:Directorio` |
 | `C:\OpticaSistema\Marca` | La marca real: `branding.json` y el logo | `Optica:Marca:Directorio` |
-| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db` y las claves de sesión (`claves\`) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
+| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db`, las claves de sesión (`claves\`) y el candado de instancia (`optica.instancia`) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
+
+`optica.instancia` es un archivo vacío que la Api mantiene abierto en exclusiva mientras corre: una segunda Api sobre la
+misma carpeta de datos no arranca (registra un error crítico y termina), y el restablecimiento de la sección 10 se niega
+mientras la Api está en marcha. No lo borres con la Api en marcha; con la Api detenida no hace falta tocarlo.
 
 > **`Optica:Web:Directorio` nunca apunta a la carpeta de la aplicación** (`C:\OpticaSistema\App`) ni a una carpeta que
 > la contenga (`C:\OpticaSistema`, `C:\`): todo lo que hay en esa carpeta se serviría sin sesión, incluidos
@@ -87,8 +92,9 @@ La carpeta de datos (`%LOCALAPPDATA%\OpticaSistema` de la cuenta de la Api) ya q
 esa cuenta, SYSTEM y Administradores. No la compartas en red.
 
 Carpeta de backups (sección 9): control total para Administradores y SYSTEM, y modificación para la cuenta de la Api,
-que es la que genera los backups. Ninguna otra cuenta la lee: los backups contienen el hash de la contraseña y, más
-adelante, los datos de los clientes. Si está en un disco externo, tiene que ser NTFS (FAT32 y exFAT no guardan
+que es la que genera los backups. Ninguna otra cuenta la lee: los backups contienen el hash de la contraseña, los
+eventos de acceso (fecha y hora de cada ingreso, rechazo, bloqueo, cambio y restablecimiento: datos personales de las
+operadoras, riesgo R-14) y, más adelante, los datos de los clientes. Si está en un disco externo, tiene que ser NTFS (FAT32 y exFAT no guardan
 permisos).
 
 ```powershell
@@ -229,7 +235,11 @@ Recién con la contraseña definida:
   (ver §1).
 - **Marca:** después de cambiar `branding.json` o el logo, reiniciá la Api.
 - **`npm run dev`:** nunca contra una Api con datos reales.
-- **Datos reales:** no los cargues antes de instalar FEAT-001b.
+- **Datos reales:** con FEAT-001b instalado, el ingreso ya se bloquea después de 5 intentos fallidos (R-03). Antes de
+  cargar datos reales de clientes hay que revisar la retención de los eventos de acceso (R-14): hoy se guardan sin
+  límite, en la base y en cada backup (sección 9).
+- **Restablecimiento:** solo con la Api detenida y desde la PC, con la cuenta de la Api (sección 10). No hay pantalla
+  ni dirección web para restablecer la contraseña, y no hay que agregarla.
 
 ## 9. Copia de seguridad (backup)
 
@@ -250,9 +260,12 @@ C:\OpticaSistema\Herramientas\sqlite3.exe "$env:LOCALAPPDATA\OpticaSistema\optic
 ```
 
 (o con la ruta completa de la carpeta de datos de la cuenta de la Api). El archivo de destino no debe existir.
-Guardá los backups en un medio con acceso restringido: contienen el hash de la contraseña y, más adelante, los datos
-de los clientes. Las claves de `claves\` no hace falta respaldarlas: si se pierden, solo se cierran las sesiones
-abiertas.
+Guardá los backups en un medio con acceso restringido: contienen el hash de la contraseña, **los eventos de acceso**
+(fecha y hora de cada ingreso, rechazo, bloqueo, cambio y restablecimiento: datos personales de las operadoras, que se
+guardan sin límite de tiempo, riesgo R-14) y, más adelante, los datos de los clientes. **Cada backup se guarda con la
+misma protección que `optica.db`**: la carpeta de backups de la sección 4, sin compartirla en red, y un medio externo
+solo si es NTFS con esos mismos permisos. Las claves de `claves\` no hace falta respaldarlas: si se pierden, solo se
+cierran las sesiones abiertas.
 
 ### Restaurar un backup
 
@@ -280,3 +293,53 @@ abiertas.
    El segundo comando tiene que responder `ok`.
 4. Iniciá la Api e ingresá con la contraseña **vigente a la fecha del backup** (la contraseña viaja con la base).
 5. Cuando compruebes que todo funciona, borrá la carpeta `anterior`: tiene los mismos datos sensibles que un backup.
+
+## 10. Restablecer la contraseña olvidada (en la PC del local)
+
+Si nadie recuerda la contraseña, se restablece **desde la PC del local, con la cuenta de la Api y la Api detenida**.
+No hay pantalla ni dirección web para hacerlo (FR-05). El comando elimina solo la contraseña, registra un evento
+`restablecimiento` en el historial de accesos y vacía las claves de sesión (`claves\`), así **todas las sesiones
+abiertas se cierran**. No modifica ningún otro dato. Después, la aplicación vuelve a pedir "Definí la contraseña de
+acceso", como en la instalación: por eso se vuelve a restringir a `localhost` antes de definirla (R-02, R-11).
+
+Quien opere la PC con la cuenta de la Api puede restablecer la contraseña y definir una propia (R-08): la protección
+física de la PC y de esa cuenta queda a cargo del negocio. El evento queda registrado con la fecha y la hora.
+
+1. **Hacé un backup** con `VACUUM INTO`, como en la sección 9 (con un nombre de archivo nuevo). Es la forma de volver
+   atrás si algo sale mal.
+2. **Detené la Api** (cerrá su ventana o detené la tarea que la ejecuta) y comprobá que no quedó corriendo:
+   `Get-Process Optica.Api -ErrorAction SilentlyContinue` no tiene que mostrar nada.
+3. **Restringí la Api a `localhost`** en `C:\OpticaSistema\App\appsettings.Production.json`, como en el paso 1 de la
+   sección 6: `"AllowedHosts": "localhost"` y el endpoint `"Url": "https://localhost:5001"`. Así, cuando vuelva a
+   arrancar sin contraseña, ningún otro equipo de la red puede definirla primero.
+4. **Ejecutá el comando con la cuenta de la Api**, en PowerShell sin elevar, desde la carpeta de la aplicación:
+
+   ```powershell
+   cd C:\OpticaSistema\App
+   .\Optica.Api.exe restablecer-contrasena
+   $LASTEXITCODE
+   ```
+
+   El comando muestra la carpeta de datos (sin expandir la carpeta del usuario) y lo que va a hacer, y pide escribir
+   `RESTABLECER`. Cualquier otra respuesta cancela sin cambiar nada. `$LASTEXITCODE` vale `0` si restableció, `1` si
+   se canceló y `2` si falló. Usá siempre la cuenta de la Api: con otra cuenta, el comando busca la base en otra
+   carpeta, no la encuentra y termina sin crear nada.
+
+   **Mientras el comando espera que escribas `RESTABLECER`, la Api no puede arrancar** (el comando tiene tomado el
+   candado de la carpeta de datos). No dejes la consola abierta esperando: si decidís no seguir, cerrá la ventana o
+   presioná Ctrl+C, y no se cambia nada.
+
+   | Mensaje | Qué hacer |
+   |---|---|
+   | "La aplicación está en marcha. Detenela antes de restablecer la contraseña." | Volvé al paso 2. |
+   | "No se encontró la base de datos en …" | Ejecutalo con la cuenta de la Api, o revisá `Optica:Datos:Directorio`. |
+   | "No se pudo comprobar si la aplicación está en marcha (…)" | No se cambió nada. Revisá que la cuenta de la Api pueda abrir el archivo `optica.instancia` de la carpeta de datos (sección 4) y repetí el paso 4. |
+   | "No se puede usar el directorio de datos …" o "No se pudo preparar el comando …" | No se cambió nada. Corregí `Optica:Datos:Directorio` (tiene que ser una ruta absoluta, o vacía) o el `appsettings.Production.json`, y repetí el paso 4. |
+   | "Iniciá la aplicación una vez antes de restablecer." | La base es de una versión anterior: iniciá la Api (sigue en `localhost`), esperá que arranque, detenela y repetí el paso 4. |
+   | "No se pudo restablecer la contraseña: falló la base …" | No se cambió nada. Anotá el código de SQLite y revisá la base (sección 9). |
+   | "… no se pudieron renovar las claves de sesión …" | La contraseña ya se eliminó; repetí el paso 4 para cerrar las sesiones. |
+
+   Repetir el comando no hace daño: registra otro evento y vuelve a renovar las claves.
+5. **Iniciá la Api y definí la contraseña desde la PC**, como en los pasos 2 a 4 de la sección 6.
+6. **Recién entonces habilitá otra vez el acceso desde la red**, como en el paso 1 de la sección 7, y reiniciá la Api.
+   Cada equipo vuelve a ingresar con la contraseña nueva.

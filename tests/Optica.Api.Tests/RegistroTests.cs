@@ -228,7 +228,7 @@ public sealed class RegistroTests
         Assert.Equal(HttpStatusCode.OK, (await Http.GetAsync(cliente, "/api/acceso/estado")).StatusCode);
 
         // La base deja de poder abrirse: en su lugar queda una carpeta con el mismo nombre.
-        SqliteConnection.ClearAllPools();
+        FabricaApi.LiberarConexiones(fabrica.DirectorioDatos);
         var baseDeDatos = Path.Combine(fabrica.DirectorioDatos, FabricaConexion.NombreArchivo);
         foreach (var archivo in new[] { baseDeDatos, baseDeDatos + "-wal", baseDeDatos + "-shm" })
         {
@@ -277,6 +277,38 @@ public sealed class RegistroTests
             l => l.Categoria.StartsWith("Microsoft.AspNetCore.Diagnostics", StringComparison.Ordinal) && l.Nivel >= LogLevel.Warning);
     }
 
+    [Fact]
+    public async Task Log_SegundaInstancia_SinRutaDelUsuarioNiExcepcion()
+    {
+        // En la carpeta del usuario, para que la ruta visible y la expandida sean distintas.
+        var perfil = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.False(string.IsNullOrEmpty(perfil), "La prueba necesita la carpeta del usuario.");
+        var directorio = FabricaApi.NuevoDirectorioEnElPerfil();
+        try
+        {
+            using var primera = new FabricaApi(directorioDatos: directorio);
+            Assert.Equal(HttpStatusCode.OK, (await Http.GetAsync(primera.CrearClienteSinCookies(), "/api/acceso/estado")).StatusCode);
+            using var segunda = new FabricaApi(directorioDatos: directorio);
+
+            Assert.ThrowsAny<Exception>(() => segunda.CreateClient());
+
+            var lineas = segunda.Registro.Lineas;
+            // Un crítico propio con la ruta visible…
+            Assert.Contains(
+                lineas,
+                l => l.Nivel == LogLevel.Critical
+                    && l.Mensaje.Contains(Optica.Application.Comun.RutasPrivadas.Ocultar(directorio), StringComparison.Ordinal));
+            // …sin la carpeta del usuario en ningún nivel y sin excepción adjunta (su texto trae la ruta expandida).
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(perfil, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(lineas, l => l.Excepcion is not null);
+        }
+        finally
+        {
+            FabricaApi.LiberarConexiones(directorio);
+            Directory.Delete(directorio, recursive: true);
+        }
+    }
+
     private static void AfirmarSinContrasenas(FabricaApi fabrica)
     {
         var lineas = fabrica.Registro.Lineas;
@@ -297,5 +329,7 @@ public sealed class RegistroTests
         public void Agregar(CredencialAcceso credencial) => throw falla;
 
         public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva) => throw falla;
+
+        public void Eliminar() => throw falla;
     }
 }

@@ -12,6 +12,7 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
 {
     private CredencialAcceso? _credencialPendiente;
     private (string HashAnterior, CredencialAcceso Nueva)? _reemplazoPendiente;
+    private bool _eliminacionPendiente;
     private readonly List<EventoAcceso> _eventosPendientes = [];
 
     public CredencialAcceso? Credencial { get; set; }
@@ -70,6 +71,9 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
         _reemplazoPendiente = (anterior.Hash, nueva);
     }
 
+    /// <summary>Como el repositorio real: la credencial se borra al confirmar, junto con los eventos.</summary>
+    public void Eliminar() => _eliminacionPendiente = true;
+
     public void Registrar(EventoAcceso evento) => _eventosPendientes.Add(evento);
 
     /// <summary>Como la consulta real, solo ve los eventos confirmados.</summary>
@@ -95,6 +99,7 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
             if (Credencial?.Hash != hashAnterior)
             {
                 _credencialPendiente = null;
+                _eliminacionPendiente = false;
                 _eventosPendientes.Clear();
                 throw new ConflictoAlConfirmarException("La credencial cambió entre la lectura y la confirmación.");
             }
@@ -106,6 +111,12 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
         {
             Credencial = _credencialPendiente;
             _credencialPendiente = null;
+        }
+
+        if (_eliminacionPendiente)
+        {
+            Credencial = null;
+            _eliminacionPendiente = false;
         }
 
         Eventos.AddRange(_eventosPendientes);

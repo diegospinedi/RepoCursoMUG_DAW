@@ -56,9 +56,17 @@ public class AccesoPersistenciaTests
 
         // ...ni en los archivos de la base (incluido el WAL).
         await contexto.DisposeAsync();
-        SqliteConnection.ClearAllPools();
+        BaseTemporal.LiberarConexiones(baseTemporal.Directorio);
         foreach (var archivo in Directory.GetFiles(baseTemporal.Directorio))
         {
+            if (Path.GetFileName(archivo) == CandadoInstanciaArchivo.NombreArchivo)
+            {
+                // El candado de instancia sigue tomado (abierto en exclusiva) mientras viva la base temporal: no se
+                // puede leer, pero tiene que estar vacío.
+                Assert.Equal(0, new FileInfo(archivo).Length);
+                continue;
+            }
+
             var bytes = File.ReadAllBytes(archivo);
             Assert.False(
                 Contiene(bytes, Encoding.UTF8.GetBytes(contrasena)) || Contiene(bytes, Encoding.Unicode.GetBytes(contrasena)),
@@ -619,6 +627,76 @@ public class AccesoPersistenciaTests
 
         Assert.Throws<ArgumentNullException>(() => repositorio.Reemplazar(null!, credencial));
         Assert.Throws<ArgumentNullException>(() => repositorio.Reemplazar(credencial, null!));
+    }
+
+    [Fact]
+    public async Task Eliminar_ConElEvento_BorraSoloLaCredencialAlConfirmar()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+
+        new CredencialAccesoRepository(contexto).Eliminar();
+        new RegistroEventosAccesoEf(contexto).Registrar(
+            new EventoAcceso(TipoEventoAcceso.Restablecimiento, ResultadoEventoAcceso.Exito, Instante.UtcDateTime));
+
+        // Sin ExecuteDelete: hasta confirmar, la fila sigue en la base.
+        Assert.Single(Filas(cadena, "SELECT Id FROM CredencialAcceso"));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        Assert.Empty(Filas(cadena, "SELECT Id FROM CredencialAcceso"));
+        Assert.Equal(
+            [["definicion", "exito"], ["restablecimiento", "exito"]],
+            Filas(cadena, "SELECT Tipo, Resultado FROM EventoAcceso ORDER BY Id"));
+
+        // Sin credencial no registra nada: repetirlo solo agrega el evento.
+        var otro = baseTemporal.CrearContexto();
+        new CredencialAccesoRepository(otro).Eliminar();
+        Assert.Empty(otro.ChangeTracker.Entries());
+        new RegistroEventosAccesoEf(otro).Registrar(
+            new EventoAcceso(TipoEventoAcceso.Restablecimiento, ResultadoEventoAcceso.Exito, Instante.UtcDateTime));
+        await new UnidadDeTrabajoEf(otro).ConfirmarAsync();
+        Assert.Equal(3, Filas(cadena, "SELECT Id FROM EventoAcceso").Count);
+    }
+
+    [Fact]
+    public async Task Eliminar_ContextoQueYaSigueLaFila_LaReutilizaYLaBorra()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        var contexto = baseTemporal.CrearContexto();
+        Assert.True((await CrearDefinir(contexto, hasher).EjecutarAsync("clave-valida")).EsExito);
+        Assert.NotNull(contexto.CredencialesAcceso.Local.FindEntry(CredencialAccesoRepository.IdUnico));
+
+        new CredencialAccesoRepository(contexto).Eliminar();
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        Assert.Empty(Filas(CadenaDe(baseTemporal), "SELECT Id FROM CredencialAcceso"));
+    }
+
+    [Fact]
+    public async Task Eliminar_CredencialCambiadaEnElMedio_ConflictoSinBorrarNiRegistrar()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+
+        new CredencialAccesoRepository(contexto).Eliminar();
+        new RegistroEventosAccesoEf(contexto).Registrar(
+            new EventoAcceso(TipoEventoAcceso.Restablecimiento, ResultadoEventoAcceso.Exito, Instante.UtcDateTime));
+        // Un cambio de contraseña confirma entre la lectura y la confirmación del restablecimiento.
+        Ejecutar(cadena, "UPDATE CredencialAcceso SET Hash = '" + HasherQueSeAdelanta.HashDeLaOtra + "' WHERE Id = 1");
+
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        Assert.Null(error.InnerException);
+        Assert.Equal([HasherQueSeAdelanta.HashDeLaOtra], Assert.Single(Filas(cadena, "SELECT Hash FROM CredencialAcceso")));
+        Assert.Equal([["definicion", "exito"]], Filas(cadena, "SELECT Tipo, Resultado FROM EventoAcceso ORDER BY Id"));
     }
 
     [Fact]

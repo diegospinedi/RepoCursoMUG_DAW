@@ -181,3 +181,57 @@ Pendientes del Block 4: ninguna prueba fija que `NombraElCampo` compare sin dist
 (decisión del usuario al cierre: eliminarlo o documentarlo); intermitencia de las pruebas de la Api
 por `SqliteConnection.ClearAllPools()` global en `FabricaApi` (anterior a FEAT-001b, unas 2 o 3
 fallas cada 20 corridas: conviene un ticket propio que use `ClearPool` por conexión).
+
+## Block 5 — Restablecimiento por comando en la PC
+
+Decisión del usuario — 2026-11-03 — Block 5:
+
+- La evidencia TDD del bloque se reconstruye sin descartar el código, porque el informe original del
+  implementador se perdió con la sesión: se respalda la producción con sha256, se reemplaza por
+  stubs, se registran las aserciones que fallan y se restaura byte por byte. Resultado: 46 pruebas
+  fallaron por aserción y 11 pasaron, todas explicadas. `Restablecimiento_NoExisteEnLaApi_NingunEndpointLoOfrece`
+  se demostró con un controller mutante temporal, y las 3 pruebas nuevas de `Eliminar`, con un stub
+  vacío; esas 3 no quedaron en los TRX (W2 del verificador).
+- `PrecalentamientoEf` (`tests/Optica.Api.Tests` y `tests/Optica.Infrastructure.Tests`) entra en este
+  bloque aunque no está en la spec. Es un `[ModuleInitializer]` que arma el modelo de diseño de
+  EF Core una vez por proceso sobre SQLite `:memory:`, para que varias fábricas que migran en
+  paralelo no lo construyan a la vez ("The model must be finalized…"). Solo toca pruebas.
+
+Supuestos del implementador — aceptados por el orquestador — 2026-11-03 — Block 5:
+
+- Orden del comando: primero `BaseExiste`, después el candado y después las migraciones pendientes,
+  como fija la sección PLAN de este archivo, para no crear `optica.instancia` en un directorio sin
+  base. Si `IntentarAdquirir` lanza `DirectoryNotFoundException`, también responde "base
+  inexistente".
+- La rama del comando arma su propio builder con `OpcionesDelComando()` (`ContentRootPath =
+  AppContext.BaseDirectory`) y la misma `ConfigurarServicios`, en lugar de bifurcar después del
+  `Build()` de la Api; nunca llama a `InicializarBaseDeDatos`. Se puede invocar desde las pruebas
+  con `EjecutarComandoAsync` y `EjecutarRestablecimientoAsync`.
+- `restablecer-contrasena` con otros argumentos no levanta la Api: responde código 2 con un mensaje
+  de uso.
+- Las pruebas reemplazan `SqliteConnection.ClearAllPools()` global por `ClearPool` por directorio
+  (`LiberarConexiones`), y cada `FabricaApi` usa su propio directorio de datos con su candado. Con
+  eso se resuelve el pendiente de intermitencia del Block 4: 10 corridas completas seguidas sin
+  fallas, 6.310 ejecuciones.
+
+Pendientes del Block 5: la lambda real de `Program.cs` que arma el host del comando (filtro de log
+de EF en Warning y consola real) no la ejecuta ninguna prueba; las pruebas usan una réplica,
+`ConstruirComando` (W1 del verificador). El candado se verificó solo con `flock` en Linux: en VERIFY
+falta la corrida manual en Windows ya prevista (W3). Las pruebas dejan en `~/.cache/optica-pruebas`
+bases con hashes de contraseñas sintéticas, que se limpian después de una hora (W4).
+
+Deuda técnica señalada por la auditoría de arquitectura del Block 5 (PASS, 6 WARN), sin cambios en
+este bloque — aceptada por el orquestador — 2026-11-03 — Block 5:
+
+- La rama del comando en `Program.cs` traduce `DirectorioDatosInvalidoException` y lee
+  `FabricaConexion.ClaveDirectorio` de `Optica.Infrastructure.Persistencia`. Se tolera porque
+  `Program` es la raíz de composición; si crece, conviene exponerlo a través de
+  `IDatosLocales`/`FallaDatos`.
+- `CredencialAccesoRepository.Eliminar` lee la fila de forma sincrónica cuando no está en el
+  contexto, porque la firma `void Eliminar()` la fija la spec. El impacto es bajo, porque solo lo
+  usa el comando de consola.
+- `LiberarConexiones` y `PrecalentamientoEf` están duplicados en los dos proyectos de prueba, y
+  `PrecalentamientoEfTests.cs` tiene un `using Microsoft.EntityFrameworkCore.Metadata;` sin uso.
+- R-14 sigue siendo un riesgo documentado, no mitigado: los eventos de acceso de las operadoras,
+  que ahora incluyen `restablecimiento`, no tienen retención. Hay que decidir una política antes de
+  cargar datos reales de clientes.

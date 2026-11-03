@@ -102,5 +102,7 @@ public sealed class ArranqueYErroresTests
         public void Agregar(CredencialAcceso credencial) => throw Falla();
 
         public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva) => throw Falla();
+
+        public void Eliminar() => throw Falla();
     }
 }

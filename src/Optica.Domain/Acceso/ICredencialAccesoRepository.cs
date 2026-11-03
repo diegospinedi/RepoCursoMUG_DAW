@@ -1,8 +1,8 @@
 namespace Optica.Domain.Acceso;
 
 /// <summary>
-/// Persistencia de la única credencial de acceso. <see cref="Agregar"/> y <see cref="Reemplazar"/> solo registran el
-/// cambio: lo confirma la unidad de trabajo, junto con los eventos.
+/// Persistencia de la única credencial de acceso. <see cref="Agregar"/>, <see cref="Reemplazar"/> y
+/// <see cref="Eliminar"/> solo registran el cambio: lo confirma la unidad de trabajo, junto con los eventos.
 /// </summary>
 public interface ICredencialAccesoRepository
 {
@@ -28,4 +28,12 @@ public interface ICredencialAccesoRepository
     /// </param>
     /// <exception cref="ArgumentException"><paramref name="anterior"/> y <paramref name="nueva"/> son la misma instancia.</exception>
     void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva);
+
+    /// <summary>
+    /// Registra la eliminación de la credencial guardada, si hay una (el restablecimiento, FR-04); si no hay, no
+    /// registra nada. Se borra al confirmar la unidad de trabajo, en la misma transacción que los eventos, y con la
+    /// misma concurrencia optimista que <see cref="Reemplazar"/>: si la credencial cambió entre este registro y la
+    /// confirmación, la unidad de trabajo informa un conflicto y no guarda nada.
+    /// </summary>
+    void Eliminar();
 }

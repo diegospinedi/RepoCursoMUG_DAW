@@ -72,4 +72,20 @@ public sealed class CredencialAccesoRepository(OpticaDbContext contexto) : ICred
         definidaEn.CurrentValue = nueva.DefinidaEn;
         definidaEn.IsModified = true;
     }
+
+    /// <summary>
+    /// Deja la fila marcada como eliminada en el contexto, si existe: el <c>DELETE</c> lo emite
+    /// <see cref="UnidadDeTrabajoEf"/> dentro de su transacción, junto con los eventos, y filtra por el hash leído acá
+    /// (token de concurrencia). Por eso la fila se lee con seguimiento (o se reutiliza la entrada que ya esté en el
+    /// contexto) en lugar de adjuntar una sin hash. Sin <c>ExecuteDelete</c>, que se ejecutaría fuera de esa transacción.
+    /// </summary>
+    public void Eliminar()
+    {
+        var fila = contexto.CredencialesAcceso.Local.FindEntry(IdUnico)?.Entity
+            ?? contexto.CredencialesAcceso.SingleOrDefault(c => c.Id == IdUnico);
+        if (fila is not null)
+        {
+            contexto.CredencialesAcceso.Remove(fila);
+        }
+    }
 }

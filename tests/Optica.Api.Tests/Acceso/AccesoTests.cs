@@ -475,7 +475,7 @@ public sealed class AccesoTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            FabricaApi.LiberarConexiones(directorio);
             Directory.Delete(directorio, recursive: true);
         }
     }

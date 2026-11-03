@@ -300,7 +300,7 @@ public sealed class SpaTests : IDisposable
         finally
         {
             // La base queda en la carpeta de la prueba: se liberan las conexiones para poder borrarla.
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            FabricaApi.LiberarConexiones(datos);
         }
     }
 

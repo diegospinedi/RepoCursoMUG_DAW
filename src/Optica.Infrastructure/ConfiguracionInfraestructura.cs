@@ -24,7 +24,14 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton(_ => new FabricaConexion(configuracion[FabricaConexion.ClaveDirectorio]));
         servicios.AddDbContext<OpticaDbContext>((proveedor, opciones) =>
             proveedor.GetRequiredService<FabricaConexion>().Configurar(opciones));
-        servicios.AddSingleton<IDatosLocales>(proveedor => new DatosLocales(proveedor.GetRequiredService<FabricaConexion>()));
+        servicios.AddSingleton<IDatosLocales>(proveedor => new DatosLocales(
+            proveedor.GetRequiredService<FabricaConexion>(), proveedor.GetRequiredService<IServiceScopeFactory>()));
+
+        // Candado de instancia única (optica.instancia en el directorio de datos). La Api lo toma al inicializar la base
+        // y lo guarda en CandadoTomado, que el contenedor descarta (y con él libera el candado) al descartar el host.
+        servicios.AddSingleton<ICandadoInstancia>(proveedor =>
+            new CandadoInstanciaArchivo(proveedor.GetRequiredService<FabricaConexion>().Directorio));
+        servicios.AddSingleton<CandadoTomado>();
 
         // Acceso: los repositorios y la unidad de trabajo comparten el OpticaDbContext del alcance.
         servicios.AddScoped<ICredencialAccesoRepository, CredencialAccesoRepository>();
@@ -45,8 +52,10 @@ public static class ConfiguracionInfraestructura
     }
 
     /// <summary>
-    /// Valida el directorio de datos y aplica las migraciones pendientes. Si el directorio no sirve, registra
-    /// el error con la ruta y la clave de configuración y relanza la excepción: la Api no arranca.
+    /// Valida el directorio de datos, toma el candado de instancia única y aplica las migraciones pendientes. Si el
+    /// directorio no sirve o el candado lo tiene otra instancia, registra un crítico con la ruta visible (sin la
+    /// excepción) y lanza: la Api no arranca. El candado se toma antes de migrar, así dos instancias no migran a la vez,
+    /// y no lo toma <c>dotnet ef</c>, que no pasa por acá.
     /// </summary>
     public static void InicializarBaseDeDatos(this IServiceProvider servicios)
     {
@@ -57,6 +66,7 @@ public static class ConfiguracionInfraestructura
         {
             fabrica = servicios.GetRequiredService<FabricaConexion>();
             fabrica.PrepararDirectorio();
+            servicios.GetRequiredService<CandadoTomado>().Tomar(fabrica);
             using var alcance = servicios.CreateScope();
             alcance.ServiceProvider.GetRequiredService<OpticaDbContext>().Database.Migrate();
         }
@@ -68,6 +78,18 @@ public static class ConfiguracionInfraestructura
                 "La Api no puede arrancar: no se puede usar el directorio de datos {Ruta}. Corregí la clave de configuración {Clave}.",
                 error.Ruta,
                 error.Clave);
+            throw;
+        }
+        catch (InstanciaEnMarchaException) when (fabrica is not null)
+        {
+            // Sin la excepción adjunta, por lo mismo: solo la ruta visible.
+            registro.LogCritical(
+                "La Api no puede arrancar: otra instancia de la aplicación ya usa el directorio de datos {Ruta}, o no hay " +
+                "permisos sobre su archivo {Archivo}. Detené la otra instancia, revisá los permisos de ese archivo o la " +
+                "clave de configuración {Clave}.",
+                fabrica.RutaVisible,
+                CandadoInstanciaArchivo.NombreArchivo,
+                FabricaConexion.ClaveDirectorio);
             throw;
         }
         catch (SqliteException error) when (fabrica is not null)
