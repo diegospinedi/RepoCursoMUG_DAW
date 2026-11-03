@@ -27,6 +27,37 @@ public static class RespuestasValidacion
         controller.Invalido(new ErrorValidacion(ValidacionContrasena.Campo, AccionCuerpoIlegible));
 
     /// <summary>
+    /// 400 para un cuerpo ilegible con varias contraseñas: el error va en el primero de <paramref name="campos"/> que
+    /// nombra una clave con error de ModelState (por ejemplo <c>$.contrasenaNueva</c>, sin distinguir mayúsculas) y, si
+    /// ninguna lo nombra (JSON roto al empezar, un cuerpo que no es un objeto), en <paramref name="campoPorDefecto"/>.
+    /// Solo se miran las claves, nunca los mensajes ni los valores.
+    /// </summary>
+    public static ActionResult CuerpoIlegible(
+        this ControllerBase controller, string campoPorDefecto, params string[] campos)
+    {
+        var claves = controller.ModelState
+            .Where(entrada => entrada.Value is { Errors.Count: > 0 })
+            .Select(entrada => entrada.Key)
+            .ToList();
+        var campo = claves
+            .Select(clave => campos.FirstOrDefault(candidato => NombraElCampo(clave, candidato)))
+            .FirstOrDefault(candidato => candidato is not null)
+            ?? campoPorDefecto;
+        return controller.Invalido(new ErrorValidacion(campo, AccionCuerpoIlegible));
+    }
+
+    /// <summary>
+    /// La clave es el campo, con o sin el prefijo <c>$.</c> de JSON. No hace falta mirar rutas dentro del campo
+    /// (<c>$.campo[0]</c>, <c>$.campo.x</c>): <see cref="Acceso.LectorContrasenaJson"/> rechaza un arreglo o un objeto
+    /// al empezar su token, y el error queda en la clave del campo.
+    /// </summary>
+    private static bool NombraElCampo(string clave, string campo)
+    {
+        var ruta = clave.StartsWith("$.", StringComparison.Ordinal) ? clave[2..] : clave;
+        return string.Equals(ruta, campo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// La misma forma con otro código, para un rechazo que se muestra junto al campo (por ejemplo, 401 por
     /// contraseña incorrecta); la acción va también en <c>detail</c>.
     /// </summary>

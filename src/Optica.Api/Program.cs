@@ -21,8 +21,8 @@ using Optica.Infrastructure;
 // ninguna contraseña van en appsettings ni en el repo.
 // AllowedHosts es "localhost" en appsettings.json; al instalar se amplía con el nombre (y, si se usa, la IP) de la PC
 // en la red local (docs/instalacion.md). Un pedido con otro Host recibe 400.
-// Sin CORS: la SPA se sirve desde el mismo origen. Nunca se registra el cuerpo de los pedidos (definir e ingresar
-// traen la contraseña en claro): no agregar HttpLogging de cuerpos.
+// Sin CORS: la SPA se sirve desde el mismo origen. Nunca se registra el cuerpo de los pedidos (definir, ingresar y
+// cambiar traen contraseñas en claro): no agregar HttpLogging de cuerpos.
 var builder = WebApplication.CreateBuilder(args);
 
 // Infraestructura: base, repositorios, hasher y datos locales. Los errores de la base no se registran tal cual (su
@@ -34,6 +34,7 @@ builder.Services.AgregarInfraestructura(builder.Configuration);
 builder.Services.AddScoped<ConsultarEstadoAcceso>();
 builder.Services.AddScoped<DefinirContrasena>();
 builder.Services.AddScoped<IngresarConContrasena>();
+builder.Services.AddScoped<CambiarContrasena>();
 builder.Services.AddScoped<CerrarSesion>();
 
 // Marca (colores y logo), anónima: la de Optica:Marca:Directorio o la de ejemplo.
@@ -84,7 +85,8 @@ builder.Services.AddAuthorizationBuilder()
     .SetDefaultPolicy(conSesion)
     .SetFallbackPolicy(conSesion);
 
-// definir e ingresar calculan PBKDF2: 2 en paralelo, 10 en cola, el resto 429 (R-05).
+// definir, ingresar y cambiar calculan PBKDF2 y comparten este limitador: 2 en paralelo, 10 en cola, el resto 429
+// (R-05). cambiar exige sesión, así que un pedido sin sesión recibe 401 antes de ocupar un lugar.
 builder.Services.AddRateLimiter(opciones =>
 {
     opciones.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

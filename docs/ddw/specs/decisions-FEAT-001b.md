@@ -146,3 +146,38 @@ Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026
 Pendiente del Block 3 para el cierre de CODE: quitar el parámetro opcional `Exception? causa` del
 constructor de `ConflictoAlConfirmarException` (nadie lo usa), para que "nunca lleva la causa" se
 cumpla por compilación.
+
+## Block 4 — Cambio de contraseña: caso de uso y Api
+
+Supuestos del implementador (2 rondas) — aceptados por el orquestador — 2026-11-03 — Block 4:
+
+- `CambiarContrasena`: valida la forma de las dos contraseñas antes de leer la base (si las dos son
+  inválidas, un error en cada campo); sin credencial → `SinCredencial` (409, "Definí la contraseña
+  primero"); actual incorrecta → `cambio_contrasena/rechazo` (no cuenta para el bloqueo) y el error
+  "La contraseña actual no es válida." en `contrasenaActual`, como `ResultadoCambio.Invalido`; actual
+  correcta → otra instancia de `CredencialAcceso` con hash y sal nuevos y `DefinidaEn` = ahora,
+  `Reemplazar(anterior, nueva)` y `cambio_contrasena/exito`, una sola confirmación. No usa
+  `ReemplazarHash`.
+- Conflicto al confirmar el cambio → 409 con title "La contraseña cambió mientras se guardaba." y
+  detail "La contraseña cambió mientras se guardaba este cambio. Revisá cuál quedó y volvé a
+  intentar.", sin registrar la excepción. La confirmación del rechazo solo inserta un evento con Id
+  autoincremental y no puede dar conflicto (igual que `IngresarConContrasena`).
+- Se permite que la nueva sea igual a la actual (la spec no lo prohíbe); `cambiar` no emite una cookie
+  nueva y las sesiones abiertas siguen válidas.
+- Cuerpo ilegible: el error va en el campo cuya clave nombra ModelState (comparando la clave entera
+  sin distinguir mayúsculas, sin el prefijo `$.`) y, si no nombra ninguno, en `contrasenaActual`;
+  solo se leen las claves, nunca los valores. Se quitó una rama inalcanzable de `NombraElCampo`.
+  Un cuerpo vacío con `application/json` es un pedido sin contraseñas: 400 con un error en cada
+  campo.
+- `HasherConEncuentro` de las pruebas devuelve un hash distinto por cálculo, para que el conflicto
+  de dos cambios simultáneos sea real; `AfirmarQueElEndpointExiste` evita que el 401 o el 415
+  provengan de una ruta inexistente.
+- Datos sensibles: `SolicitudCambioContrasena` lee las dos propiedades con `LectorContrasenaJson` y
+  oculta las dos en `ToString()`; una prueba verifica que ninguna contraseña ni el hash anterior o
+  nuevo (completo, sal o derivado) llegan al log en ningún nivel, y detecta `EnableSensitiveDataLogging`.
+
+Pendientes del Block 4: ninguna prueba fija que `NombraElCampo` compare sin distinguir mayúsculas
+(un caso `{"ContrasenaNueva":12345678}` lo fijaría); `ReemplazarHash` quedó sin uso en producción
+(decisión del usuario al cierre: eliminarlo o documentarlo); intermitencia de las pruebas de la Api
+por `SqliteConnection.ClearAllPools()` global en `FabricaApi` (anterior a FEAT-001b, unas 2 o 3
+fallas cada 20 corridas: conviene un ticket propio que use `ClearPool` por conexión).

@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -35,6 +36,88 @@ public sealed class RegistroTests
         await Http.PostJsonAsync(cliente, "/api/acceso/ingresar", "{\"contrasena\":\"" + Rota);
 
         AfirmarSinContrasenas(fabrica);
+    }
+
+    /// <summary>
+    /// Pares (actual, nueva) y el código esperado. Llevan sustitutos sueltos: xUnit los cambiaría por U+FFFD al descubrir
+    /// las pruebas, por eso <c>DisableDiscoveryEnumeration</c>.
+    /// </summary>
+    public static TheoryData<string, string, HttpStatusCode> CambiosConSecretos => new()
+    {
+        // Correcto: la actual es la definida y la nueva se acepta.
+        { Definida, "Zq7-nueva-secreta", HttpStatusCode.NoContent },
+        // La actual no coincide.
+        { Erronea, "Zq7-nueva-secreta-2", HttpStatusCode.BadRequest },
+        // La nueva fuera de política: corta, larga o con un sustituto suelto.
+        { Definida, Corta, HttpStatusCode.BadRequest },
+        { Definida, Larga, HttpStatusCode.BadRequest },
+        { Definida, "Zq7-nueva-sustituto\uD800-secreta", HttpStatusCode.BadRequest },
+        // La actual con un sustituto suelto.
+        { "Zq7-actual-sustituto\uDC00-secreta", "Zq7-nueva-secreta-3", HttpStatusCode.BadRequest },
+    };
+
+    [Theory]
+    [MemberData(nameof(CambiosConSecretos), DisableDiscoveryEnumeration = true)]
+    public async Task Log_Cambiar_NoContieneNingunaContrasena(string actual, string nueva, HttpStatusCode esperado)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente, Definida);
+
+        var respuesta = await Http.CambiarAsync(cliente, actual, nueva, cookie);
+        // Un cuerpo ilegible con las dos contraseñas: el lector de JSON tampoco las registra.
+        var ilegible = await Http.PostJsonAsync(
+            cliente, "/api/acceso/cambiar", Http.CuerpoCambio(actual, nueva).TrimEnd('}', '"'), cookie);
+
+        // Control: el pedido llegó a la acción; si no, la prueba no estaría mirando nada.
+        Assert.Equal(esperado, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        var lineas = fabrica.Registro.Lineas;
+        // La captura ve todos los niveles, Trace incluido (donde MVC registra los argumentos de la acción).
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        foreach (var secreto in new[] { actual, nueva })
+        {
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal));
+            // Un sustituto suelto puede llegar al log cambiado por U+FFFD o escapado: se busca cada tramo a su lado.
+            foreach (var tramo in secreto.Split(new[] { '\uD800', '\uDC00' }).Where(t => t.Length >= 10))
+            {
+                Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(tramo, StringComparison.Ordinal));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Log_Cambiar_NoContieneNiElHashAnteriorNiElNuevo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente, Definida);
+        var anterior = HashGuardado(fabrica);
+
+        var respuesta = await Http.CambiarAsync(cliente, Definida, "Zq7-nueva-secreta", cookie);
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var nuevo = HashGuardado(fabrica);
+        Assert.NotEqual(anterior, nuevo);
+        var lineas = fabrica.Registro.Lineas;
+        // La captura ve todos los niveles, Trace incluido (donde EF Core registra los comandos).
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        foreach (var hash in new[] { anterior, nuevo })
+        {
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(hash, StringComparison.Ordinal));
+            // Tampoco la sal ni el derivado por separado (formato algoritmo$iteraciones$sal$derivado).
+            foreach (var parte in hash.Split('$').Skip(2))
+            {
+                Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(parte, StringComparison.Ordinal));
+            }
+        }
+    }
+
+    private static string HashGuardado(FabricaApi fabrica)
+    {
+        using var alcance = fabrica.Services.CreateScope();
+        var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+        return contexto.CredencialesAcceso.AsNoTracking().Single().Hash;
     }
 
     [Theory]

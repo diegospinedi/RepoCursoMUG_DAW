@@ -17,6 +17,7 @@ public sealed class CierrePorDefectoTests
 {
     private const TipoResultado TipoNoPrevisto = (TipoResultado)99;
     private const ResultadoIngreso IngresoNoPrevisto = (ResultadoIngreso)99;
+    private const ResultadoCambio CambioNoPrevisto = (ResultadoCambio)99;
 
     [Fact]
     public async Task Definir_ResultadoNoPrevisto_FallaSinIniciarSesion()
@@ -57,6 +58,37 @@ public sealed class CierrePorDefectoTests
     }
 
     [Fact]
+    public void Cambiar_ResultadoNoPrevisto_FallaSinIniciarSesion()
+    {
+        var (controller, autenticacion) = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderCambio(new IntentoCambio(CambioNoPrevisto, [])));
+
+        Assert.Equal(0, autenticacion.Inicios);
+        Assert.Equal(0, controller.Response.Headers.SetCookie.Count);
+    }
+
+    [Fact]
+    public void Cambiar_CadaResultadoPrevisto_SuCodigoSinIniciarSesion()
+    {
+        var (controller, autenticacion) = Crear();
+
+        Assert.IsType<NoContentResult>(controller.ResponderCambio(IntentoCambio.Exito));
+        var invalido = Assert.IsType<ObjectResult>(controller.ResponderCambio(
+            IntentoCambio.Invalido([new ErrorValidacion(ValidacionContrasena.CampoNueva, "accion")])));
+        Assert.Equal(StatusCodes.Status400BadRequest, invalido.StatusCode);
+        var sinCredencial = Assert.IsType<ObjectResult>(controller.ResponderCambio(IntentoCambio.SinCredencial));
+        Assert.Equal(StatusCodes.Status409Conflict, sinCredencial.StatusCode);
+        var conflicto = Assert.IsType<ObjectResult>(controller.ResponderCambio(IntentoCambio.Conflicto));
+        Assert.Equal(StatusCodes.Status409Conflict, conflicto.StatusCode);
+        Assert.Equal(AccesoController.MensajeCambioEnConflicto, Assert.IsType<ProblemDetails>(conflicto.Value).Detail);
+
+        // Cambiar la contraseña no abre otra sesión: la cookie es la que ya traía el pedido.
+        Assert.Equal(0, autenticacion.Inicios);
+        Assert.Equal(0, controller.Response.Headers.SetCookie.Count);
+    }
+
+    [Fact]
     public async Task ExitoExplicito_IniciaSesion()
     {
         var (controller, autenticacion) = Crear();
@@ -79,7 +111,7 @@ public sealed class CierrePorDefectoTests
             .AddMvcCore().Services
             .BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        var controller = new AccesoController(null!, null!, null!, null!)
+        var controller = new AccesoController(null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };
