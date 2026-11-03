@@ -318,3 +318,36 @@ Deuda aceptada por el orquestador — 2026-11-03 — Block 7:
 - Un único `it` recorre las 6 pantallas. La enumeración de endpoints ya tiene tres copias
   (`ProteccionTests` y `SinDatosArcaTests`). `App.test.tsx` escribe la contraseña con `fireEvent` en
   lugar de `escribirEn`.
+
+## VERIFY, ronda 1
+
+Decisiones del usuario — 2026-11-03 — VERIFY:
+
+- La corrida manual en Windows nativo de `Comando_ApiEnMarcha_ErrorSinCambios` y
+  `Api_SegundaInstanciaSobreElMismoDirectorio_RechazadaAlArrancar` se acepta como riesgo, sin
+  verificar. En Linux el candado es advisory (`flock`).
+- La verificación de NFR-02 con la versión inmediata anterior de Chrome y Edge (155) se acepta como
+  riesgo, sin verificar. Solo se probó la 156.
+- La intermitencia de msedge W-VER-03 (2 de 11 corridas en CODE, 0 de 6 en VERIFY) se acepta para
+  FEAT-001b.
+- WARN-2 de VERIFY se corrige: loop correctivo a CODE.
+
+## Loop correctivo VERIFY → CODE
+
+Decisión del usuario — 2026-11-03 — loop correctivo:
+
+- `ConflictoAlConfirmarException` deja de admitir causa: su único constructor es `(string mensaje)`.
+  La prueba de regresión `ConflictoAlConfirmar_NoAdmiteCausa_NingunConstructorRecibeExcepcion`
+  revisa por reflexión los constructores públicos y no públicos. Así no se puede adjuntar la
+  `DbUpdateException` ni la `DbUpdateConcurrencyException`, cuyos `Entries` llevan el hash de la
+  contraseña.
+
+Deuda aceptada por el orquestador, alerta de datos sensibles — 2026-11-03 — loop correctivo:
+
+- `UnidadDeTrabajoEf.ConfirmarAsync` deja pasar con `catch { throw; }` las `DbUpdateException` que
+  no son conflicto, por ejemplo otro CHECK, con sus `Entries`. Hoy no llegan al log:
+  `ManejadorErroresNoControlados.Describir` escribe solo el tipo, el mensaje y la traza, y
+  `FabricaConexion` prohíbe `EnableSensitiveDataLogging` y `EnableDetailedErrors`. **Restricción
+  para los módulos siguientes:** nunca registrar la excepción completa con un serializador
+  estructurado (`LogError(error, …)` con `Entries`) ni activar esas dos opciones. Conviene una prueba
+  que fije la forma del log en ese camino cuando se toque la persistencia de nuevo.

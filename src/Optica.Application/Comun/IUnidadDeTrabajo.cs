@@ -20,16 +20,19 @@ public interface IUnidadDeTrabajo
 /// leerlos; no se guardó nada.
 /// </summary>
 /// <remarks>
-/// Nunca lleva como causa la excepción de EF, en ningún caso: ni la <c>DbUpdateConcurrencyException</c> de un
-/// conflicto de concurrencia (sus <c>Entries</c> conservan el hash anterior y el nuevo de la credencial) ni la
-/// <c>DbUpdateException</c> de una unicidad o del CHECK de credencial única (sus <c>Entries</c> llevan el hash de la
-/// credencial duplicada). Una excepción interna termina en el log con todo lo que lleva: el mensaje es genérico y
-/// <see cref="Exception.InnerException"/> queda siempre en <c>null</c>.
+/// El tipo no admite causa: su único constructor recibe solo el mensaje, así que con él el compilador impide
+/// adjuntarle la excepción de EF; lo que impide que vuelva un constructor con causa (público o no) es la prueba de
+/// regresión <c>ConflictoAlConfirmar_NoAdmiteCausa_NingunConstructorRecibeExcepcion</c>. Eso importa porque ni la
+/// <c>DbUpdateConcurrencyException</c> de un conflicto de concurrencia (sus <c>Entries</c> conservan el hash anterior
+/// y el nuevo de la credencial) ni la <c>DbUpdateException</c> de una unicidad o del CHECK de credencial única (sus
+/// <c>Entries</c> llevan el hash de la credencial duplicada) pueden llegar al log, y una excepción interna termina en
+/// el log con todo lo que lleva. El mensaje es genérico y <see cref="Exception.InnerException"/> es siempre
+/// <c>null</c>. No agregues un constructor con causa.
 /// </remarks>
 public sealed class ConflictoAlConfirmarException : Exception
 {
-    public ConflictoAlConfirmarException(string mensaje, Exception? causa = null)
-        : base(mensaje, causa)
+    public ConflictoAlConfirmarException(string mensaje)
+        : base(mensaje)
     {
     }
 }
