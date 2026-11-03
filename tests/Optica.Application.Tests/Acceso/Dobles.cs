@@ -19,8 +19,17 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
 
     public int Confirmaciones { get; private set; }
 
-    /// <summary>Cuántas veces se consultó la credencial guardada.</summary>
+    /// <summary>Cuántas consultas a la base hubo: la credencial guardada y los rechazos de ingreso.</summary>
     public int Consultas { get; private set; }
+
+    /// <summary>Se ejecuta una sola vez, al comienzo de la primera consulta de rechazos (antes de leerlos).</summary>
+    public Action? AlConsultarRechazos { get; set; }
+
+    /// <summary>
+    /// Se ejecuta una sola vez, al comienzo de la primera confirmación y antes de pasar lo pendiente a lo guardado:
+    /// simula que otro pedido confirmó lo suyo justo antes, así sus eventos quedan registrados primero.
+    /// </summary>
+    public Action? AlConfirmar { get; set; }
 
     public Task<bool> ExisteAsync(CancellationToken cancelacion = default)
     {
@@ -40,12 +49,21 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
 
     /// <summary>Como la consulta real, solo ve los eventos confirmados.</summary>
     public Task<IReadOnlyList<DateTime>> ObtenerRechazosIngresoDesdeUltimoReinicioAsync(
-        CancellationToken cancelacion = default) =>
-        Task.FromResult(PoliticaBloqueo.RechazosDesdeUltimoReinicio(Eventos));
+        CancellationToken cancelacion = default)
+    {
+        Consultas++;
+        var alConsultar = AlConsultarRechazos;
+        AlConsultarRechazos = null;
+        alConsultar?.Invoke();
+        return Task.FromResult(PoliticaBloqueo.RechazosDesdeUltimoReinicio(Eventos));
+    }
 
     public Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         Confirmaciones++;
+        var alConfirmar = AlConfirmar;
+        AlConfirmar = null;
+        alConfirmar?.Invoke();
         if (_credencialPendiente is not null)
         {
             Credencial = _credencialPendiente;
@@ -93,4 +111,19 @@ internal sealed class RelojFijo(DateTimeOffset ahora) : TimeProvider
     }
 
     public override DateTimeOffset GetUtcNow() => ahora;
+}
+
+/// <summary>Reloj en UTC que la prueba adelanta a mano.</summary>
+internal sealed class RelojAjustable(DateTimeOffset inicio) : TimeProvider
+{
+    private DateTimeOffset _ahora = inicio;
+
+    public RelojAjustable()
+        : this(RelojFijo.Instante)
+    {
+    }
+
+    public override DateTimeOffset GetUtcNow() => _ahora;
+
+    public void Avanzar(TimeSpan lapso) => _ahora += lapso;
 }

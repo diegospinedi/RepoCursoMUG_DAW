@@ -33,6 +33,24 @@ public static class RespuestasValidacion
     public static ActionResult Rechazo(this ControllerBase controller, int codigo, ErrorValidacion error) =>
         controller.ConErrores(codigo, error.Accion, error);
 
+    /// <summary>
+    /// 423 con ProblemDetails para un ingreso bloqueado por intentos fallidos: el mensaje va en <c>detail</c> y no hay
+    /// <c>errors</c>, porque no es un error del campo sino del acceso.
+    /// </summary>
+    public static ActionResult Bloqueado(this ControllerBase controller, string mensaje)
+    {
+        var problema = controller.ProblemDetailsFactory.CreateProblemDetails(
+            controller.HttpContext,
+            statusCode: StatusCodes.Status423Locked,
+            title: "El acceso está bloqueado.",
+            detail: mensaje);
+        return new ObjectResult(problema)
+        {
+            StatusCode = StatusCodes.Status423Locked,
+            ContentTypes = { "application/problem+json" },
+        };
+    }
+
     private static ActionResult ConErrores(
         this ControllerBase controller, int codigo, string? detalle, params ErrorValidacion[] errores)
     {

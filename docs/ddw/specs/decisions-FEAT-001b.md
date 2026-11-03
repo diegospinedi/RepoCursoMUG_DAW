@@ -76,6 +76,40 @@ Supuestos del implementador (2 rondas) — aceptados por el orquestador — 2026
 - `tests/Optica.Api.Tests/ArranqueYErroresTests.cs` y `RegistroTests.cs` no se tocaron: sus dobles no
   implementan `IRegistroEventosAcceso` (la spec los listaba de más).
 
-Pendientes menores: `ArmarCoincideCon` usa `Aggregate` sin semilla y fallaría con una lista vacía
+Pendientes menores del Block 1: `ArmarCoincideCon` usa `Aggregate` sin semilla y fallaría con una lista vacía
 (hoy no puede pasar); las guardas del constructor de `EventoAcceso` siguen sin prueba (FEAT-001a);
 el SAST de FEAT-001b tiene que mencionar la excepción de constantes en F-SAST-02.
+
+## Block 2 — Ingreso con bloqueo en la Api
+
+Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026-11-03 — Block 2:
+
+- Desvío de la letra de la spec ("vuelve a evaluar la política con ese rechazo incluido"): después de
+  confirmar el rechazo propio, el caso de uso relee los rechazos confirmados (una consulta de solo
+  lectura más, solo en el camino de rechazo) y queda bloqueado si da bloqueado
+  `Evaluar(confirmados, ahoraNuevo)` (con la hora tomada después de releer) o
+  `Evaluar([.. rechazosLeidos, ahora], ahora)` (lo leído más el rechazo propio). La primera evita que
+  dos pedidos simultáneos sobre el tercer rechazo respondan los dos 401; la segunda cubre la carrera
+  inversa cuando la hora de la PC retrocede entre dos pedidos. Con eso el quinto rechazo responde 423
+  en ese mismo intento en cualquier orden de confirmación; sigue habiendo una sola confirmación por
+  pedido.
+- Falso 423 aceptado (hacia el lado seguro): si otro pedido confirma un reinicio (`ingreso/exito`;
+  desde los Blocks 3 a 5 también definición, cambio o restablecimiento) entre la lectura y la
+  confirmación propia, la segunda evaluación responde 423 aunque la cuenta real volvió a empezar;
+  solo afecta esa respuesta, no el registro, y el pedido siguiente entra normal.
+- `ahora` se toma después de la primera consulta de rechazos; el evento conserva ese `ahora`.
+- El 423 es ProblemDetails con `title` "El acceso está bloqueado." y `detail` "El acceso está
+  bloqueado temporalmente. Volvé a intentar en unos minutos.", sin `errors` ni hora de fin.
+- `Ingresar_LimitadorSaturado_Rechazado429` ya no espera 12 respuestas 401: con el limitador de 2
+  pedidos, entre 3 y 4 responden 401 y el resto 423 (estable en 20 corridas).
+- `tests/Optica.Infrastructure.Tests/Acceso/AccesoPersistenciaTests.cs` no se tocó: el constructor de
+  `IngresarConContrasena` no cambió (la spec lo listaba de más).
+
+Pendientes del Block 2: el resumen XML de `IngresarConContrasena` (líneas 40-42) no menciona la
+segunda evaluación, y el comentario de las líneas 84-86 y de la prueba de carrera inversa atribuye la
+segunda evaluación a "si el reloj no avanzó" en vez de a que la hora de la PC retroceda; se corrigen en
+el cierre de CODE. La web todavía no traduce el 423 (Block 6). Tomar `ahoraNuevo` después de releer
+no tiene una prueba propia (sobreviven las mutaciones que lo toman antes o lo igualan a `ahora`): lo
+que exige la spec se cumple igual por las otras dos evaluaciones, y una prueba con un gancho entre
+la confirmación y la relectura lo fijaría. El piso de tres 401 de `LimitadorSaturado` no está
+garantizado en teoría (estable en 30 corridas).

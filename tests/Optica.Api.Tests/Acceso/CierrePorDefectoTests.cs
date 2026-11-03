@@ -42,6 +42,21 @@ public sealed class CierrePorDefectoTests
     }
 
     [Fact]
+    public async Task Ingresar_ResultadoBloqueado_NoEmiteCookie()
+    {
+        var (controller, autenticacion) = Crear();
+
+        var respuesta = await controller.ResponderIngresoAsync(IntentoIngreso.Bloqueado);
+
+        var resultado = Assert.IsType<ObjectResult>(respuesta);
+        Assert.Equal(StatusCodes.Status423Locked, resultado.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(resultado.Value);
+        Assert.Equal(AccesoController.MensajeBloqueado, problema.Detail);
+        Assert.Equal(0, autenticacion.Inicios);
+        Assert.Equal(0, controller.Response.Headers.SetCookie.Count);
+    }
+
+    [Fact]
     public async Task ExitoExplicito_IniciaSesion()
     {
         var (controller, autenticacion) = Crear();
@@ -57,7 +72,12 @@ public sealed class CierrePorDefectoTests
     private static (AccesoController Controller, AutenticacionContada Autenticacion) Crear()
     {
         var autenticacion = new AutenticacionContada();
-        var servicios = new ServiceCollection().AddSingleton<IAuthenticationService>(autenticacion).BuildServiceProvider();
+        // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
+        var servicios = new ServiceCollection()
+            .AddSingleton<IAuthenticationService>(autenticacion)
+            .AddLogging()
+            .AddMvcCore().Services
+            .BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
         var controller = new AccesoController(null!, null!, null!, null!)
         {

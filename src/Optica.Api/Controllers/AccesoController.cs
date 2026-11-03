@@ -45,6 +45,7 @@ public sealed class AccesoController(
     public const string MensajeContrasenaIncorrecta = "La contraseña no es correcta. Volvé a ingresarla.";
     public const string AccionSinContrasena = "Definí la contraseña primero";
     public const string AccionYaDefinida = "Ya hay una contraseña definida. Ingresá con ella.";
+    public const string MensajeBloqueado = "El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.";
 
     [HttpGet("estado")]
     [AllowAnonymous]
@@ -126,6 +127,8 @@ public sealed class AccesoController(
                 return this.Rechazo(
                     StatusCodes.Status401Unauthorized,
                     new ErrorValidacion(ValidacionContrasena.Campo, MensajeContrasenaIncorrecta));
+            case ResultadoIngreso.Bloqueado:
+                return this.Bloqueado(MensajeBloqueado);
             default:
                 throw new InvalidOperationException($"Resultado de ingresar no previsto: {(int)intento.Tipo}.");
         }
