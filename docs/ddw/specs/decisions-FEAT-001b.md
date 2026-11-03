@@ -113,3 +113,36 @@ no tiene una prueba propia (sobreviven las mutaciones que lo toman antes o lo ig
 que exige la spec se cumple igual por las otras dos evaluaciones, y una prueba con un gancho entre
 la confirmación y la relectura lo fijaría. El piso de tres 401 de `LimitadorSaturado` no está
 garantizado en teoría (estable en 30 corridas).
+
+## Block 3 — Contratos y persistencia del cambio de contraseña
+
+Supuestos del implementador (3 rondas) — aceptados por el orquestador — 2026-11-03 — Block 3:
+
+- `CredencialAcceso.ReemplazarHash(nuevo, ahora)` usa las mismas validaciones que el constructor
+  (hash no vacío, fecha UTC) y valida antes de asignar; `Hash` y `DefinidaEn` pasan a `private set`.
+- `ICredencialAccesoRepository.Reemplazar(anterior, nueva)`: `anterior` es la credencial tal como se
+  leyó, sin modificar, y `nueva` otra instancia con el hash nuevo; la misma instancia en los dos se
+  rechaza con `ArgumentException` (`paramName` `nueva`). El `UPDATE` filtra por `Hash = @anterior`
+  (`IsConcurrencyToken()`), dentro de la transacción de `UnidadDeTrabajoEf`, sin `ExecuteUpdate`; si
+  la fila ya está en el contexto, reutiliza esa entrada.
+- Datos sensibles: `ConflictoAlConfirmarException` nunca lleva la excepción de EF como causa
+  (concurrencia, unicidad ni CHECK), porque sus `Entries` guardan el hash de la credencial. El
+  mensaje nuevo de concurrencia es "Los datos a guardar cambiaron después de leerlos."
+- `ValidacionContrasena.Validar(contrasena, out normalizada, campo = Campo)` con las constantes
+  `CampoActual` (`contrasenaActual`) y `CampoNueva` (`contrasenaNueva`); un campo vacío lanza
+  `ArgumentException`. Los llamadores de FEAT-001a no cambian.
+- El doble `AlmacenEnMemoria` imita el repositorio real: `ObtenerAsync` devuelve una copia,
+  `Reemplazar` rechaza la misma instancia y el conflicto compara contra el hash leído.
+- Migración `20261103143513_TokenConcurrenciaCredencial` sin SQL, generada con `dotnet ef`. La
+  justificación de la spec ("para que `Migrate()` no encuentre cambios de modelo pendientes") no se
+  sostiene en SQLite: un token de concurrencia no cambia el esquema y `HasPendingModelChanges()` daba
+  falso sin ella. Se mantiene porque alinea el snapshot con el modelo y no tiene efectos.
+- Pruebas nuevas fuera de la lista de la spec: `CredencialAccesoTests.cs`,
+  `ValidacionContrasenaTests.cs` y `AlmacenEnMemoriaTests.cs`; `Modelo_SinCambiosPendientes_LaApiArranca`
+  en la Api.
+- xUnit serializa los datos de `MemberData` al descubrir las pruebas y un sustituto suelto llega como
+  U+FFFD: las pruebas con sustitutos sueltos usan `DisableDiscoveryEnumeration = true`.
+
+Pendiente del Block 3 para el cierre de CODE: quitar el parámetro opcional `Exception? causa` del
+constructor de `ConflictoAlConfirmarException` (nadie lo usa), para que "nunca lleva la causa" se
+cumpla por compilación.

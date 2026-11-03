@@ -33,4 +33,43 @@ public sealed class CredencialAccesoRepository(OpticaDbContext contexto) : ICred
             DefinidaEn = credencial.DefinidaEn,
         });
     }
+
+    /// <summary>
+    /// Deja la fila marcada como modificada en el contexto, con el hash de <paramref name="anterior"/> como valor
+    /// original: como <see cref="CredencialAccesoFila.Hash"/> es token de concurrencia, el <c>UPDATE</c> que emite
+    /// <see cref="UnidadDeTrabajoEf"/> filtra por <c>Id = 1 AND Hash = @anterior</c>. Si otra operación cambió o borró la
+    /// credencial, afecta 0 filas, EF lanza <see cref="DbUpdateConcurrencyException"/> y la unidad de trabajo lo
+    /// informa como conflicto. Sin <c>ExecuteUpdate</c>, que se ejecutaría fuera de esa transacción.
+    /// </summary>
+    public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva)
+    {
+        ArgumentNullException.ThrowIfNull(anterior);
+        ArgumentNullException.ThrowIfNull(nueva);
+        if (ReferenceEquals(anterior, nueva))
+        {
+            // Ya modificada, el WHERE compararía contra el hash nuevo y siempre daría conflicto.
+            throw new ArgumentException(
+                "La credencial nueva tiene que ser otra instancia que la leída.", nameof(nueva));
+        }
+
+        // ObtenerAsync lee sin seguimiento; si la fila ya está en el contexto (por ejemplo, recién agregada o
+        // reemplazada y confirmada), se reutiliza esa entrada en lugar de adjuntar otra con la misma clave.
+        var entrada = contexto.CredencialesAcceso.Local.FindEntry(IdUnico)
+            ?? contexto.CredencialesAcceso.Attach(new CredencialAccesoFila
+            {
+                Id = IdUnico,
+                Hash = anterior.Hash,
+                DefinidaEn = anterior.DefinidaEn,
+            });
+
+        // El valor original es el hash de anterior, no el que tenga la entrada: si el contexto seguía una versión
+        // vieja de la fila y anterior se releyó después, el WHERE tiene que comparar contra lo releído.
+        var hash = entrada.Property(c => c.Hash);
+        hash.OriginalValue = anterior.Hash;
+        hash.CurrentValue = nueva.Hash;
+        hash.IsModified = true;
+        var definidaEn = entrada.Property(c => c.DefinidaEn);
+        definidaEn.CurrentValue = nueva.DefinidaEn;
+        definidaEn.IsModified = true;
+    }
 }

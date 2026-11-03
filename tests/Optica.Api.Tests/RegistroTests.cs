@@ -212,5 +212,7 @@ public sealed class RegistroTests
         public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default) => throw falla;
 
         public void Agregar(CredencialAcceso credencial) => throw falla;
+
+        public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva) => throw falla;
     }
 }

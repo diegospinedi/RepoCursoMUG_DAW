@@ -11,6 +11,7 @@ namespace Optica.Application.Tests.Acceso;
 internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroEventosAcceso, IUnidadDeTrabajo
 {
     private CredencialAcceso? _credencialPendiente;
+    private (string HashAnterior, CredencialAcceso Nueva)? _reemplazoPendiente;
     private readonly List<EventoAcceso> _eventosPendientes = [];
 
     public CredencialAcceso? Credencial { get; set; }
@@ -37,13 +38,37 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
         return Task.FromResult(Credencial is not null);
     }
 
+    /// <summary>
+    /// Como el repositorio real, que lee sin seguimiento y arma una entidad nueva: devuelve una copia, así modificar lo
+    /// leído no cambia lo guardado.
+    /// </summary>
     public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default)
     {
         Consultas++;
-        return Task.FromResult(Credencial);
+        return Task.FromResult(
+            Credencial is null ? null : new CredencialAcceso(Credencial.Hash, Credencial.DefinidaEn));
     }
 
     public void Agregar(CredencialAcceso credencial) => _credencialPendiente = credencial;
+
+    /// <summary>
+    /// Como el repositorio real, con concurrencia optimista sobre el hash: si al confirmar la credencial guardada ya no
+    /// tiene el hash de <paramref name="anterior"/> (otro cambio o un restablecimiento), la confirmación es un conflicto
+    /// y no se guarda nada. La comparación usa el hash de <paramref name="anterior"/> tal como llegó, que es el que se
+    /// leyó; la misma instancia como anterior y nueva se rechaza con la misma <see cref="ArgumentException"/>.
+    /// </summary>
+    public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva)
+    {
+        ArgumentNullException.ThrowIfNull(anterior);
+        ArgumentNullException.ThrowIfNull(nueva);
+        if (ReferenceEquals(anterior, nueva))
+        {
+            throw new ArgumentException(
+                "La credencial nueva tiene que ser otra instancia que la leída.", nameof(nueva));
+        }
+
+        _reemplazoPendiente = (anterior.Hash, nueva);
+    }
 
     public void Registrar(EventoAcceso evento) => _eventosPendientes.Add(evento);
 
@@ -64,6 +89,19 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
         var alConfirmar = AlConfirmar;
         AlConfirmar = null;
         alConfirmar?.Invoke();
+        if (_reemplazoPendiente is var (hashAnterior, nueva))
+        {
+            _reemplazoPendiente = null;
+            if (Credencial?.Hash != hashAnterior)
+            {
+                _credencialPendiente = null;
+                _eventosPendientes.Clear();
+                throw new ConflictoAlConfirmarException("La credencial cambió entre la lectura y la confirmación.");
+            }
+
+            Credencial = nueva;
+        }
+
         if (_credencialPendiente is not null)
         {
             Credencial = _credencialPendiente;

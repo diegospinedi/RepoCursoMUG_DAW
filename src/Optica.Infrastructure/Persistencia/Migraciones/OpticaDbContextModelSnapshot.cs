@@ -26,6 +26,7 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Hash")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasColumnType("TEXT");
 

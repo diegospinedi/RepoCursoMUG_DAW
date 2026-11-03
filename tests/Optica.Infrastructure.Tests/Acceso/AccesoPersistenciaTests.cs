@@ -114,7 +114,7 @@ public class AccesoPersistenciaTests
         contexto.CredencialesAcceso.Add(new CredencialAccesoFila
         {
             Id = 2,
-            Hash = "PBKDF2-SHA256$600000$b3RyYQ==$b3RyYQ==",
+            Hash = HasherQueSeAdelanta.HashDeLaOtra,
             DefinidaEn = Instante.UtcDateTime,
         });
         new RegistroEventosAccesoEf(contexto).Registrar(
@@ -123,11 +123,39 @@ public class AccesoPersistenciaTests
         var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
             () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
 
-        Assert.Equal(275, Assert.IsType<SqliteException>(error.InnerException?.InnerException).SqliteExtendedErrorCode);
+        // Clasificado como conflicto (otro CHECK se propagaría como DbUpdateException, ver la prueba siguiente), con
+        // mensaje genérico y sin la causa de EF: sus Entries llevan el hash de la credencial duplicada.
+        Assert.Equal("Los datos a guardar chocan con datos existentes.", error.Message);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain(HasherQueSeAdelanta.HashDeLaOtra, error.ToString(), StringComparison.Ordinal);
         Assert.Empty(contexto.ChangeTracker.Entries());
         var cadena = CadenaDe(baseTemporal);
         Assert.Empty(Filas(cadena, "SELECT Id FROM CredencialAcceso"));
         Assert.Empty(Filas(cadena, "SELECT Id FROM EventoAcceso"));
+    }
+
+    [Fact]
+    public async Task UnidadDeTrabajo_ClavePrimariaDuplicada_ConflictoSinCausaNiHash()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        // Otra definición ya grabó la credencial (Id = 1): agregar otra viola la clave primaria (1555).
+        Ejecutar(cadena, "INSERT INTO CredencialAcceso (Id, Hash, DefinidaEn) VALUES (1, '"
+            + HasherQueSeAdelanta.HashDeLaOtra + "', '2026-10-30T14:00:00.0000000Z')");
+        var contexto = baseTemporal.CrearContexto();
+        var hash = new HasherContrasenaPbkdf2().Calcular("clave-valida");
+        new CredencialAccesoRepository(contexto).Agregar(new CredencialAcceso(hash, Instante.UtcDateTime));
+
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        Assert.Equal("Los datos a guardar chocan con datos existentes.", error.Message);
+        Assert.Null(error.InnerException);
+        var completa = error.ToString();
+        Assert.DoesNotContain(hash, completa, StringComparison.Ordinal);
+        Assert.DoesNotContain(HasherQueSeAdelanta.HashDeLaOtra, completa, StringComparison.Ordinal);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Equal([HasherQueSeAdelanta.HashDeLaOtra], Assert.Single(Filas(cadena, "SELECT Hash FROM CredencialAcceso")));
     }
 
     [Fact]
@@ -347,7 +375,9 @@ public class AccesoPersistenciaTests
 
         // Las migraciones del ensamblado, en orden, y todas aplicadas.
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.Equal(["Inicial", "IndiceEventoAccesoTipoResultado"], migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
+        Assert.Equal(
+            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial"],
+            migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
         Assert.Equal("20261030220627_Inicial", migraciones[0]);
         Assert.Equal(migraciones, contexto.Database.GetAppliedMigrations());
@@ -431,6 +461,181 @@ public class AccesoPersistenciaTests
 
             Assert.Equal(Describir(nombre, oraculo), Describir(nombre, consulta));
         }
+    }
+
+    [Fact]
+    public async Task Reemplazar_SinCambiosEnElMedio_GuardaHashYFechaNuevos()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new CredencialAccesoRepository(contexto);
+        var anterior = await repositorio.ObtenerAsync();
+        Assert.NotNull(anterior);
+        var nueva = new CredencialAcceso(hasher.Calcular("otra-clave"), Instante.UtcDateTime.AddDays(4));
+
+        repositorio.Reemplazar(anterior, nueva);
+        new RegistroEventosAccesoEf(contexto).Registrar(
+            new EventoAcceso(TipoEventoAcceso.CambioContrasena, ResultadoEventoAcceso.Exito, nueva.DefinidaEn));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        var cadena = CadenaDe(baseTemporal);
+        var fila = Assert.Single(Filas(cadena, "SELECT Id, Hash, DefinidaEn FROM CredencialAcceso"));
+        Assert.Equal(["1", nueva.Hash, nueva.DefinidaEn.ToString("O", CultureInfo.InvariantCulture)], fila);
+        Assert.Equal(
+            [["definicion", "exito"], ["cambio_contrasena", "exito"]],
+            Filas(cadena, "SELECT Tipo, Resultado FROM EventoAcceso ORDER BY Id"));
+
+        // Un segundo reemplazo en el mismo contexto parte de lo recién confirmado.
+        var otra = new CredencialAcceso(hasher.Calcular("tercera-clave"), Instante.UtcDateTime.AddDays(5));
+        repositorio.Reemplazar(nueva, otra);
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        Assert.Equal([otra.Hash], Assert.Single(Filas(cadena, "SELECT Hash FROM CredencialAcceso")));
+    }
+
+    [Theory]
+    [InlineData("UPDATE CredencialAcceso SET Hash = '" + HasherQueSeAdelanta.HashDeLaOtra + "' WHERE Id = 1", true)]
+    [InlineData("DELETE FROM CredencialAcceso WHERE Id = 1", false)]
+    public async Task Reemplazar_CredencialCambiadaEnElMedio_Conflicto(string cambioEnElMedio, bool quedaLaOtra)
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new CredencialAccesoRepository(contexto);
+        var anterior = await repositorio.ObtenerAsync();
+        Assert.NotNull(anterior);
+
+        // Otra operación (un cambio o un restablecimiento) confirma entre la lectura y la confirmación de esta.
+        Ejecutar(cadena, cambioEnElMedio);
+
+        var nueva = new CredencialAcceso(hasher.Calcular("otra-clave"), Instante.UtcDateTime.AddDays(4));
+        repositorio.Reemplazar(anterior, nueva);
+        new RegistroEventosAccesoEf(contexto).Registrar(
+            new EventoAcceso(TipoEventoAcceso.CambioContrasena, ResultadoEventoAcceso.Exito, nueva.DefinidaEn));
+
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        // Sin la causa de EF: sus Entries llevan el hash anterior y el nuevo, que no pueden llegar a un log.
+        Assert.Null(error.InnerException);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+
+        // Nada a medias: ni la credencial nueva ni el evento.
+        var credenciales = Filas(cadena, "SELECT Hash FROM CredencialAcceso");
+        if (quedaLaOtra)
+        {
+            Assert.Equal([HasherQueSeAdelanta.HashDeLaOtra], Assert.Single(credenciales));
+        }
+        else
+        {
+            Assert.Empty(credenciales);
+        }
+
+        Assert.Equal([["definicion", "exito"]], Filas(cadena, "SELECT Tipo, Resultado FROM EventoAcceso ORDER BY Id"));
+
+        // El contexto queda usable: lo que se registra después se confirma normalmente.
+        new RegistroEventosAccesoEf(contexto).Registrar(
+            new EventoAcceso(TipoEventoAcceso.Salida, ResultadoEventoAcceso.Exito, Instante.UtcDateTime));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        Assert.Equal(2, Filas(cadena, "SELECT Id FROM EventoAcceso").Count);
+    }
+
+    [Fact]
+    public async Task Confirmar_ConflictoDeConcurrencia_SinCausaNiHashesEnLaExcepcion()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        Assert.True((await CrearDefinir(baseTemporal.CrearContexto(), hasher).EjecutarAsync("clave-valida")).EsExito);
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new CredencialAccesoRepository(contexto);
+        var anterior = await repositorio.ObtenerAsync();
+        Assert.NotNull(anterior);
+        Ejecutar(cadena, "UPDATE CredencialAcceso SET Hash = '" + HasherQueSeAdelanta.HashDeLaOtra + "' WHERE Id = 1");
+        var nueva = new CredencialAcceso(hasher.Calcular("otra-clave"), Instante.UtcDateTime.AddDays(4));
+        repositorio.Reemplazar(anterior, nueva);
+
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        // Mensaje genérico y sin excepción interna: nada de lo que se loguee con ella lleva un hash.
+        Assert.Equal("Los datos a guardar cambiaron después de leerlos.", error.Message);
+        Assert.Null(error.InnerException);
+        var completa = error.ToString();
+        Assert.DoesNotContain(anterior.Hash, completa, StringComparison.Ordinal);
+        Assert.DoesNotContain(nueva.Hash, completa, StringComparison.Ordinal);
+        Assert.DoesNotContain(HasherQueSeAdelanta.HashDeLaOtra, completa, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reemplazar_MismaInstancia_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new CredencialAccesoRepository(contexto);
+        var credencial = new CredencialAcceso(HasherQueSeAdelanta.HashDeLaOtra, Instante.UtcDateTime);
+
+        // La misma instancia ya modificada haría que el WHERE compare contra el hash nuevo: conflicto seguro.
+        var error = Assert.Throws<ArgumentException>(() => repositorio.Reemplazar(credencial, credencial));
+
+        Assert.Equal("nueva", error.ParamName);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public async Task Reemplazar_ContextoConVersionVieja_ComparaContraElHashReleido()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var hasher = new HasherContrasenaPbkdf2();
+        var cadena = CadenaDe(baseTemporal);
+        // El contexto queda siguiendo la fila con el hash de la definición.
+        var contexto = baseTemporal.CrearContexto();
+        Assert.True((await CrearDefinir(contexto, hasher).EjecutarAsync("clave-valida")).EsExito);
+        Assert.NotNull(contexto.CredencialesAcceso.Local.FindEntry(CredencialAccesoRepository.IdUnico));
+
+        // Otro proceso cambia la fila; este la relee con el hash actual y la reemplaza a partir de ella.
+        Ejecutar(cadena, "UPDATE CredencialAcceso SET Hash = '" + HasherQueSeAdelanta.HashDeLaOtra + "' WHERE Id = 1");
+        var repositorio = new CredencialAccesoRepository(contexto);
+        var releida = await repositorio.ObtenerAsync();
+        Assert.NotNull(releida);
+        Assert.Equal(HasherQueSeAdelanta.HashDeLaOtra, releida.Hash);
+        var nueva = new CredencialAcceso(hasher.Calcular("otra-clave"), Instante.UtcDateTime.AddDays(4));
+
+        repositorio.Reemplazar(releida, nueva);
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        Assert.Equal([nueva.Hash], Assert.Single(Filas(cadena, "SELECT Hash FROM CredencialAcceso")));
+    }
+
+    [Fact]
+    public void Reemplazar_ConArgumentoNulo_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var repositorio = new CredencialAccesoRepository(baseTemporal.CrearContexto());
+        var credencial = new CredencialAcceso(HasherQueSeAdelanta.HashDeLaOtra, Instante.UtcDateTime);
+
+        Assert.Throws<ArgumentNullException>(() => repositorio.Reemplazar(null!, credencial));
+        Assert.Throws<ArgumentNullException>(() => repositorio.Reemplazar(credencial, null!));
+    }
+
+    [Fact]
+    public void Modelo_SinCambiosPendientes_TrasLasMigraciones()
+    {
+        // BaseTemporal arranca la infraestructura como la Api (InicializarBaseDeDatos → Migrate): si el modelo tuviera
+        // cambios sin migración, EF lanzaría ahí y la Api no arrancaría.
+        using var baseTemporal = new BaseTemporal();
+        var contexto = baseTemporal.CrearContexto();
+
+        Assert.False(contexto.Database.HasPendingModelChanges());
+        Assert.Empty(contexto.Database.GetPendingMigrations());
+
+        // El hash de la credencial es el token de concurrencia del reemplazo.
+        var hash = contexto.Model.FindEntityType(typeof(CredencialAccesoFila))?.FindProperty(nameof(CredencialAccesoFila.Hash));
+        Assert.NotNull(hash);
+        Assert.True(hash.IsConcurrencyToken);
     }
 
     private static string Describir(string escenario, IEnumerable<DateTime> fechas) =>

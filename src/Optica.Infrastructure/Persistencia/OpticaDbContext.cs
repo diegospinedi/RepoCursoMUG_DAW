@@ -25,7 +25,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint("CK_CredencialAcceso_Id", "\"Id\" = 1"));
             credencial.HasKey(c => c.Id);
             credencial.Property(c => c.Id).ValueGeneratedNever();
-            credencial.Property(c => c.Hash).IsRequired();
+            // Token de concurrencia: el reemplazo filtra por el hash leído, así un cambio o un restablecimiento
+            // en el medio da conflicto en lugar de pisarse (FEAT-001b).
+            credencial.Property(c => c.Hash).IsRequired().IsConcurrencyToken();
             credencial.Property(c => c.DefinidaEn).IsRequired().HasConversion(FechaUtcIso8601);
         });
 

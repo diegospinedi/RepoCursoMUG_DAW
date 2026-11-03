@@ -6,7 +6,9 @@ namespace Optica.Infrastructure.Persistencia;
 
 /// <summary>
 /// Confirma lo que registraron los repositorios con un único <c>SaveChanges</c> del contexto compartido,
-/// dentro de una transacción explícita: si algo falla antes del commit, no queda nada guardado.
+/// dentro de una transacción explícita: si algo falla antes del commit, no queda nada guardado. Las violaciones de
+/// unicidad y los tokens de concurrencia que no coinciden (<see cref="DbUpdateConcurrencyException"/>) se informan
+/// como <see cref="ConflictoAlConfirmarException"/>, nunca con la excepción de EF como causa.
 /// </summary>
 public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTrabajo
 {
@@ -29,11 +31,20 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
             await contexto.SaveChangesAsync(cancelacion);
             await transaccion.CommitAsync(cancelacion);
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Un token de concurrencia no coincidió (la credencial cambió o se borró después de leerla): el UPDATE o
+            // DELETE afectó 0 filas y la transacción se revirtió. Lo pendiente se descarta, como en cualquier conflicto.
+            // La causa NO se adjunta: sus Entries conservan el hash anterior y el nuevo de la credencial.
+            contexto.ChangeTracker.Clear();
+            throw new ConflictoAlConfirmarException("Los datos a guardar cambiaron después de leerlos.");
+        }
         catch (DbUpdateException error) when (EsConflicto(error))
         {
-            // Lo pendiente no se guardó: se descarta para que el contexto no lo reintente.
+            // Lo pendiente no se guardó: se descarta para que el contexto no lo reintente. La causa tampoco se adjunta
+            // acá: sus Entries llevan el hash de la credencial duplicada.
             contexto.ChangeTracker.Clear();
-            throw new ConflictoAlConfirmarException("Los datos a guardar chocan con datos existentes.", error);
+            throw new ConflictoAlConfirmarException("Los datos a guardar chocan con datos existentes.");
         }
         catch
         {
