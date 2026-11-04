@@ -9,6 +9,7 @@ using Optica.Application.Acceso;
 using Optica.Application.Comun;
 using Optica.Application.Marca;
 using Optica.Domain.Acceso;
+using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Persistencia;
@@ -43,6 +44,9 @@ public static class ConfiguracionInfraestructura
         // Configuración de negocio: comparte el contexto (y la unidad de trabajo) del alcance; lee la base en cada
         // operación (FR-06).
         servicios.AddScoped<IConfiguracionNegocioRepository, ConfiguracionNegocioRepository>();
+
+        // Catálogo: comparte el contexto (y la unidad de trabajo) del alcance.
+        servicios.AddScoped<IArticuloRepository, ArticuloRepository>();
 
         // Marca: la instalada en Optica:Marca:Directorio o la de ejemplo copiada junto a los binarios. Singleton: se lee
         // una vez y queda en memoria hasta reiniciar la Api.
