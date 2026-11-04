@@ -92,6 +92,97 @@ export function leerPid(texto) {
 }
 
 /**
+ * Nombre de una instancia: palabras en minúsculas unidas por un guion ("chrome", "msedge-configuracion"). Termina en
+ * una ruta del directorio temporal, así que no admite barras, puntos, mayúsculas ni guiones sueltos.
+ */
+const NOMBRE_DE_INSTANCIA = /^[a-z]+(?:-[a-z]+)*$/;
+
+/**
+ * Las instancias de OPTICA_E2E_INSTANCIAS ("nombre:puerto,..."), que arma playwright.config.ts: una por proyecto, es
+ * decir, por navegador y por archivo de pruebas.
+ */
+export function leerInstancias(texto) {
+  const nombres = new Set();
+  const instancias = (texto ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map((par) => {
+      const [nombre, puerto, ...resto] = par.split(':');
+      const numero = /^\d+$/.test(puerto ?? '') ? Number(puerto) : NaN;
+      // Un nombre repetido compartiría base y marca con la otra instancia.
+      if (
+        !NOMBRE_DE_INSTANCIA.test(nombre ?? '') ||
+        nombres.has(nombre) ||
+        !(numero >= 1 && numero <= 65_535) ||
+        resto.length > 0
+      ) {
+        throw new Error(`OPTICA_E2E_INSTANCIAS mal formada: "${par}".`);
+      }
+      nombres.add(nombre);
+      return { nombre, puerto: numero };
+    });
+  if (instancias.length === 0) {
+    throw new Error('Falta OPTICA_E2E_INSTANCIAS (la define playwright.config.ts).');
+  }
+  return instancias;
+}
+
+const SUFIJO_DE_PRUEBA = '.spec.ts';
+
+/**
+ * Los archivos de pruebas de tests/ (los `*.spec.ts` de `nombres`), sin la extensión y ordenados: playwright.config.ts
+ * arma con ellos un proyecto por navegador y por archivo, así que una prueba nueva entra sola. Falla si un nombre no
+ * sirve para una instancia (minúsculas unidas por guiones), en lugar de dejar ese archivo sin correr.
+ */
+export function archivosDePrueba(nombres) {
+  const archivos = nombres
+    .filter((nombre) => nombre.endsWith(SUFIJO_DE_PRUEBA))
+    .map((nombre) => nombre.slice(0, -SUFIJO_DE_PRUEBA.length))
+    .sort();
+  for (const archivo of archivos) {
+    if (!NOMBRE_DE_INSTANCIA.test(archivo)) {
+      throw new Error(
+        `tests/${archivo}${SUFIJO_DE_PRUEBA}: el nombre tiene que ser palabras en minúsculas unidas por guiones ` +
+          '(por ejemplo, presupuestos-borrador.spec.ts), porque nombra su proyecto y su Api.',
+      );
+    }
+  }
+  if (archivos.length === 0) {
+    throw new Error(`No hay pruebas: tests/ no tiene ningún archivo *${SUFIJO_DE_PRUEBA}.`);
+  }
+  return archivos;
+}
+
+/**
+ * Espera a que la Api de una instancia responda. Falla si su proceso termina antes (`terminada` devuelve el código o
+ * la señal; null mientras sigue vivo) o si no responde en `plazoMs`. El reloj y la espera se reciben para probarla sin
+ * dormir.
+ */
+export async function esperarApi({
+  nombre,
+  puerto,
+  responde,
+  terminada,
+  plazoMs = 120_000,
+  intervaloMs = 500,
+  ahora = Date.now,
+  dormir = (ms) => new Promise((listo) => setTimeout(listo, ms)),
+}) {
+  const limite = ahora() + plazoMs;
+  while (ahora() < limite) {
+    const fin = terminada();
+    if (fin !== null && fin !== undefined) {
+      throw new Error(`La Api de ${nombre} terminó antes de responder (${fin}).`);
+    }
+    if (await responde()) {
+      return;
+    }
+    await dormir(intervaloMs);
+  }
+  throw new Error(`La Api de ${nombre} no respondió en el puerto ${puerto}.`);
+}
+
+/**
  * El mensaje de error de un comando de compilación que no terminó bien, o null si terminó bien. `resultado` es el de
  * `spawnSync`: si el comando no se pudo lanzar, trae `error` y no tiene código de salida. Solo se usa el código del
  * error, no su texto.

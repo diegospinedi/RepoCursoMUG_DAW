@@ -18,6 +18,18 @@ const mensajeDeFallo = (...argumentos) => {
   assert.equal(typeof compilacion.mensajeDeFallo, 'function', 'compilacion.mjs no exporta mensajeDeFallo.');
   return compilacion.mensajeDeFallo(...argumentos);
 };
+const leerInstancias = (texto) => {
+  assert.equal(typeof compilacion.leerInstancias, 'function', 'compilacion.mjs no exporta leerInstancias.');
+  return compilacion.leerInstancias(texto);
+};
+const archivosDePrueba = (nombres) => {
+  assert.equal(typeof compilacion.archivosDePrueba, 'function', 'compilacion.mjs no exporta archivosDePrueba.');
+  return compilacion.archivosDePrueba(nombres);
+};
+const esperarApi = (opciones) => {
+  assert.equal(typeof compilacion.esperarApi, 'function', 'compilacion.mjs no exporta esperarApi.');
+  return compilacion.esperarApi(opciones);
+};
 
 /** Rutas como las de la PC de desarrollo en Windows: espacios, & y % (que cmd.exe interpretaría). */
 const REPOSITORIO = 'C:\\Repos\\Curso & Prueba\\Modulo 6';
@@ -191,6 +203,133 @@ describe('mensajeDeFallo (comandos de compilación)', () => {
     assert.equal(
       mensajeDeFallo('dotnet', ['build'], { status: null, signal: 'SIGKILL' }),
       'Falló "dotnet build" (código SIGKILL).',
+    );
+  });
+});
+
+describe('leerInstancias (OPTICA_E2E_INSTANCIAS)', () => {
+  test('un proyecto por navegador y por archivo: nombre y puerto de cada uno', () => {
+    assert.deepEqual(leerInstancias('chrome-acceso:5543,chrome-configuracion:5544,msedge-acceso:5545'), [
+      { nombre: 'chrome-acceso', puerto: 5543 },
+      { nombre: 'chrome-configuracion', puerto: 5544 },
+      { nombre: 'msedge-acceso', puerto: 5545 },
+    ]);
+  });
+
+  // El nombre termina en una ruta del directorio temporal: nada de barras, puntos, mayúsculas ni guiones sueltos.
+  for (const par of ['../datos:5543', 'Chrome:5543', 'chrome/acceso:5543', '-chrome:5543', 'chrome-:5543', 'chrome--acceso:5543', 'chrome:', 'chrome:55a3', ':5543']) {
+    test(`instancias: nombre mal formado rechazado (${JSON.stringify(par)})`, () => {
+      assert.throws(() => leerInstancias(`chrome-acceso:5543,${par}`), /OPTICA_E2E_INSTANCIAS mal formada/);
+    });
+  }
+
+  // Dos instancias con el mismo nombre compartirían base y marca en el directorio temporal.
+  test('instancias: nombre duplicado rechazado', () => {
+    assert.throws(
+      () => leerInstancias('chrome-acceso:5543,msedge-acceso:5544,chrome-acceso:5545'),
+      /OPTICA_E2E_INSTANCIAS mal formada: "chrome-acceso:5545"/,
+    );
+  });
+
+  for (const puerto of ['0', '65536', '99999']) {
+    test(`instancias: puerto ${puerto} fuera de 1 a 65535 rechazado`, () => {
+      assert.throws(() => leerInstancias(`chrome-acceso:${puerto}`), /OPTICA_E2E_INSTANCIAS mal formada/);
+    });
+  }
+
+  test('instancias: puertos 1 y 65535 aceptados', () => {
+    assert.deepEqual(leerInstancias('chrome-acceso:1,msedge-acceso:65535'), [
+      { nombre: 'chrome-acceso', puerto: 1 },
+      { nombre: 'msedge-acceso', puerto: 65535 },
+    ]);
+  });
+
+  test('sin instancias: error que dice quién la define', () => {
+    assert.throws(() => leerInstancias(''), /Falta OPTICA_E2E_INSTANCIAS/);
+    assert.throws(() => leerInstancias(undefined), /Falta OPTICA_E2E_INSTANCIAS/);
+  });
+});
+
+describe('archivosDePrueba (proyectos de playwright.config.ts)', () => {
+  test('todos los *.spec.ts de tests/, ordenados y sin la extensión; ignora lo demás', () => {
+    assert.deepEqual(
+      archivosDePrueba(['configuracion.spec.ts', 'ayuda.ts', 'acceso.spec.ts', 'notas.md', 'presupuestos-borrador.spec.ts']),
+      ['acceso', 'configuracion', 'presupuestos-borrador'],
+    );
+  });
+
+  // Una prueba nueva no puede quedar sin correr en silencio: si su nombre no sirve para una instancia, la configuración
+  // falla nombrando el archivo.
+  for (const archivo of ['Presupuestos.spec.ts', 'presupuestos_borrador.spec.ts', 'presupuestos.v2.spec.ts']) {
+    test(`archivo con nombre que no sirve para un proyecto rechazado (${archivo})`, () => {
+      assert.throws(
+        () => archivosDePrueba(['acceso.spec.ts', archivo]),
+        (error) => error.message.includes(`tests/${archivo}`) && /minúsculas/.test(error.message),
+      );
+    });
+  }
+
+  test('sin ningún *.spec.ts: error', () => {
+    assert.throws(() => archivosDePrueba(['ayuda.ts']), /No hay pruebas/);
+  });
+});
+
+describe('esperarApi (servidor.mjs)', () => {
+  /** Un reloj falso: cada espera avanza el tiempo sin dormir de verdad. */
+  function reloj() {
+    let ahora = 0;
+    return { ahora: () => ahora, dormir: async (ms) => void (ahora += ms) };
+  }
+
+  test('responde al tercer intento: termina sin error', async () => {
+    let intentos = 0;
+    const { ahora, dormir } = reloj();
+
+    await esperarApi({
+      nombre: 'chrome-configuracion',
+      puerto: 5544,
+      responde: async () => ++intentos === 3,
+      terminada: () => null,
+      ahora,
+      dormir,
+    });
+
+    assert.equal(intentos, 3);
+  });
+
+  test('servidor: una Api que no arranca da error', async () => {
+    // El proceso de la Api terminó con código 1 antes de responder: no se sigue esperando hasta el plazo.
+    let consultas = 0;
+    const { ahora, dormir } = reloj();
+
+    await assert.rejects(
+      esperarApi({
+        nombre: 'msedge-configuracion',
+        puerto: 5546,
+        responde: async () => (consultas++, false),
+        terminada: () => (consultas >= 2 ? 1 : null),
+        ahora,
+        dormir,
+      }),
+      /La Api de msedge-configuracion terminó antes de responder \(1\)/,
+    );
+    assert.ok(ahora() < 120_000, 'Siguió esperando después de que la Api terminó.');
+  });
+
+  test('servidor: una Api que no responde en el plazo da error', async () => {
+    const { ahora, dormir } = reloj();
+
+    await assert.rejects(
+      esperarApi({
+        nombre: 'chrome-acceso',
+        puerto: 5543,
+        responde: async () => false,
+        terminada: () => null,
+        plazoMs: 5_000,
+        ahora,
+        dormir,
+      }),
+      /La Api de chrome-acceso no respondió en el puerto 5543/,
     );
   });
 });
