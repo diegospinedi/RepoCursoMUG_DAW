@@ -384,7 +384,7 @@ public class AccesoPersistenciaTests
         // Las migraciones del ensamblado, en orden, y todas aplicadas.
         var migraciones = contexto.Database.GetMigrations().ToList();
         Assert.Equal(
-            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial"],
+            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio"],
             migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
         Assert.Equal("20261030220627_Inicial", migraciones[0]);
@@ -398,16 +398,24 @@ public class AccesoPersistenciaTests
             "INSERT INTO EventoAcceso (Tipo, Resultado, FechaHora) VALUES ('ingreso', 'rechazo', '2026-11-03T12:00:00.0000000Z')");
         var migrador = contexto.GetService<IMigrator>();
 
-        // Revertir hasta Inicial elimina solo el índice: los datos y el índice de FechaHora quedan.
+        // La tabla de configuración existe con su fila inicial.
+        Assert.Contains("ConfiguracionNegocio", Tablas(cadena));
+        Assert.Single(Filas(cadena, "SELECT Id FROM ConfiguracionNegocio"));
+
+        // Revertir hasta Inicial elimina el índice y la tabla de configuración: los datos de los eventos y el índice
+        // de FechaHora quedan.
         migrador.Migrate(migraciones[0]);
         Assert.DoesNotContain("IX_EventoAcceso_Tipo_Resultado", Indices(cadena));
         Assert.Contains("IX_EventoAcceso_FechaHora", Indices(cadena));
+        Assert.DoesNotContain("ConfiguracionNegocio", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM EventoAcceso"));
         Assert.Equal([migraciones[0]], contexto.Database.GetAppliedMigrations());
 
-        // Y volver a aplicarla lo recrea.
+        // Y volver a aplicarlas recrea el índice, y la tabla con su fila inicial.
         migrador.Migrate();
         AfirmarIndiceTipoResultado(cadena);
+        Assert.Contains("ConfiguracionNegocio", Tablas(cadena));
+        Assert.Single(Filas(cadena, "SELECT Id FROM ConfiguracionNegocio"));
         Assert.Empty(contexto.Database.GetPendingMigrations());
     }
 
@@ -786,6 +794,9 @@ public class AccesoPersistenciaTests
 
     private static List<string> Indices(string cadena) =>
         [.. Filas(cadena, "SELECT name FROM pragma_index_list('EventoAcceso')").Select(f => f[0])];
+
+    private static List<string> Tablas(string cadena) =>
+        [.. Filas(cadena, "SELECT name FROM sqlite_master WHERE type = 'table'").Select(f => f[0])];
 
     private static void AfirmarIndiceTipoResultado(string cadena)
     {

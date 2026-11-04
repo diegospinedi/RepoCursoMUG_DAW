@@ -11,6 +11,7 @@ using Optica.Api.Errores;
 using Optica.Api.Web;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
+using Optica.Application.Configuracion;
 using Optica.Application.Marca;
 using Optica.Infrastructure;
 using Optica.Infrastructure.Persistencia;
@@ -113,6 +114,12 @@ public partial class Program
 
         // Marca (colores y logo), anónima: la de Optica:Marca:Directorio o la de ejemplo.
         builder.Services.AddScoped<ObtenerMarca>();
+
+        // Configuración de negocio, con sesión: se lee de la base en cada pedido (sin caché) y cada grabación queda
+        // en el log (categoría Optica.Application.Configuracion, que appsettings.json envía también al Registro de
+        // eventos de Windows).
+        builder.Services.AddScoped<ObtenerConfiguracionNegocio>();
+        builder.Services.AddScoped<GrabarConfiguracionNegocio>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

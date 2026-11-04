@@ -1,8 +1,9 @@
 // Servidor de la suite e2e (lo arranca el webServer de playwright.config.ts).
 //
 // 1. Compila la web (npm run build en web/) y la Api (Release) en un directorio temporal.
-// 2. Por cada proyecto de OPTICA_E2E_INSTANCIAS ("nombre:puerto,..."), levanta una Api con su base y su marca de prueba
-//    en directorios temporales propios, y espera a que responda antes de levantar la siguiente.
+// 2. Por cada proyecto de OPTICA_E2E_INSTANCIAS ("nombre:puerto,...", un proyecto por navegador y por archivo de
+//    pruebas), levanta una Api con su base y su marca de prueba en directorios temporales propios, y espera a que
+//    responda antes de levantar la siguiente. Si una Api termina o no responde, servidor.mjs termina con código 1.
 // 3. Al recibir SIGTERM o SIGINT detiene las Api y borra el directorio temporal.
 //
 // Windows no tiene señales: Playwright termina el árbol de procesos sin aviso y el directorio queda. Por eso, al
@@ -22,6 +23,8 @@ import { fileURLToPath } from 'node:url';
 import {
   comandosDeCompilacion,
   debeBorrarse,
+  esperarApi,
+  leerInstancias,
   leerPid,
   mensajeDeFallo,
   verificarModulosDeLaWeb,
@@ -30,19 +33,8 @@ import {
 const PREFIJO = 'optica-e2e-';
 const repositorio = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const instancias = (process.env.OPTICA_E2E_INSTANCIAS ?? '')
-  .split(',')
-  .filter(Boolean)
-  .map((par) => {
-    const [nombre, puerto] = par.split(':');
-    if (!/^[a-z]+$/.test(nombre ?? '') || !/^\d+$/.test(puerto ?? '')) {
-      throw new Error(`OPTICA_E2E_INSTANCIAS mal formada: "${par}".`);
-    }
-    return { nombre, puerto: Number(puerto) };
-  });
-if (instancias.length === 0) {
-  throw new Error('Falta OPTICA_E2E_INSTANCIAS (la define playwright.config.ts).');
-}
+// Una instancia por proyecto de Playwright (navegador y archivo de pruebas); un nombre mal formado detiene todo acá.
+const instancias = leerInstancias(process.env.OPTICA_E2E_INSTANCIAS);
 
 limpiarCorridasAnteriores();
 const raiz = mkdtempSync(join(tmpdir(), PREFIJO));
@@ -122,14 +114,14 @@ async function levantar({ nombre, puerto }, api) {
     }
   });
 
-  const limite = Date.now() + 120_000;
-  while (Date.now() < limite) {
-    if (await responde(`https://localhost:${puerto}/api/acceso/estado`)) {
-      return;
-    }
-    await new Promise((listo) => setTimeout(listo, 500));
-  }
-  throw new Error(`La Api de ${nombre} no respondió en el puerto ${puerto}.`);
+  // Si la Api termina antes de responder (o no responde en el plazo), esto falla y servidor.mjs termina con código 1:
+  // Playwright no corre ninguna prueba.
+  await esperarApi({
+    nombre,
+    puerto,
+    responde: () => responde(`https://localhost:${puerto}/api/acceso/estado`),
+    terminada: () => hijo.exitCode ?? hijo.signalCode,
+  });
 }
 
 /** GET a la Api local sin verificar el certificado (es el de desarrollo de .NET). */

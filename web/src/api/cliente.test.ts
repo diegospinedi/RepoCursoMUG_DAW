@@ -3,11 +3,15 @@ import { json, problema, problemaGeneral, servidorFalso, sinRed, vacia } from '.
 import {
   alPerderLaSesion,
   cambiarContrasena,
+  consultarConfiguracion,
   consultarEstado,
   consultarMarca,
   consultarSesion,
   definirContrasena,
+  grabarConfiguracion,
   ingresar,
+  MENSAJE_CONFIGURACION_GRANDE,
+  MENSAJE_PEDIDO_RECHAZADO,
   MENSAJE_SIN_CONEXION,
   salir,
 } from './cliente';
@@ -181,5 +185,148 @@ describe('cliente de la Api', () => {
     servidorFalso({ 'GET /api/acceso/estado': sinRed });
 
     expect(await consultarEstado()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+});
+
+describe('cliente de la Api: configuración', () => {
+  const GUARDADA = {
+    alicuotaIva: 21,
+    condicionFiscal: 'responsable_inscripto',
+    multiploRedondeo: 0.01,
+    topeIdentificacion: null,
+    faltaTope: true,
+  };
+  const DATOS = {
+    alicuotaIva: 21,
+    condicionFiscal: 'monotributo',
+    multiploRedondeo: 10,
+    topeIdentificacion: 250000,
+  } as const;
+  const RECHAZADO = { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
+
+  it('consultarConfiguracion_200_DevuelveLosValores', async () => {
+    const servidor = servidorFalso({ 'GET /api/configuracion': json(200, GUARDADA) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'ok', datos: GUARDADA });
+    const [pedido] = servidor.pedidosA('GET', '/api/configuracion');
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it.each([
+    ['alícuota que no es número', { ...GUARDADA, alicuotaIva: '21' }],
+    ['condición desconocida', { ...GUARDADA, condicionFiscal: 'otra' }],
+    ['múltiplo ausente', { ...GUARDADA, multiploRedondeo: undefined }],
+    ['tope de texto', { ...GUARDADA, topeIdentificacion: '1' }],
+    ['faltaTope no booleano', { ...GUARDADA, faltaTope: 'si' }],
+    ['cuerpo que no es objeto', 'texto'],
+  ])('consultarConfiguracion_%s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ 'GET /api/configuracion': json(200, cuerpo) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('consultarConfiguracion_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ 'GET /api/configuracion': vacia(401) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('grabarConfiguracion_200_EnviaLosCuatroYDevuelveLoGuardado', async () => {
+    const guardada = { ...DATOS, faltaTope: false };
+    const servidor = servidorFalso({ 'POST /api/configuracion': json(200, guardada) });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'ok', datos: guardada });
+    const [pedido] = servidor.pedidosA('POST', '/api/configuracion');
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual(DATOS);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarConfiguracion_SinTope_EnviaNull', async () => {
+    const servidor = servidorFalso({ 'POST /api/configuracion': json(200, GUARDADA) });
+
+    await grabarConfiguracion({ ...DATOS, topeIdentificacion: null });
+
+    const [pedido] = servidor.pedidosA('POST', '/api/configuracion');
+    expect(JSON.parse(String(pedido?.init?.body))).toHaveProperty('topeIdentificacion', null);
+  });
+
+  it('grabarConfiguracion_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      'POST /api/configuracion': json(400, {
+        status: 400,
+        title: 'One or more validation errors occurred.',
+        errors: {
+          alicuotaIva: ['La alícuota de IVA debe estar entre 0 y 100.'],
+          topeIdentificacion: ['El tope debe ser mayor a 0.'],
+          otro: 'no es una lista',
+          vacio: [],
+        },
+      }),
+    });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'alicuotaIva', mensaje: 'La alícuota de IVA debe estar entre 0 y 100.' },
+        { campo: 'topeIdentificacion', mensaje: 'El tope debe ser mayor a 0.' },
+      ],
+    });
+  });
+
+  it('grabarConfiguracion_400SinErroresLegibles_MensajeGeneral', async () => {
+    servidorFalso({
+      'POST /api/configuracion': [
+        json(400, { title: 'Bad' }),
+        json(400, { errors: { alicuotaIva: [3] } }),
+        () => new Response('x', { status: 400 }),
+      ],
+    });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual(RECHAZADO);
+    expect(await grabarConfiguracion(DATOS)).toEqual(RECHAZADO);
+    expect(await grabarConfiguracion(DATOS)).toEqual(RECHAZADO);
+  });
+
+  it('grabarConfiguracion_413_MensajeGeneralPropio', async () => {
+    servidorFalso({ 'POST /api/configuracion': vacia(413) });
+
+    expect(MENSAJE_CONFIGURACION_GRANDE).toBe('Los valores enviados son demasiado largos. Revisalos y grabá de nuevo.');
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_CONFIGURACION_GRANDE });
+  });
+
+  it.each([
+    [429, { tipo: 'general', mensaje: 'El sistema está ocupado. Intentá de nuevo en un momento.' }],
+    [415, RECHAZADO],
+    [500, { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION }],
+  ] as const)('grabarConfiguracion_%i_MensajeGeneral', async (estado, esperado) => {
+    servidorFalso({ 'POST /api/configuracion': vacia(estado) });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual(esperado);
+  });
+
+  it('grabarConfiguracion_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ 'POST /api/configuracion': vacia(401) });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('grabarConfiguracion_SinRed_MensajeGeneral', async () => {
+    servidorFalso({ 'POST /api/configuracion': sinRed });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('grabarConfiguracion_200ConCuerpoInesperado_ErrorGeneral', async () => {
+    servidorFalso({ 'POST /api/configuracion': json(200, { otro: 1 }) });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
   });
 });

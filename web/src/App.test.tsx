@@ -134,6 +134,41 @@ const PANTALLAS: Pantalla[] = [
     preparar: () => servidorFalso({ 'GET /api/sesion': vacia(204) }),
     titulo: 'Cambiar la contraseña',
   },
+  {
+    ruta: '/configuracion',
+    descripcion: 'configuración sin tope',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/configuracion': json(200, {
+          alicuotaIva: 21,
+          condicionFiscal: 'responsable_inscripto',
+          multiploRedondeo: 0.01,
+          topeIdentificacion: null,
+          faltaTope: true,
+        }),
+      }),
+    titulo: 'Configuración',
+  },
+  {
+    ruta: '/configuracion',
+    descripcion: 'configuración con un error junto al campo',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/configuracion': json(200, {
+          alicuotaIva: 21,
+          condicionFiscal: 'monotributo',
+          multiploRedondeo: 10,
+          topeIdentificacion: 250000,
+          faltaTope: false,
+        }),
+      }),
+    titulo: 'Configuración',
+    interactuar: async () => {
+      fireEvent.change(await screen.findByLabelText('Alícuota de IVA (%)'), { target: { value: '101' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
+      expect(await screen.findByText('La alícuota de IVA debe estar entre 0 y 100.')).toBeTruthy();
+    },
+  },
 ];
 
 describe('Sin datos de ARCA en pantalla', () => {

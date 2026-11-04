@@ -19,12 +19,44 @@ export const MENSAJE_YA_DEFINIDA = 'Ya hay una contraseña definida. Ingresá co
 export const MENSAJE_SIN_CONTRASENA = 'Todavía no hay una contraseña. Definí la contraseña primero.';
 export const MENSAJE_BLOQUEADO = 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.';
 export const MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR = 'No hay una contraseña definida. Volvé a ingresar.';
+export const MENSAJE_CONFIGURACION_GRANDE = 'Los valores enviados son demasiado largos. Revisalos y grabá de nuevo.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
 /** Campos del cuerpo y de `errors` de `cambiar`. */
 export const CAMPO_ACTUAL = 'contrasenaActual';
 export const CAMPO_NUEVA = 'contrasenaNueva';
+/** Campos del cuerpo y de `errors` de `/api/configuracion`. */
+export const CAMPO_ALICUOTA = 'alicuotaIva';
+export const CAMPO_CONDICION = 'condicionFiscal';
+export const CAMPO_MULTIPLO = 'multiploRedondeo';
+export const CAMPO_TOPE = 'topeIdentificacion';
+
+/** Los textos de la condición fiscal en el contrato de la Api. */
+export const CONDICIONES_FISCALES = ['responsable_inscripto', 'monotributo'] as const;
+export type CondicionFiscal = (typeof CONDICIONES_FISCALES)[number];
+
+/** Lo que se graba en `POST /api/configuracion`. */
+export interface DatosConfiguracion {
+  alicuotaIva: number;
+  condicionFiscal: CondicionFiscal;
+  multiploRedondeo: number;
+  /** `null`: sin tope cargado. */
+  topeIdentificacion: number | null;
+}
+
+/** Lo que devuelven `GET` y `POST /api/configuracion`. */
+export interface ConfiguracionNegocio extends DatosConfiguracion {
+  faltaTope: boolean;
+}
+
+export interface ErrorDeCampo {
+  campo: string;
+  mensaje: string;
+}
+
+/** El resultado de grabar: además de los de {@link Resultado}, un 400 trae todos los campos inválidos juntos. */
+export type ResultadoGrabacion = Resultado<ConfiguracionNegocio> | { tipo: 'campos'; errores: ErrorDeCampo[] };
 
 export type Resultado<T> =
   | { tipo: 'ok'; datos: T }
@@ -87,9 +119,18 @@ async function pedirSinDatos(opciones: Opciones): Promise<Resultado<void>> {
 }
 
 /** Hace el pedido: devuelve la respuesta exitosa, o el fallo ya traducido. */
-async function enviar({ metodo, ruta, cuerpo, mensaje409, campo413 }: Opciones): Promise<
-  { tipo: 'respuesta'; respuesta: Response } | Fallo
-> {
+async function enviar(opciones: Opciones): Promise<{ tipo: 'respuesta'; respuesta: Response } | Fallo> {
+  const respuesta = await hacerPedido(opciones);
+  if (respuesta instanceof Response) {
+    return respuesta.ok
+      ? { tipo: 'respuesta', respuesta }
+      : traducirError(respuesta, opciones.mensaje409, opciones.campo413);
+  }
+  return respuesta;
+}
+
+/** El `fetch` de un pedido: la respuesta tal cual (con cualquier código), o el fallo de red ya traducido. */
+async function hacerPedido({ metodo, ruta, cuerpo }: Opciones): Promise<Response | Fallo> {
   const init: RequestInit = { method: metodo, credentials: 'same-origin', cache: 'no-store' };
   if (metodo === 'POST') {
     // La Api exige Content-Type: application/json en todo POST, aunque no lleve cuerpo (R-04).
@@ -99,14 +140,11 @@ async function enviar({ metodo, ruta, cuerpo, mensaje409, campo413 }: Opciones):
     }
   }
 
-  let respuesta: Response;
   try {
-    respuesta = await fetch(ruta, init);
+    return await fetch(ruta, init);
   } catch {
     return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
   }
-
-  return respuesta.ok ? { tipo: 'respuesta', respuesta } : traducirError(respuesta, mensaje409, campo413);
 }
 
 async function traducirError(
@@ -165,6 +203,23 @@ function primerError(cuerpo: unknown): { campo: string; mensaje: string } | unde
   return undefined;
 }
 
+/**
+ * Todos los mensajes de `errors` de un ValidationProblemDetails, el primero de cada campo, en el orden del cuerpo. Solo
+ * lo usa {@link grabarConfiguracion}: la configuración informa todos los campos inválidos juntos.
+ */
+function todosLosErrores(cuerpo: unknown): ErrorDeCampo[] {
+  if (!esObjeto(cuerpo) || !esObjeto(cuerpo.errors)) {
+    return [];
+  }
+  const errores: ErrorDeCampo[] = [];
+  for (const [campo, mensajes] of Object.entries(cuerpo.errors)) {
+    if (Array.isArray(mensajes) && typeof mensajes[0] === 'string') {
+      errores.push({ campo, mensaje: mensajes[0] });
+    }
+  }
+  return errores;
+}
+
 function esObjeto(valor: unknown): valor is Record<string, unknown> {
   return typeof valor === 'object' && valor !== null;
 }
@@ -180,6 +235,27 @@ const leerMarca: Lector<Marca> = (cuerpo) =>
   typeof cuerpo.fondo === 'string' &&
   typeof cuerpo.esEjemplo === 'boolean'
     ? { primario: cuerpo.primario, fondo: cuerpo.fondo, esEjemplo: cuerpo.esEjemplo }
+    : undefined;
+
+const esNumero = (valor: unknown): valor is number => typeof valor === 'number' && Number.isFinite(valor);
+
+const esCondicion = (valor: unknown): valor is CondicionFiscal =>
+  CONDICIONES_FISCALES.some((condicion) => condicion === valor);
+
+const leerConfiguracion: Lector<ConfiguracionNegocio> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  esNumero(cuerpo.alicuotaIva) &&
+  esCondicion(cuerpo.condicionFiscal) &&
+  esNumero(cuerpo.multiploRedondeo) &&
+  (cuerpo.topeIdentificacion === null || esNumero(cuerpo.topeIdentificacion)) &&
+  typeof cuerpo.faltaTope === 'boolean'
+    ? {
+        alicuotaIva: cuerpo.alicuotaIva,
+        condicionFiscal: cuerpo.condicionFiscal,
+        multiploRedondeo: cuerpo.multiploRedondeo,
+        topeIdentificacion: cuerpo.topeIdentificacion,
+        faltaTope: cuerpo.faltaTope,
+      }
     : undefined;
 
 export const consultarEstado = () => pedir({ metodo: 'GET', ruta: '/api/acceso/estado' }, leerEstado);
@@ -218,3 +294,34 @@ export const cambiarContrasena = (actual: string, nueva: string) =>
     mensaje409: MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR,
     campo413: CAMPO_ACTUAL,
   });
+
+/** Los parámetros de negocio guardados; se consulta al abrir la pantalla, sin consultas periódicas. */
+export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/configuracion' }, leerConfiguracion);
+
+/**
+ * Graba los cuatro parámetros juntos y devuelve lo que quedó guardado (D-03). A diferencia de las pantallas de acceso,
+ * un 400 devuelve TODOS los campos de `errors`, y un 413 es un mensaje general propio (no el de la contraseña): el
+ * navegador limita cada número a 32 caracteres, así que solo un cuerpo alterado supera el límite de la Api, y no hay
+ * un campo al que atribuirlo.
+ */
+export async function grabarConfiguracion(datos: DatosConfiguracion): Promise<ResultadoGrabacion> {
+  const opciones: Opciones = { metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos };
+  const respuesta = await hacerPedido(opciones);
+  if (!(respuesta instanceof Response)) {
+    return respuesta;
+  }
+  if (respuesta.ok) {
+    const guardada = leerConfiguracion(await leerJson(respuesta));
+    return guardada === undefined
+      ? { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION }
+      : { tipo: 'ok', datos: guardada };
+  }
+  if (respuesta.status === 400) {
+    const errores = todosLosErrores(await leerJson(respuesta));
+    return errores.length > 0 ? { tipo: 'campos', errores } : { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
+  }
+  if (respuesta.status === 413) {
+    return { tipo: 'general', mensaje: MENSAJE_CONFIGURACION_GRANDE };
+  }
+  return traducirError(respuesta, undefined);
+}
