@@ -16,6 +16,43 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.ConfiguracionNegocioFila", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("AlicuotaIva")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("AlicuotaIvaCentesimas");
+
+                    b.Property<string>("CondicionFiscal")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MultiploRedondeo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("MultiploRedondeoCentavos");
+
+                    b.Property<long?>("TopeIdentificacion")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("TopeIdentificacionCentavos");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ConfiguracionNegocio", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_Alicuota", "\"AlicuotaIvaCentesimas\" BETWEEN 0 AND 10000");
+
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_Condicion", "\"CondicionFiscal\" IN ('responsable_inscripto', 'monotributo')");
+
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_Id", "\"Id\" = 1");
+
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_Multiplo", "\"MultiploRedondeoCentavos\" >= 1");
+
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_Tope", "\"TopeIdentificacionCentavos\" IS NULL OR \"TopeIdentificacionCentavos\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.CredencialAccesoFila", b =>
                 {
                     b.Property<int>("Id")

@@ -12,7 +12,18 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
         valor => AIso8601Utc(valor),
         texto => DesdeIso8601Utc(texto));
 
+    /// <summary>
+    /// Importes y porcentajes de hasta 2 decimales guardados como INTEGER en centésimos (ADR-008): ×100 al guardar,
+    /// /100 al leer. El dominio garantiza que el valor tiene a lo sumo 2 decimales y entra en 64 bits; si igual llega
+    /// uno con más decimales, se rechaza en lugar de truncarlo en silencio.
+    /// </summary>
+    private static readonly ValueConverter<decimal, long> Centesimos = new(
+        valor => ACentesimos(valor),
+        centesimos => centesimos / 100m);
+
     public DbSet<CredencialAccesoFila> CredencialesAcceso => Set<CredencialAccesoFila>();
+
+    public DbSet<ConfiguracionNegocioFila> ConfiguracionesNegocio => Set<ConfiguracionNegocioFila>();
 
     public DbSet<EventoAccesoFila> EventosAcceso => Set<EventoAccesoFila>();
 
@@ -44,7 +55,42 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             // La consulta del bloqueo busca por (Tipo, Resultado) sin recorrer la tabla (FEAT-001b, ADR-006).
             evento.HasIndex(e => new { e.Tipo, e.Resultado });
         });
+
+        modelBuilder.Entity<ConfiguracionNegocioFila>(configuracion =>
+        {
+            // Una sola fila, con los numéricos en centésimos y CHECK de rango como segunda barrera (ADR-008). La fila
+            // inicial la inserta la migración, no HasData: así cambiar el modelo no pisa lo que cargó la operadora.
+            configuracion.ToTable("ConfiguracionNegocio", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_ConfiguracionNegocio_Id", "\"Id\" = 1");
+                tabla.HasCheckConstraint(
+                    "CK_ConfiguracionNegocio_Alicuota", "\"AlicuotaIvaCentesimas\" BETWEEN 0 AND 10000");
+                tabla.HasCheckConstraint(
+                    "CK_ConfiguracionNegocio_Condicion",
+                    "\"CondicionFiscal\" IN ('responsable_inscripto', 'monotributo')");
+                tabla.HasCheckConstraint("CK_ConfiguracionNegocio_Multiplo", "\"MultiploRedondeoCentavos\" >= 1");
+                tabla.HasCheckConstraint(
+                    "CK_ConfiguracionNegocio_Tope",
+                    "\"TopeIdentificacionCentavos\" IS NULL OR \"TopeIdentificacionCentavos\" > 0");
+            });
+            configuracion.HasKey(c => c.Id);
+            configuracion.Property(c => c.Id).ValueGeneratedNever();
+            configuracion.Property(c => c.AlicuotaIva)
+                .HasColumnName("AlicuotaIvaCentesimas").IsRequired().HasConversion(Centesimos);
+            configuracion.Property(c => c.CondicionFiscal).IsRequired();
+            configuracion.Property(c => c.MultiploRedondeo)
+                .HasColumnName("MultiploRedondeoCentavos").IsRequired().HasConversion(Centesimos);
+            configuracion.Property(c => c.TopeIdentificacion)
+                .HasColumnName("TopeIdentificacionCentavos").HasConversion(Centesimos);
+        });
     }
+
+    /// <exception cref="ArgumentException">El valor tiene más de 2 decimales. El mensaje no incluye el valor.</exception>
+    private static long ACentesimos(decimal valor) =>
+        valor == decimal.Round(valor, 2)
+            ? decimal.ToInt64(valor * 100m)
+            : throw new ArgumentException(
+                "Un valor guardado en centésimos tiene más de 2 decimales.", nameof(valor));
 
     private static string AIso8601Utc(DateTime valor)
     {
@@ -68,6 +114,28 @@ public sealed class CredencialAccesoFila
 
     /// <summary>Fecha y hora UTC de definición.</summary>
     public DateTime DefinidaEn { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>ConfiguracionNegocio</c> (única, <c>Id = 1</c>). Los numéricos se ven como <c>decimal</c> y se
+/// guardan en centésimos enteros (ADR-008); la condición es el texto de
+/// <see cref="Optica.Domain.Configuracion.PoliticaConfiguracionNegocio.TextoDe"/>.
+/// </summary>
+public sealed class ConfiguracionNegocioFila
+{
+    public int Id { get; set; }
+
+    /// <summary>Porcentaje; columna <c>AlicuotaIvaCentesimas</c>.</summary>
+    public decimal AlicuotaIva { get; set; }
+
+    /// <summary><c>responsable_inscripto</c> o <c>monotributo</c>.</summary>
+    public string CondicionFiscal { get; set; } = string.Empty;
+
+    /// <summary>Importe; columna <c>MultiploRedondeoCentavos</c>.</summary>
+    public decimal MultiploRedondeo { get; set; }
+
+    /// <summary>Importe, o null mientras no se cargue (D-02); columna <c>TopeIdentificacionCentavos</c>.</summary>
+    public decimal? TopeIdentificacion { get; set; }
 }
 
 /// <summary>
