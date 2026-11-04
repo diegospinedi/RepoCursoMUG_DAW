@@ -12,8 +12,8 @@
 | Sub-ticket | Title | PRD | ACs | Dependencies | Status |
 |---|---|---|---|---|---|
 | FEAT-001a | Ingreso, sesión y marca | prd-FEAT-001a.md | AC-01, AC-02, AC-03, AC-04, AC-07, AC-08, AC-15, AC-22 | none | done (merged into master, PR #2) |
-| FEAT-001b | Bloqueo y gestión de la contraseña | prd-FEAT-001b.md | AC-05, AC-06, AC-14, AC-16, AC-17, AC-18, AC-19 | depends on a | active |
-| FEAT-001c | Configuración de parámetros de negocio | prd-FEAT-001c.md | AC-09, AC-10, AC-11, AC-12, AC-13, AC-20, AC-21 | depends on a | pending |
+| FEAT-001b | Bloqueo y gestión de la contraseña | prd-FEAT-001b.md | AC-05, AC-06, AC-14, AC-16, AC-17, AC-18, AC-19 | depends on a | done (merged into master, PR #3) |
+| FEAT-001c | Configuración de parámetros de negocio | prd-FEAT-001c.md | AC-09, AC-10, AC-11, AC-12, AC-13, AC-20, AC-21 | depends on a | active |
 
 AC-01 a AC-21 vienen de `prd-DISC-001-01.md` (PRD 01 de DISC-001). AC-22 se agregó el 2026-10-30
 en DEFINE, por decisión de las dueñas: el repositorio es público, lleva una marca de ejemplo y la
