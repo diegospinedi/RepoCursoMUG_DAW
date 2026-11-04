@@ -25,6 +25,21 @@ public sealed class SinDatosArcaTests
         var cliente = fabrica.CrearClienteSinCookies();
         var cookie = await Http.DefinirAsync(cliente);
 
+        // Un artículo grabado, para pedir su GET con un código que existe (una respuesta 404 no revisaría nada).
+        var grabado = await Http.PostJsonAsync(
+            cliente,
+            RutaArticulos,
+            """{"codigoProveedor":"ABC-1","descripcion":"Armazón","precioCosto":1210,"margenUtilidad":50}""",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, grabado.StatusCode);
+        var codigoArticulo = (await Http.JsonAsync(grabado)).GetProperty("codigo").GetInt64();
+        // Cada ruta con parámetros, con los valores con los que se la pide. Una ruta con parámetros que no esté acá
+        // hace fallar la prueba: hay que agregarla, no excluirla.
+        var valores = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [RutaArticulo] = $"{RutaArticulos}/{codigoArticulo}",
+        };
+
         // Lo realmente registrado en la Api, no una lista escrita a mano: un GET nuevo entra solo en la revisión.
         var rutas = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
@@ -45,11 +60,16 @@ public sealed class SinDatosArcaTests
         var hallazgos = new List<string>();
         foreach (var ruta in rutas)
         {
-            Assert.False(
-                ruta.Contains('{', StringComparison.Ordinal),
-                $"GET {ruta} tiene parámetros de ruta: esta prueba no sabe con qué valores pedirlo; agregalos.");
+            var pedida = ruta;
+            if (ruta.Contains('{', StringComparison.Ordinal))
+            {
+                Assert.True(
+                    valores.TryGetValue(ruta, out var conValores),
+                    $"GET {ruta} tiene parámetros de ruta: esta prueba no sabe con qué valores pedirlo; agregalos.");
+                pedida = conValores!;
+            }
 
-            var respuesta = await Http.GetAsync(cliente, ruta, cookie);
+            var respuesta = await Http.GetAsync(cliente, pedida, cookie);
             Assert.True(
                 respuesta.IsSuccessStatusCode,
                 $"GET {ruta} respondió {(int)respuesta.StatusCode} con sesión; no se pudo revisar su respuesta.");
@@ -87,8 +107,12 @@ public sealed class SinDatosArcaTests
         // Los GET que hoy devuelven JSON se revisaron de verdad; el de la sesión responde 204 sin cuerpo.
         Assert.Contains("/api/acceso/estado", conJson);
         Assert.Contains("/api/marca", conJson);
+        Assert.Contains(RutaArticulo, conJson);
         Assert.Contains("/api/sesion", sinCuerpo);
     }
+
+    private const string RutaArticulos = "/api/articulos";
+    private const string RutaArticulo = "/api/articulos/{codigo:long}";
 
     [Fact]
     public void ClavesArca_ComparaNombresEnterosSinDistinguirMayusculas()
