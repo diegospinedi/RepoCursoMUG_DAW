@@ -17,12 +17,12 @@ public static class ValidacionConfiguracion
 
     public const string AccionAlicuotaFaltante = "Ingresá la alícuota de IVA.";
     public const string AccionAlicuotaFueraDeRango = "La alícuota de IVA debe estar entre 0 y 100.";
-    public const string AccionHastaDosDecimales = "Ingresá hasta 2 decimales.";
+    public const string AccionHastaDosDecimales = AccionesNumericas.HastaDosDecimales;
     public const string AccionCondicionFiscal = "Elegí Responsable Inscripto o Monotributo.";
     public const string AccionMultiploFaltante = "Ingresá el múltiplo de redondeo comercial.";
     public const string AccionMultiploMinimo = "El valor mínimo es 0,01.";
     public const string AccionTopeNoPositivo = "El tope debe ser mayor a 0.";
-    public const string AccionValorMenor = "Ingresá un valor menor.";
+    public const string AccionValorMenor = AccionesNumericas.ValorMenor;
 
     /// <summary>
     /// Evalúa los cuatro campos con la política y devuelve todos los errores, uno por campo como máximo, en el orden
