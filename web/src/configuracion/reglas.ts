@@ -1,5 +1,5 @@
 import { CONDICIONES_FISCALES, type CondicionFiscal, type DatosConfiguracion } from '../api/cliente';
-import { leerDecimal } from './numeros';
+import { IMPORTE_MAXIMO_SEGURO, leerDecimal } from './numeros';
 
 /**
  * Las reglas de la configuración de negocio (Block 1: `PoliticaConfiguracionNegocio`) con los mensajes de la Api
@@ -23,11 +23,8 @@ const ALICUOTA_MAXIMA = 100;
 const MULTIPLO_MINIMO = 0.01;
 const DECIMALES_MAXIMOS = 2;
 
-/**
- * El mayor importe que un `number` de JavaScript guarda con los centavos exactos. Es menor que el límite del dominio
- * (`long.MaxValue / 100`): por encima de este valor el número que se enviaría ya no es el que se escribió.
- */
-export const IMPORTE_MAXIMO_SEGURO = Number.MAX_SAFE_INTEGER / 100;
+/** Definido en `numeros.ts`, que no importa nada, para que `api/cliente.ts` lo use sin un ciclo de módulos. */
+export { IMPORTE_MAXIMO_SEGURO };
 
 /** Lo que hay escrito en el formulario. */
 export interface TextosConfiguracion {

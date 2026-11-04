@@ -169,6 +169,32 @@ const PANTALLAS: Pantalla[] = [
       expect(await screen.findByText('La alícuota de IVA debe estar entre 0 y 100.')).toBeTruthy();
     },
   },
+  {
+    ruta: '/articulos/nuevo',
+    descripcion: 'alta de artículo grabado con advertencia',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/sesion': vacia(204),
+        'POST /api/articulos': json(201, {
+          codigo: 1,
+          codigoProveedor: 'ABC-1',
+          descripcion: 'Armazón metálico',
+          precioCosto: -100,
+          margenUtilidad: 50,
+          precioVenta: -150,
+          advertencia: 'Precio de costo negativo o cero',
+        }),
+      }),
+    titulo: 'Nuevo artículo',
+    interactuar: async () => {
+      fireEvent.change(await screen.findByLabelText('Código en el proveedor'), { target: { value: 'ABC-1' } });
+      fireEvent.change(screen.getByLabelText('Descripción'), { target: { value: 'Armazón metálico' } });
+      fireEvent.change(screen.getByLabelText('Precio de costo ($)'), { target: { value: '-100' } });
+      fireEvent.change(screen.getByLabelText('Margen de utilidad (%)'), { target: { value: '50' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
+      expect(await screen.findByText('Artículo grabado con el código 1.')).toBeTruthy();
+    },
+  },
 ];
 
 describe('Sin datos de ARCA en pantalla', () => {
