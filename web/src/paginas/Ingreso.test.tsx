@@ -69,6 +69,23 @@ describe('Ingreso', () => {
     );
   });
 
+  it('Ingreso_Bloqueado423_MuestraMensajeDeBloqueo', async () => {
+    servidorFalso({
+      'POST /api/acceso/ingresar': problemaGeneral(423, 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.'),
+    });
+    renderizarApp('/ingreso');
+
+    const campo = await escribirYEnviar('ocho1234');
+
+    const alerta = await screen.findByRole('alert');
+    expect(alerta.textContent).toBe('El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.');
+    // Es un mensaje general: no se navega ni se vacía la pantalla.
+    expect(mensajeJuntoAlCampo(campo)).toBeNull();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso');
+    expect(campo.isConnected).toBe(true);
+    expect(screen.getByRole('button', { name: 'Ingresar' }).hasAttribute('disabled')).toBe(false);
+  });
+
   it('Ingreso_7Caracteres_NoSeEnvia', async () => {
     const servidor = servidorFalso({ 'POST /api/acceso/ingresar': vacia(204) });
     renderizarApp('/ingreso');

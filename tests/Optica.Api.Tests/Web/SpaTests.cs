@@ -75,7 +75,7 @@ public sealed class SpaTests : IDisposable
         var cliente = Cliente(conWeb);
 
         // La raíz, una ruta de la SPA (enlace directo o recarga) y un archivo estático.
-        foreach (var ruta in new[] { "/", "/ingreso", "/definir-contrasena" })
+        foreach (var ruta in new[] { "/", "/ingreso", "/definir-contrasena", "/cambiar-contrasena" })
         {
             var respuesta = await Http.GetAsync(cliente, ruta);
 
@@ -300,7 +300,7 @@ public sealed class SpaTests : IDisposable
         finally
         {
             // La base queda en la carpeta de la prueba: se liberan las conexiones para poder borrarla.
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            FabricaApi.LiberarConexiones(datos);
         }
     }
 

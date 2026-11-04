@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -35,6 +36,88 @@ public sealed class RegistroTests
         await Http.PostJsonAsync(cliente, "/api/acceso/ingresar", "{\"contrasena\":\"" + Rota);
 
         AfirmarSinContrasenas(fabrica);
+    }
+
+    /// <summary>
+    /// Pares (actual, nueva) y el código esperado. Llevan sustitutos sueltos: xUnit los cambiaría por U+FFFD al descubrir
+    /// las pruebas, por eso <c>DisableDiscoveryEnumeration</c>.
+    /// </summary>
+    public static TheoryData<string, string, HttpStatusCode> CambiosConSecretos => new()
+    {
+        // Correcto: la actual es la definida y la nueva se acepta.
+        { Definida, "Zq7-nueva-secreta", HttpStatusCode.NoContent },
+        // La actual no coincide.
+        { Erronea, "Zq7-nueva-secreta-2", HttpStatusCode.BadRequest },
+        // La nueva fuera de política: corta, larga o con un sustituto suelto.
+        { Definida, Corta, HttpStatusCode.BadRequest },
+        { Definida, Larga, HttpStatusCode.BadRequest },
+        { Definida, "Zq7-nueva-sustituto\uD800-secreta", HttpStatusCode.BadRequest },
+        // La actual con un sustituto suelto.
+        { "Zq7-actual-sustituto\uDC00-secreta", "Zq7-nueva-secreta-3", HttpStatusCode.BadRequest },
+    };
+
+    [Theory]
+    [MemberData(nameof(CambiosConSecretos), DisableDiscoveryEnumeration = true)]
+    public async Task Log_Cambiar_NoContieneNingunaContrasena(string actual, string nueva, HttpStatusCode esperado)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente, Definida);
+
+        var respuesta = await Http.CambiarAsync(cliente, actual, nueva, cookie);
+        // Un cuerpo ilegible con las dos contraseñas: el lector de JSON tampoco las registra.
+        var ilegible = await Http.PostJsonAsync(
+            cliente, "/api/acceso/cambiar", Http.CuerpoCambio(actual, nueva).TrimEnd('}', '"'), cookie);
+
+        // Control: el pedido llegó a la acción; si no, la prueba no estaría mirando nada.
+        Assert.Equal(esperado, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        var lineas = fabrica.Registro.Lineas;
+        // La captura ve todos los niveles, Trace incluido (donde MVC registra los argumentos de la acción).
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        foreach (var secreto in new[] { actual, nueva })
+        {
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal));
+            // Un sustituto suelto puede llegar al log cambiado por U+FFFD o escapado: se busca cada tramo a su lado.
+            foreach (var tramo in secreto.Split(new[] { '\uD800', '\uDC00' }).Where(t => t.Length >= 10))
+            {
+                Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(tramo, StringComparison.Ordinal));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Log_Cambiar_NoContieneNiElHashAnteriorNiElNuevo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente, Definida);
+        var anterior = HashGuardado(fabrica);
+
+        var respuesta = await Http.CambiarAsync(cliente, Definida, "Zq7-nueva-secreta", cookie);
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var nuevo = HashGuardado(fabrica);
+        Assert.NotEqual(anterior, nuevo);
+        var lineas = fabrica.Registro.Lineas;
+        // La captura ve todos los niveles, Trace incluido (donde EF Core registra los comandos).
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        foreach (var hash in new[] { anterior, nuevo })
+        {
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(hash, StringComparison.Ordinal));
+            // Tampoco la sal ni el derivado por separado (formato algoritmo$iteraciones$sal$derivado).
+            foreach (var parte in hash.Split('$').Skip(2))
+            {
+                Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(parte, StringComparison.Ordinal));
+            }
+        }
+    }
+
+    private static string HashGuardado(FabricaApi fabrica)
+    {
+        using var alcance = fabrica.Services.CreateScope();
+        var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+        return contexto.CredencialesAcceso.AsNoTracking().Single().Hash;
     }
 
     [Theory]
@@ -145,7 +228,7 @@ public sealed class RegistroTests
         Assert.Equal(HttpStatusCode.OK, (await Http.GetAsync(cliente, "/api/acceso/estado")).StatusCode);
 
         // La base deja de poder abrirse: en su lugar queda una carpeta con el mismo nombre.
-        SqliteConnection.ClearAllPools();
+        FabricaApi.LiberarConexiones(fabrica.DirectorioDatos);
         var baseDeDatos = Path.Combine(fabrica.DirectorioDatos, FabricaConexion.NombreArchivo);
         foreach (var archivo in new[] { baseDeDatos, baseDeDatos + "-wal", baseDeDatos + "-shm" })
         {
@@ -194,6 +277,38 @@ public sealed class RegistroTests
             l => l.Categoria.StartsWith("Microsoft.AspNetCore.Diagnostics", StringComparison.Ordinal) && l.Nivel >= LogLevel.Warning);
     }
 
+    [Fact]
+    public async Task Log_SegundaInstancia_SinRutaDelUsuarioNiExcepcion()
+    {
+        // En la carpeta del usuario, para que la ruta visible y la expandida sean distintas.
+        var perfil = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.False(string.IsNullOrEmpty(perfil), "La prueba necesita la carpeta del usuario.");
+        var directorio = FabricaApi.NuevoDirectorioEnElPerfil();
+        try
+        {
+            using var primera = new FabricaApi(directorioDatos: directorio);
+            Assert.Equal(HttpStatusCode.OK, (await Http.GetAsync(primera.CrearClienteSinCookies(), "/api/acceso/estado")).StatusCode);
+            using var segunda = new FabricaApi(directorioDatos: directorio);
+
+            Assert.ThrowsAny<Exception>(() => segunda.CreateClient());
+
+            var lineas = segunda.Registro.Lineas;
+            // Un crítico propio con la ruta visible…
+            Assert.Contains(
+                lineas,
+                l => l.Nivel == LogLevel.Critical
+                    && l.Mensaje.Contains(Optica.Application.Comun.RutasPrivadas.Ocultar(directorio), StringComparison.Ordinal));
+            // …sin la carpeta del usuario en ningún nivel y sin excepción adjunta (su texto trae la ruta expandida).
+            Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(perfil, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(lineas, l => l.Excepcion is not null);
+        }
+        finally
+        {
+            FabricaApi.LiberarConexiones(directorio);
+            Directory.Delete(directorio, recursive: true);
+        }
+    }
+
     private static void AfirmarSinContrasenas(FabricaApi fabrica)
     {
         var lineas = fabrica.Registro.Lineas;
@@ -212,5 +327,9 @@ public sealed class RegistroTests
         public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default) => throw falla;
 
         public void Agregar(CredencialAcceso credencial) => throw falla;
+
+        public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva) => throw falla;
+
+        public void Eliminar() => throw falla;
     }
 }

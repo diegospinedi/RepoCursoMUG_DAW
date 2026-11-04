@@ -11,6 +11,44 @@ public static class Http
     public static string CuerpoContrasena(string? contrasena) =>
         JsonSerializer.Serialize(new { contrasena });
 
+    /// <summary>
+    /// Cuerpo de <c>cambiar</c>. Escribe cada carácter fuera de ASCII como escape <c>\uXXXX</c>, así un sustituto
+    /// suelto viaja tal cual (el serializador lo cambiaría por U+FFFD); null queda como <c>null</c> de JSON.
+    /// </summary>
+    public static string CuerpoCambio(string? actual, string? nueva) =>
+        "{\"contrasenaActual\":" + TextoJson(actual) + ",\"contrasenaNueva\":" + TextoJson(nueva) + "}";
+
+    /// <summary>Pide el cambio de contraseña con la cookie de sesión indicada.</summary>
+    public static Task<HttpResponseMessage> CambiarAsync(HttpClient cliente, string? actual, string? nueva, string? cookie) =>
+        PostJsonAsync(cliente, "/api/acceso/cambiar", CuerpoCambio(actual, nueva), cookie);
+
+    private static string TextoJson(string? texto)
+    {
+        if (texto is null)
+        {
+            return "null";
+        }
+
+        var json = new StringBuilder("\"");
+        foreach (var caracter in texto)
+        {
+            if (caracter is '"' or '\\')
+            {
+                json.Append('\\').Append(caracter);
+            }
+            else if (caracter < 0x20 || caracter > 0x7E)
+            {
+                json.Append("\\u").Append(((int)caracter).ToString("x4", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                json.Append(caracter);
+            }
+        }
+
+        return json.Append('"').ToString();
+    }
+
     public static Task<HttpResponseMessage> PostJsonAsync(
         HttpClient cliente, string ruta, string json, string? cookie = null) =>
         EnviarAsync(cliente, HttpMethod.Post, ruta, new StringContent(json, Encoding.UTF8, "application/json"), cookie);
@@ -78,10 +116,28 @@ public static class Http
     }
 
     /// <summary>Los mensajes de <c>errors.contrasena</c> de un ValidationProblemDetails.</summary>
-    public static async Task<string[]> ErroresContrasenaAsync(HttpResponseMessage respuesta)
+    public static Task<string[]> ErroresContrasenaAsync(HttpResponseMessage respuesta) =>
+        ErroresDelCampoAsync(respuesta, "contrasena");
+
+    /// <summary>Los mensajes de <c>errors.contrasenaActual</c> de un ValidationProblemDetails.</summary>
+    public static Task<string[]> ErroresContrasenaActualAsync(HttpResponseMessage respuesta) =>
+        ErroresDelCampoAsync(respuesta, "contrasenaActual");
+
+    /// <summary>Los mensajes de <c>errors.contrasenaNueva</c> de un ValidationProblemDetails.</summary>
+    public static Task<string[]> ErroresContrasenaNuevaAsync(HttpResponseMessage respuesta) =>
+        ErroresDelCampoAsync(respuesta, "contrasenaNueva");
+
+    /// <summary>Los campos presentes en <c>errors</c> de un ValidationProblemDetails, en orden.</summary>
+    public static async Task<string[]> CamposConErrorAsync(HttpResponseMessage respuesta)
     {
         var json = await JsonAsync(respuesta);
-        return json.GetProperty("errors").GetProperty("contrasena").EnumerateArray()
+        return json.GetProperty("errors").EnumerateObject().Select(campo => campo.Name).ToArray();
+    }
+
+    private static async Task<string[]> ErroresDelCampoAsync(HttpResponseMessage respuesta, string campo)
+    {
+        var json = await JsonAsync(respuesta);
+        return json.GetProperty("errors").GetProperty(campo).EnumerateArray()
             .Select(valor => valor.GetString()!)
             .ToArray();
     }

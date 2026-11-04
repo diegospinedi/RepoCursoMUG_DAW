@@ -82,6 +82,7 @@ public class IngresarConContrasenaTests
         Assert.Equal(accion, error.Accion);
         Assert.Empty(_almacen.Eventos);
         Assert.Equal(0, _almacen.Confirmaciones);
+        Assert.Equal(0, _almacen.Consultas);
         Assert.Equal(0, _hasher.Verificaciones);
     }
 
@@ -94,6 +95,147 @@ public class IngresarConContrasenaTests
         Assert.Equal(ValidacionContrasena.AccionMuyCorta, Assert.Single(resultado.Errores).Accion);
         Assert.Equal(0, _almacen.Consultas);
         Assert.Empty(_almacen.Eventos);
+    }
+
+    /// <summary>Deja guardados (confirmados) <paramref name="cantidad"/> rechazos de ingreso, cada 10 segundos antes de ahora.</summary>
+    private void RegistrarRechazosConfirmados(int cantidad)
+    {
+        for (var i = cantidad; i >= 1; i--)
+        {
+            _almacen.Eventos.Add(new EventoAcceso(
+                TipoEventoAcceso.Ingreso,
+                ResultadoEventoAcceso.Rechazo,
+                RelojFijo.Instante.UtcDateTime.AddSeconds(-10 * i)));
+        }
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_Bloqueado_RechazadoSinCalcularHashYEventoRegistrado()
+    {
+        DefinirCredencial("clave-correcta");
+        RegistrarRechazosConfirmados(5);
+        var eventosAntes = _almacen.Eventos.Count;
+
+        // Ni siquiera con la contraseña correcta: durante el bloqueo no se verifica el hash.
+        var resultado = await CrearCasoDeUso().EjecutarAsync("clave-correcta");
+
+        Assert.Equal(ResultadoIngreso.Bloqueado, resultado.Tipo);
+        Assert.Empty(resultado.Errores);
+        Assert.Equal(0, _hasher.Verificaciones);
+        Assert.Equal(eventosAntes + 1, _almacen.Eventos.Count);
+        var evento = _almacen.Eventos[^1];
+        Assert.Equal(TipoEventoAcceso.Ingreso, evento.Tipo);
+        Assert.Equal(ResultadoEventoAcceso.Bloqueado, evento.Resultado);
+        Assert.Equal(RelojFijo.Instante.UtcDateTime, evento.FechaHora);
+        Assert.Equal(1, _almacen.Confirmaciones);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_QuintoRechazo_DevuelveBloqueado()
+    {
+        DefinirCredencial("clave-correcta");
+        var reloj = new RelojAjustable();
+        var ingresar = new IngresarConContrasena(_almacen, _almacen, _hasher, _almacen, reloj);
+
+        for (var intento = 1; intento <= 4; intento++)
+        {
+            Assert.Equal(ResultadoIngreso.Rechazo, (await ingresar.EjecutarAsync("clave-incorrecta")).Tipo);
+            reloj.Avanzar(TimeSpan.FromSeconds(1));
+        }
+
+        // El quinto rechazo bloquea en ese mismo intento: la persona se entera sin volver a probar.
+        var quinto = await ingresar.EjecutarAsync("clave-incorrecta");
+
+        Assert.Equal(ResultadoIngreso.Bloqueado, quinto.Tipo);
+        Assert.Equal(5, _hasher.Verificaciones);
+        Assert.Equal(5, _almacen.Eventos.Count(e => e.Resultado == ResultadoEventoAcceso.Rechazo));
+        Assert.Equal(ResultadoEventoAcceso.Rechazo, _almacen.Eventos[^1].Resultado);
+        Assert.Equal(5, _almacen.Confirmaciones);
+
+        // Pasados 5 minutos desde el quinto rechazo, la correcta vuelve a entrar.
+        reloj.Avanzar(PoliticaBloqueo.Duracion);
+        Assert.Equal(ResultadoIngreso.Exito, (await ingresar.EjecutarAsync("clave-correcta")).Tipo);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_FueraDePoliticaDuranteBloqueo_Invalido400SinEvento()
+    {
+        DefinirCredencial("clave-correcta");
+        RegistrarRechazosConfirmados(5);
+        var eventosAntes = _almacen.Eventos.Count;
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync("corta");
+
+        // ADR-005 antes que todo, también durante un bloqueo: 400 sin evento, sin consultar la base ni el hash.
+        Assert.Equal(ResultadoIngreso.Invalido, resultado.Tipo);
+        Assert.Equal(ValidacionContrasena.AccionMuyCorta, Assert.Single(resultado.Errores).Accion);
+        Assert.Equal(eventosAntes, _almacen.Eventos.Count);
+        Assert.Equal(0, _almacen.Confirmaciones);
+        Assert.Equal(0, _almacen.Consultas);
+        Assert.Equal(0, _hasher.Verificaciones);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_QuintoRechazoConfirmadoJustoAntesDeLaConsulta_Bloqueado()
+    {
+        DefinirCredencial("clave-correcta");
+        RegistrarRechazosConfirmados(4);
+        var reloj = new RelojAjustable();
+        var ingresar = new IngresarConContrasena(_almacen, _almacen, _hasher, _almacen, reloj);
+
+        // Otro pedido confirma el quinto rechazo un segundo después de que este empezó, justo antes de la consulta.
+        _almacen.AlConsultarRechazos = () =>
+        {
+            reloj.Avanzar(TimeSpan.FromSeconds(1));
+            _almacen.Eventos.Add(new EventoAcceso(
+                TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, reloj.GetUtcNow().UtcDateTime));
+        };
+
+        // La hora del intento se toma después de la consulta: ese rechazo no queda en el futuro y el bloqueo vale.
+        var resultado = await ingresar.EjecutarAsync("clave-correcta");
+
+        Assert.Equal(ResultadoIngreso.Bloqueado, resultado.Tipo);
+        Assert.Equal(0, _hasher.Verificaciones);
+        Assert.Equal(ResultadoEventoAcceso.Bloqueado, _almacen.Eventos[^1].Resultado);
+        Assert.Equal(reloj.GetUtcNow().UtcDateTime, _almacen.Eventos[^1].FechaHora);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_CarreraInversa_QuintoConfirmadoPorOtroConHoraPosterior_Bloqueado()
+    {
+        DefinirCredencial("clave-correcta");
+        RegistrarRechazosConfirmados(4);
+        var ahora = RelojFijo.Instante.UtcDateTime;
+
+        // Los dos pedidos leyeron cuatro rechazos y este tomó la hora antes que el otro. El otro confirma primero, con
+        // una hora posterior: su rechazo es el quinto (el ancla) y queda en el futuro para este pedido. El reloj de
+        // este pedido no avanza, así que releer con la hora nueva no alcanza y el bloqueo depende de lo leído.
+        _almacen.AlConfirmar = () => _almacen.Eventos.Add(new EventoAcceso(
+            TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, ahora.AddSeconds(1)));
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync("clave-incorrecta");
+
+        Assert.Equal(ResultadoIngreso.Bloqueado, resultado.Tipo);
+        Assert.Equal(6, _almacen.Eventos.Count(e => e.Resultado == ResultadoEventoAcceso.Rechazo));
+        Assert.Equal(ResultadoEventoAcceso.Rechazo, _almacen.Eventos[^1].Resultado);
+        Assert.Equal(ahora, _almacen.Eventos[^1].FechaHora);
+        Assert.Equal(1, _almacen.Confirmaciones);
+    }
+
+    [Fact]
+    public async Task IngresarConContrasena_SinCredencialConRechazosPrevios_SinCredencialSinConsultarRechazos()
+    {
+        RegistrarRechazosConfirmados(5);
+        var eventosAntes = _almacen.Eventos.Count;
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync("cualquier-clave");
+
+        // Sin credencial responde 409 antes que el bloqueo: no se consultan los rechazos ni se registra un evento.
+        Assert.Equal(ResultadoIngreso.SinCredencial, resultado.Tipo);
+        Assert.Equal(eventosAntes, _almacen.Eventos.Count);
+        Assert.Equal(0, _almacen.Confirmaciones);
+        Assert.Equal(1, _almacen.Consultas);
+        Assert.Equal(0, _hasher.Verificaciones);
     }
 
     [Theory]

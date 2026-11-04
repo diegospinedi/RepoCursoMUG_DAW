@@ -48,6 +48,8 @@ export function FormularioContrasena({ titulo, boton, autocompletar, enviar, enl
         setGeneral({ mensaje: resultado.mensaje, conflicto: true });
         break;
       case 'general':
+      case 'bloqueado':
+        // 423 al ingresar: el mensaje de bloqueo temporal, sin navegar ni vaciar la pantalla.
         setGeneral({ mensaje: resultado.mensaje, conflicto: false });
         break;
       // 'sinSesion': el cliente ya llevó a /ingreso.

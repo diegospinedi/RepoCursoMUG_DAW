@@ -25,7 +25,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint("CK_CredencialAcceso_Id", "\"Id\" = 1"));
             credencial.HasKey(c => c.Id);
             credencial.Property(c => c.Id).ValueGeneratedNever();
-            credencial.Property(c => c.Hash).IsRequired();
+            // Token de concurrencia: el reemplazo filtra por el hash leído, así un cambio o un restablecimiento
+            // en el medio da conflicto en lugar de pisarse (FEAT-001b).
+            credencial.Property(c => c.Hash).IsRequired().IsConcurrencyToken();
             credencial.Property(c => c.DefinidaEn).IsRequired().HasConversion(FechaUtcIso8601);
         });
 
@@ -38,6 +40,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             evento.Property(e => e.Tipo).IsRequired();
             evento.Property(e => e.Resultado).IsRequired();
             evento.HasIndex(e => e.FechaHora);
+
+            // La consulta del bloqueo busca por (Tipo, Resultado) sin recorrer la tabla (FEAT-001b, ADR-006).
+            evento.HasIndex(e => new { e.Tipo, e.Resultado });
         });
     }
 
@@ -66,8 +71,10 @@ public sealed class CredencialAccesoFila
 }
 
 /// <summary>
-/// Fila de la tabla <c>EventoAcceso</c>. Tipo: <c>definicion</c>, <c>ingreso</c>, <c>salida</c>;
-/// resultado: <c>exito</c>, <c>rechazo</c>. No guarda contraseñas, IP ni otros datos personales.
+/// Fila de la tabla <c>EventoAcceso</c>. Tipo: <c>definicion</c>, <c>ingreso</c>, <c>salida</c>,
+/// <c>cambio_contrasena</c>, <c>restablecimiento</c>; resultado: <c>exito</c>, <c>rechazo</c>, <c>bloqueado</c>. La base
+/// no restringe los textos: una fila con un texto que esta versión no conoce se ignora al consultar. No guarda
+/// contraseñas, IP ni otros datos personales.
 /// </summary>
 public sealed class EventoAccesoFila
 {

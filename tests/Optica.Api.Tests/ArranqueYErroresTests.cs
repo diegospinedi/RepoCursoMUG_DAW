@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,22 @@ public sealed class ArranqueYErroresTests
         Assert.Contains(
             fabrica.Registro.Lineas,
             l => l.Nivel == LogLevel.Critical && l.Mensaje.Contains(FabricaConexion.ClaveDirectorio, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Modelo_SinCambiosPendientes_LaApiArranca()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        // Arrancar aplica las migraciones; con cambios de modelo sin migración, EF lanzaría ahí y la Api no arrancaría.
+        var respuesta = await Http.GetAsync(cliente, "/api/acceso/estado");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        using var alcance = fabrica.Services.CreateScope();
+        var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+        Assert.False(contexto.Database.HasPendingModelChanges());
+        Assert.Empty(contexto.Database.GetPendingMigrations());
     }
 
     [Fact]
@@ -83,5 +100,9 @@ public sealed class ArranqueYErroresTests
         public Task<CredencialAcceso?> ObtenerAsync(CancellationToken cancelacion = default) => throw Falla();
 
         public void Agregar(CredencialAcceso credencial) => throw Falla();
+
+        public void Reemplazar(CredencialAcceso anterior, CredencialAcceso nueva) => throw Falla();
+
+        public void Eliminar() => throw Falla();
     }
 }

@@ -3,14 +3,19 @@ import { expect, test, type Page } from '@playwright/test';
 /**
  * Recorrido de punta a punta contra la Api real, que sirve la SPA compilada. Cada proyecto (navegador) tiene su propia
  * Api con una base nueva y una marca de prueba en directorios temporales (ver servidor.mjs), así que las pruebas de un
- * proyecto corren en orden: primero sin contraseña, después con la contraseña definida.
+ * proyecto corren en orden: primero sin contraseña, después con la contraseña definida, después el cambio de
+ * contraseña y al final el bloqueo, que deja la base de ese proyecto bloqueada 5 minutos.
  */
 test.describe.configure({ mode: 'serial' });
 
 /** Exactamente 8 caracteres: el mínimo de NFR-01. */
 const CONTRASENA = 'e2e-ocho';
+/** La contraseña después del cambio (FEAT-001b, AC-04). Las dos son de prueba, no de nadie. */
+const CONTRASENA_NUEVA = 'e2e-nueva-1';
 const MENSAJE_CORTA = 'La contraseña debe tener al menos 8 caracteres. Ingresá una más larga.';
 const MENSAJE_INCORRECTA = 'La contraseña no es correcta. Volvé a ingresarla.';
+const MENSAJE_CAMBIADA = 'La contraseña se cambió.';
+const MENSAJE_BLOQUEADO = 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.';
 /** Colores de la marca de prueba que instala servidor.mjs. */
 const PRIMARIO = '#0903A0';
 const FONDO = '#FFFFFF';
@@ -33,6 +38,19 @@ test.afterEach(() => {
 
 function campoContrasena(page: Page) {
   return page.getByLabel('Contraseña', { exact: true });
+}
+
+/**
+ * Escribe la contraseña en el ingreso, pulsa Ingresar y devuelve el código con que respondió la Api. Esperar la
+ * respuesta, y no solo el mensaje, hace falta porque dos rechazos seguidos muestran el mismo texto.
+ */
+async function ingresar(page: Page, contrasena: string): Promise<number> {
+  await campoContrasena(page).fill(contrasena);
+  const [respuesta] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/api/acceso/ingresar')),
+    page.getByRole('button', { name: 'Ingresar' }).click(),
+  ]);
+  return respuesta.status();
 }
 
 async function contrasenaDefinida(page: Page): Promise<boolean> {
@@ -132,4 +150,70 @@ test('sin sesión una ruta protegida va a ingreso', async ({ page, context }) =>
   // Un enlace directo a una ruta de la SPA también llega a la Api y termina en el ingreso.
   await page.goto('/una-ruta-que-no-existe');
   await expect(page).toHaveURL(/\/ingreso$/);
+});
+
+test('cambia la contraseña e ingresa con la nueva', async ({ page }) => {
+  // La contraseña ya la definió "primera vez define contraseña e ingresa" en esta misma base (AC-04).
+  expect(await contrasenaDefinida(page)).toBe(true);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/ingreso$/);
+  expect(await ingresar(page, CONTRASENA)).toBe(204);
+  await expect(page.getByRole('heading', { name: 'Sesión iniciada' })).toBeVisible();
+
+  // Desde el inicio, a la pantalla de cambio.
+  await page.getByRole('link', { name: 'Cambiar la contraseña' }).click();
+  await expect(page).toHaveURL(/\/cambiar-contrasena$/);
+  await expect(page.getByRole('heading', { name: 'Cambiar la contraseña' })).toBeVisible();
+  await page.getByLabel('Contraseña actual', { exact: true }).fill(CONTRASENA);
+  await page.getByLabel('Contraseña nueva', { exact: true }).fill(CONTRASENA_NUEVA);
+  const [cambio] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/api/acceso/cambiar')),
+    page.getByRole('button', { name: 'Cambiar la contraseña' }).click(),
+  ]);
+  expect(cambio.status()).toBe(204);
+
+  // Vuelve al inicio con el aviso, y ninguna contraseña quedó en la URL.
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('status')).toHaveText(MENSAJE_CAMBIADA);
+  expect(page.url()).not.toContain(CONTRASENA);
+  expect(page.url()).not.toContain(CONTRASENA_NUEVA);
+
+  // Sale…
+  await page.getByRole('button', { name: 'Salir' }).click();
+  await expect(page).toHaveURL(/\/ingreso$/);
+
+  // …la anterior ya no sirve…
+  expect(await ingresar(page, CONTRASENA)).toBe(401);
+  await expect(page.getByRole('alert')).toHaveText(MENSAJE_INCORRECTA);
+  await expect(page).toHaveURL(/\/ingreso$/);
+
+  // …y la nueva sí (y reinicia la cuenta de rechazos para la prueba siguiente).
+  expect(await ingresar(page, CONTRASENA_NUEVA)).toBe(204);
+  await expect(page.getByRole('heading', { name: 'Sesión iniciada' })).toBeVisible();
+  expect((await page.request.get('/api/sesion')).status()).toBe(204);
+});
+
+// Última a propósito: deja la base de este proyecto bloqueada 5 minutos. El desbloqueo a los 5 minutos se prueba en la
+// Api con el reloj controlado, no acá.
+test('cinco intentos incorrectos bloquean el ingreso', async ({ page }) => {
+  expect(await contrasenaDefinida(page)).toBe(true);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/ingreso$/);
+
+  // Los cuatro primeros rechazos muestran el mensaje de contraseña incorrecta…
+  for (let intento = 1; intento <= 4; intento++) {
+    expect(await ingresar(page, `incorrecta-${intento}`), `intento ${intento}`).toBe(401);
+    await expect(page.getByRole('alert')).toHaveText(MENSAJE_INCORRECTA);
+  }
+
+  // …el quinto ya avisa del bloqueo en ese mismo intento (AC-01)…
+  expect(await ingresar(page, 'incorrecta-5')).toBe(423);
+  await expect(page.getByRole('alert')).toHaveText(MENSAJE_BLOQUEADO);
+
+  // …y durante el bloqueo tampoco entra con la correcta: sigue en el ingreso, con el mensaje y sin sesión.
+  expect(await ingresar(page, CONTRASENA_NUEVA)).toBe(423);
+  await expect(page.getByRole('alert')).toHaveText(MENSAJE_BLOQUEADO);
+  await expect(page).toHaveURL(/\/ingreso$/);
+  await expect(page.getByRole('heading', { name: 'Sesión iniciada' })).toHaveCount(0);
+  expect((await page.request.get('/api/sesion')).status()).toBe(401);
 });

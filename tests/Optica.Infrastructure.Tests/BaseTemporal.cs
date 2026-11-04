@@ -76,7 +76,7 @@ public sealed class BaseTemporal : IDisposable
     /// <summary>Borra un directorio de prueba, liberando antes las conexiones agrupadas de SQLite.</summary>
     public static void BorrarDirectorio(string ruta)
     {
-        SqliteConnection.ClearAllPools();
+        LiberarConexiones(ruta);
         try
         {
             if (Directory.Exists(ruta))
@@ -90,6 +90,25 @@ public sealed class BaseTemporal : IDisposable
             // sobró en la carpeta temporal.
             Console.Error.WriteLine(
                 $"[BaseTemporal] No se pudo borrar el directorio de prueba '{ruta}': {error.GetType().Name}: {error.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Libera las conexiones agrupadas de SQLite de las bases <c>optica.db</c> que haya en <paramref name="ruta"/> o
+    /// debajo, solo las de esas bases: <see cref="SqliteConnection.ClearAllPools"/> es global al proceso y, con pruebas
+    /// en paralelo, cierra conexiones de otras bases en uso.
+    /// </summary>
+    public static void LiberarConexiones(string ruta)
+    {
+        var bases = Directory.Exists(ruta)
+            ? Directory.EnumerateFiles(ruta, FabricaConexion.NombreArchivo, SearchOption.AllDirectories)
+                .Select(archivo => Path.GetDirectoryName(archivo)!)
+            : [];
+        foreach (var carpeta in bases.Append(ruta).Distinct(StringComparer.Ordinal))
+        {
+            // La misma cadena que arma la infraestructura para ese directorio: es la clave de su grupo de conexiones.
+            using var conexion = new SqliteConnection(new FabricaConexion(carpeta).CadenaConexion);
+            SqliteConnection.ClearPool(conexion);
         }
     }
 

@@ -71,16 +71,31 @@ public sealed class ProteccionTests
     [Theory]
     [InlineData("/api/acceso/definir")]
     [InlineData("/api/acceso/ingresar")]
+    [InlineData("/api/acceso/cambiar")]
     public async Task Post_ConTextoPlano_Rechazado415(string ruta)
     {
         using var fabrica = new FabricaApi();
         var cliente = fabrica.CrearClienteSinCookies();
+        // cambiar exige sesión: sin cookie respondería 401 antes del 415.
+        var cookie = EsCambiar(ruta) ? await Http.DefinirAsync(cliente) : null;
+        var eventosAntes = fabrica.Eventos().Count;
 
         var respuesta = await Http.EnviarAsync(
-            cliente, HttpMethod.Post, ruta, new StringContent(Http.CuerpoContrasena(Http.Contrasena), Encoding.UTF8, "text/plain"));
+            cliente,
+            HttpMethod.Post,
+            ruta,
+            new StringContent(CuerpoDe(ruta), Encoding.UTF8, "text/plain"),
+            cookie);
 
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
-        Assert.Null(Http.SetCookie(respuesta));
+        Assert.Equal(eventosAntes, fabrica.Eventos().Count);
+        if (cookie is null)
+        {
+            Assert.Null(Http.SetCookie(respuesta));
+        }
+
+        // El 415 lo da un middleware para todo POST: sin este control, la fila pasaría aunque la acción no existiera.
+        AfirmarQueElEndpointExiste(fabrica, ruta);
     }
 
     [Fact]
@@ -100,20 +115,28 @@ public sealed class ProteccionTests
     [Theory]
     [InlineData("/api/acceso/definir")]
     [InlineData("/api/acceso/ingresar")]
+    [InlineData("/api/acceso/cambiar")]
     public async Task Post_CuerpoMayorA4KB_Rechazado413(string ruta)
     {
         using var fabrica = new FabricaApi();
         var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = EsCambiar(ruta) ? await Http.DefinirAsync(cliente) : null;
+        var eventosAntes = fabrica.Eventos().Count;
 
-        var respuesta = await Http.PostJsonAsync(cliente, ruta, Http.CuerpoContrasena(new string('a', 4200)));
+        var respuesta = await Http.PostJsonAsync(cliente, ruta, CuerpoDe(ruta, new string('a', 4200)), cookie);
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, respuesta.StatusCode);
-        Assert.Null(Http.SetCookie(respuesta));
+        Assert.Equal(eventosAntes, fabrica.Eventos().Count);
+        if (cookie is null)
+        {
+            Assert.Null(Http.SetCookie(respuesta));
+        }
     }
 
     [Theory]
     [InlineData("/api/acceso/definir", true)]
     [InlineData("/api/acceso/ingresar", true)]
+    [InlineData("/api/acceso/cambiar", true)]
     [InlineData("/api/acceso/salir", true)]
     [InlineData("/api/acceso/salir", false)]
     public async Task Post_SinContentType_Rechazado415(string ruta, bool conCuerpo)
@@ -124,14 +147,17 @@ public sealed class ProteccionTests
         var eventosAntes = fabrica.Eventos().Count;
 
         // ByteArrayContent no lleva Content-Type; sin contenido, el pedido tampoco lo lleva.
-        HttpContent? contenido = conCuerpo ? new ByteArrayContent(Encoding.UTF8.GetBytes(Http.CuerpoContrasena(Http.Contrasena))) : null;
+        HttpContent? contenido = conCuerpo ? new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoDe(ruta))) : null;
         Assert.Null(contenido?.Headers.ContentType);
+        // salir y cambiar exigen sesión: sin cookie responderían 401 antes del 415.
         var esSalir = ruta.EndsWith("salir", StringComparison.Ordinal);
-        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido, esSalir ? cookie : null);
+        var conSesion = esSalir || EsCambiar(ruta);
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido, conSesion ? cookie : null);
 
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
         Assert.Equal(eventosAntes, fabrica.Eventos().Count);
-        if (esSalir)
+        AfirmarQueElEndpointExiste(fabrica, ruta);
+        if (conSesion)
         {
             // La sesión no se cerró: a lo sumo se renovó (cualquier pedido con sesión la renueva), nunca se borró.
             Assert.DoesNotContain("1970", Http.SetCookie(respuesta) ?? string.Empty, StringComparison.Ordinal);
@@ -146,17 +172,44 @@ public sealed class ProteccionTests
     [Theory]
     [InlineData("/api/acceso/definir")]
     [InlineData("/api/acceso/ingresar")]
+    [InlineData("/api/acceso/cambiar")]
     public async Task Post_CuerpoMayorA4KBSinContentLength_Rechazado413(string ruta)
     {
         using var fabrica = new FabricaApi();
         var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = EsCambiar(ruta) ? await Http.DefinirAsync(cliente) : null;
+        var eventosAntes = fabrica.Eventos().Count;
 
-        var contenido = new Http.ContenidoSinLargo(Http.CuerpoContrasena(new string('a', 4200)), "application/json");
-        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido);
+        var contenido = new Http.ContenidoSinLargo(CuerpoDe(ruta, new string('a', 4200)), "application/json");
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido, cookie);
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, respuesta.StatusCode);
-        Assert.Null(Http.SetCookie(respuesta));
-        Assert.Empty(fabrica.Eventos());
+        if (cookie is null)
+        {
+            Assert.Null(Http.SetCookie(respuesta));
+        }
+
+        Assert.Equal(eventosAntes, fabrica.Eventos().Count);
+    }
+
+    private static bool EsCambiar(string ruta) => ruta.EndsWith("cambiar", StringComparison.Ordinal);
+
+    /// <summary>Un cuerpo válido para la ruta: las dos contraseñas en <c>cambiar</c>, una en las demás.</summary>
+    private static string CuerpoDe(string ruta, string contrasena = Http.Contrasena) =>
+        EsCambiar(ruta) ? Http.CuerpoCambio(Http.Contrasena, contrasena) : Http.CuerpoContrasena(contrasena);
+
+    /// <summary>
+    /// Hay una acción POST registrada en la ruta. Lo necesitan las pruebas cuya respuesta (415, 401) también se daría en
+    /// una ruta inexistente.
+    /// </summary>
+    internal static void AfirmarQueElEndpointExiste(FabricaApi fabrica, string ruta)
+    {
+        var existe = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Any(endpoint =>
+                "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/') == ruta
+                && endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(HttpMethods.Post) == true);
+        Assert.True(existe, $"No hay un endpoint POST {ruta}.");
     }
 
     [Fact]

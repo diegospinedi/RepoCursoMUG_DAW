@@ -13,8 +13,8 @@ namespace Optica.Api.Tests;
 
 /// <summary>
 /// La Api completa sobre un servidor de pruebas: base SQLite en un directorio temporal propio (también las claves
-/// de Data Protection), reloj controlable y un registro en memoria para inspeccionar el log. Al descartarla se
-/// borra el directorio.
+/// de Data Protection y el candado de instancia), reloj controlable y un registro en memoria para inspeccionar el log.
+/// Al descartarla se libera el candado y se borra el directorio.
 /// </summary>
 public sealed class FabricaApi : WebApplicationFactory<Program>
 {
@@ -38,8 +38,9 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
         _reemplazos = reemplazos;
         _nivelesDeConfiguracion = nivelesDeConfiguracion;
         DirectorioPropio = directorioDatos is null;
-        DirectorioDatos = directorioDatos
-            ?? Path.Combine(Path.GetTempPath(), "optica-pruebas-api", Guid.NewGuid().ToString("N"));
+        // Cada instancia tiene su propio directorio de datos, y con él su candado de instancia (optica.instancia): las
+        // pruebas en paralelo no chocan. Solo comparten directorio las que lo pasan a propósito (reinicio, comando).
+        DirectorioDatos = directorioDatos ?? RaizTemporal();
         if (DirectorioPropio)
         {
             Directory.CreateDirectory(DirectorioDatos);
@@ -52,6 +53,147 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
     public string DirectorioDatos { get; }
 
     private bool DirectorioPropio { get; }
+
+    /// <summary>
+    /// Un directorio de datos vacío y único bajo la carpeta temporal, para las pruebas que reinician la Api o ejecutan
+    /// el comando sobre el mismo directorio; lo borra la prueba.
+    /// </summary>
+    public static string NuevoDirectorioTemporal()
+    {
+        var directorio = RaizTemporal();
+        Directory.CreateDirectory(directorio);
+        return directorio;
+    }
+
+    /// <summary>
+    /// <c>&lt;temp&gt;/optica-pruebas-api/&lt;guid&gt;</c>. Nunca en una unidad de Windows montada en WSL (<c>/mnt/…</c>):
+    /// ahí <c>FileShare.None</c> no es un candado confiable y el candado de instancia no protegería nada.
+    /// </summary>
+    private static string RaizTemporal()
+    {
+        var directorio = Path.Combine(Path.GetTempPath(), "optica-pruebas-api", Guid.NewGuid().ToString("N"));
+        ComprobarFueraDeMnt(directorio);
+        return directorio;
+    }
+
+    /// <summary>Antigüedad a partir de la cual un directorio de prueba del perfil se considera abandonado.</summary>
+    private static readonly TimeSpan AntiguedadAbandonado = TimeSpan.FromHours(1);
+
+    /// <summary>Limpia una sola vez por proceso, antes de crear el primer directorio en el perfil.</summary>
+    private static readonly Lazy<string> RaizLimpia = new(() =>
+    {
+        var raiz = RaizEnElPerfil;
+        LimpiarDirectoriosViejos(raiz, AntiguedadAbandonado);
+        return raiz;
+    });
+
+    /// <summary>
+    /// Raíz fija de los directorios de prueba que tienen que estar dentro de la carpeta del usuario (para que la ruta
+    /// visible y la expandida difieran): en Windows, la carpeta temporal si ya está bajo el perfil; si no,
+    /// <c>&lt;perfil&gt;/.cache/optica-pruebas</c>. Nunca la raíz del perfil, y con la misma guarda <c>/mnt/</c>.
+    /// </summary>
+    public static string RaizEnElPerfil
+    {
+        get
+        {
+            var perfil = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(perfil))
+            {
+                throw new InvalidOperationException("Las pruebas necesitan la carpeta del usuario.");
+            }
+
+            var temporal = Path.GetTempPath();
+            var raiz = OperatingSystem.IsWindows() && EstaDentro(temporal, perfil)
+                ? Path.Combine(temporal, "optica-pruebas-perfil")
+                : Path.Combine(perfil, ".cache", "optica-pruebas");
+            ComprobarFueraDeMnt(raiz);
+            return raiz;
+        }
+    }
+
+    /// <summary>
+    /// <c>&lt;<see cref="RaizEnElPerfil"/>&gt;/&lt;guid&gt;</c>, creado; lo borra la prueba. La primera vez en el proceso
+    /// borra los directorios abandonados de esa raíz.
+    /// </summary>
+    public static string NuevoDirectorioEnElPerfil()
+    {
+        var directorio = Path.Combine(RaizLimpia.Value, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directorio);
+        return directorio;
+    }
+
+    /// <summary>
+    /// Borra los subdirectorios de <paramref name="raiz"/> sin cambios desde hace más de <paramref name="antiguedad"/>
+    /// (los de otras pruebas en curso, recientes, quedan). Lo que no se puede borrar se informa y se deja.
+    /// </summary>
+    public static void LimpiarDirectoriosViejos(string raiz, TimeSpan antiguedad)
+    {
+        if (!Directory.Exists(raiz))
+        {
+            return;
+        }
+
+        var limite = DateTime.UtcNow - antiguedad;
+        foreach (var directorio in Directory.EnumerateDirectories(raiz))
+        {
+            if (Directory.GetLastWriteTimeUtc(directorio) < limite)
+            {
+                BorrarDirectorioDePrueba(directorio);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Libera las conexiones agrupadas de SQLite de las bases <c>optica.db</c> que haya en <paramref name="directorio"/>
+    /// o debajo, solo las de esas bases. <see cref="SqliteConnection.ClearAllPools"/> es global al proceso: con pruebas en
+    /// paralelo cierra conexiones de otras bases en uso.
+    /// </summary>
+    public static void LiberarConexiones(string directorio)
+    {
+        var bases = Directory.Exists(directorio)
+            ? Directory.EnumerateFiles(directorio, FabricaConexion.NombreArchivo, SearchOption.AllDirectories)
+                .Select(archivo => Path.GetDirectoryName(archivo)!)
+            : [];
+        foreach (var carpeta in bases.Append(directorio).Distinct(StringComparer.Ordinal))
+        {
+            // La misma cadena que arma la Api para ese directorio: es la clave de su grupo de conexiones.
+            using var conexion = new SqliteConnection(new FabricaConexion(carpeta).CadenaConexion);
+            SqliteConnection.ClearPool(conexion);
+        }
+    }
+
+    /// <summary>Libera las conexiones de las bases del directorio y lo borra; si no se puede, lo informa.</summary>
+    public static void BorrarDirectorioDePrueba(string directorio)
+    {
+        LiberarConexiones(directorio);
+        try
+        {
+            if (Directory.Exists(directorio))
+            {
+                Directory.Delete(directorio, recursive: true);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(
+                $"[FabricaApi] No se pudo borrar un directorio de prueba ({error.GetType().Name}).");
+        }
+    }
+
+    private static bool EstaDentro(string ruta, string carpeta)
+    {
+        var relativa = Path.GetRelativePath(carpeta, ruta);
+        return relativa != "." && !relativa.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relativa);
+    }
+
+    private static void ComprobarFueraDeMnt(string directorio)
+    {
+        if (!OperatingSystem.IsWindows() && directorio.StartsWith("/mnt/", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "La carpeta de las pruebas está en una unidad de Windows montada; configurá TMPDIR y HOME fuera de /mnt.");
+        }
+    }
 
     public FakeTimeProvider Reloj { get; } = new(Inicio);
 
@@ -106,19 +248,7 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
             return;
         }
 
-        SqliteConnection.ClearAllPools();
-        try
-        {
-            if (Directory.Exists(DirectorioDatos))
-            {
-                Directory.Delete(DirectorioDatos, recursive: true);
-            }
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            Console.Error.WriteLine(
-                $"[FabricaApi] No se pudo borrar el directorio de prueba '{DirectorioDatos}': {error.GetType().Name}");
-        }
+        BorrarDirectorioDePrueba(DirectorioDatos);
     }
 }
 

@@ -23,6 +23,16 @@ public sealed record SolicitudContrasena(
     public override string ToString() => nameof(SolicitudContrasena) + " { Contrasena = *** }";
 }
 
+/// <summary>Cuerpo de <c>cambiar</c>. Ninguna de las dos contraseñas se registra ni se devuelve.</summary>
+public sealed record SolicitudCambioContrasena(
+    [property: JsonConverter(typeof(LectorContrasenaJson))] string? ContrasenaActual,
+    [property: JsonConverter(typeof(LectorContrasenaJson))] string? ContrasenaNueva)
+{
+    /// <summary>Sin las contraseñas, por lo mismo que <see cref="SolicitudContrasena.ToString"/>.</summary>
+    public override string ToString() =>
+        nameof(SolicitudCambioContrasena) + " { ContrasenaActual = ***, ContrasenaNueva = *** }";
+}
+
 /// <summary>
 /// Estado del acceso, definición de la contraseña, ingreso y salida. Solo traduce HTTP: delega en los casos de uso
 /// (que validan la contraseña y registran los eventos de acceso), traduce sus resultados y emite o borra la cookie de
@@ -34,9 +44,13 @@ public sealed class AccesoController(
     ConsultarEstadoAcceso consultarEstado,
     DefinirContrasena definirContrasena,
     IngresarConContrasena ingresarConContrasena,
+    CambiarContrasena cambiarContrasena,
     CerrarSesion cerrarSesion) : ControllerBase
 {
-    /// <summary>Política del limitador de concurrencia compartida por <c>definir</c> e <c>ingresar</c> (R-05).</summary>
+    /// <summary>
+    /// Política del limitador de concurrencia compartida por <c>definir</c>, <c>ingresar</c> y <c>cambiar</c>, que
+    /// calculan PBKDF2 (R-05).
+    /// </summary>
     public const string LimitadorAcceso = "acceso";
 
     /// <summary>Tamaño máximo del cuerpo de los POST de acceso; más grande, 413.</summary>
@@ -45,6 +59,9 @@ public sealed class AccesoController(
     public const string MensajeContrasenaIncorrecta = "La contraseña no es correcta. Volvé a ingresarla.";
     public const string AccionSinContrasena = "Definí la contraseña primero";
     public const string AccionYaDefinida = "Ya hay una contraseña definida. Ingresá con ella.";
+    public const string MensajeBloqueado = "El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.";
+    public const string MensajeCambioEnConflicto =
+        "La contraseña cambió mientras se guardaba este cambio. Revisá cuál quedó y volvé a intentar.";
 
     [HttpGet("estado")]
     [AllowAnonymous]
@@ -126,8 +143,58 @@ public sealed class AccesoController(
                 return this.Rechazo(
                     StatusCodes.Status401Unauthorized,
                     new ErrorValidacion(ValidacionContrasena.Campo, MensajeContrasenaIncorrecta));
+            case ResultadoIngreso.Bloqueado:
+                return this.Bloqueado(MensajeBloqueado);
             default:
                 throw new InvalidOperationException($"Resultado de ingresar no previsto: {(int)intento.Tipo}.");
+        }
+    }
+
+    /// <summary>
+    /// Cambia la contraseña. Exige sesión por la política por defecto (no está en <see cref="RutasAnonimas"/>): sin
+    /// sesión, 401 antes del 415 y del 413. Comparte el limitador de <c>definir</c> e <c>ingresar</c>.
+    /// </summary>
+    [HttpPost("cambiar")]
+    [RequestSizeLimit(CuerpoMaximo)]
+    [EnableRateLimiting(LimitadorAcceso)]
+    public async Task<IActionResult> Cambiar([FromBody] SolicitudCambioContrasena? solicitud, CancellationToken cancelacion)
+    {
+        if (!ModelState.IsValid)
+        {
+            return this.CuerpoIlegible(
+                ValidacionContrasena.CampoActual, ValidacionContrasena.CampoActual, ValidacionContrasena.CampoNueva);
+        }
+
+        var intento = await cambiarContrasena.EjecutarAsync(
+            solicitud?.ContrasenaActual, solicitud?.ContrasenaNueva, cancelacion);
+        return ResponderCambio(intento);
+    }
+
+    /// <summary>
+    /// Traduce el resultado de <c>cambiar</c>: 204 sin cuerpo, 400 con el campo, 409 sin credencial o por un conflicto al
+    /// confirmar. No emite cookie (la sesión es la del pedido). Cerrado por defecto: cualquier otro valor lanza, y el
+    /// manejador de errores responde 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderCambio(IntentoCambio intento)
+    {
+        switch (intento.Tipo)
+        {
+            case ResultadoCambio.Exito:
+                return NoContent();
+            case ResultadoCambio.Invalido:
+                return this.Invalido([.. intento.Errores]);
+            case ResultadoCambio.SinCredencial:
+                return Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Todavía no hay una contraseña definida.",
+                    detail: AccionSinContrasena);
+            case ResultadoCambio.Conflicto:
+                return Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "La contraseña cambió mientras se guardaba.",
+                    detail: MensajeCambioEnConflicto);
+            default:
+                throw new InvalidOperationException($"Resultado de cambiar no previsto: {(int)intento.Tipo}.");
         }
     }
 

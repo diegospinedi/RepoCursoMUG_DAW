@@ -26,6 +26,7 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Hash")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasColumnType("TEXT");
 
@@ -58,6 +59,8 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id");
 
                     b.HasIndex("FechaHora");
+
+                    b.HasIndex("Tipo", "Resultado");
 
                     b.ToTable("EventoAcceso", (string)null);
                 });
