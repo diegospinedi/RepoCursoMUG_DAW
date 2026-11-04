@@ -15,6 +15,13 @@ public static class RespuestasValidacion
     /// <summary>Acción para un cuerpo que no se pudo leer: JSON roto o una contraseña que no es texto.</summary>
     public const string AccionCuerpoIlegible = "No se pudo leer la contraseña enviada. Escribila de nuevo.";
 
+    /// <summary>
+    /// Acción para un cuerpo de configuración que no se pudo leer: JSON roto, un texto donde va un número o un número
+    /// que no entra en <see cref="decimal"/>.
+    /// </summary>
+    public const string AccionCuerpoIlegibleConfiguracion =
+        "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
+
     /// <summary>400 con <c>errors.{campo}</c> y la acción de cada error.</summary>
     public static ActionResult Invalido(this ControllerBase controller, params ErrorValidacion[] errores) =>
         controller.ConErrores(StatusCodes.Status400BadRequest, detalle: null, errores);
@@ -33,7 +40,16 @@ public static class RespuestasValidacion
     /// Solo se miran las claves, nunca los mensajes ni los valores.
     /// </summary>
     public static ActionResult CuerpoIlegible(
-        this ControllerBase controller, string campoPorDefecto, params string[] campos)
+        this ControllerBase controller, string campoPorDefecto, params string[] campos) =>
+        controller.CuerpoIlegible(AccionCuerpoIlegible, campoPorDefecto, (IReadOnlyList<string>)campos);
+
+    /// <summary>
+    /// Lo mismo que <see cref="CuerpoIlegible(ControllerBase, string, string[])"/> con otra acción fija (por ejemplo
+    /// <see cref="AccionCuerpoIlegibleConfiguracion"/>). Sin <c>params</c> a propósito: con él, una llamada con tres
+    /// textos elegiría esta sobrecarga en lugar de la anterior.
+    /// </summary>
+    public static ActionResult CuerpoIlegible(
+        this ControllerBase controller, string accion, string campoPorDefecto, IReadOnlyList<string> campos)
     {
         var claves = controller.ModelState
             .Where(entrada => entrada.Value is { Errors.Count: > 0 })
@@ -43,7 +59,7 @@ public static class RespuestasValidacion
             .Select(clave => campos.FirstOrDefault(candidato => NombraElCampo(clave, candidato)))
             .FirstOrDefault(candidato => candidato is not null)
             ?? campoPorDefecto;
-        return controller.Invalido(new ErrorValidacion(campo, AccionCuerpoIlegible));
+        return controller.Invalido(new ErrorValidacion(campo, accion));
     }
 
     /// <summary>
