@@ -1,0 +1,11 @@
+# Decisiones de FEAT-001c: Configuración de parámetros de negocio
+
+| ID | Fecha | Fase | Decisión | Quién | Origen |
+|---|---|---|---|---|---|
+| D-01 | 2026-11-04 | PLAN | El múltiplo de redondeo comercial y el tope de identificación admiten hasta 2 decimales, como los importes de PRD-001 RF-19. El mínimo se valida antes que la escala: 0,001 muestra "El valor mínimo es 0,01." (AC-04) y 0,015 o 50,005 muestran "Ingresá hasta 2 decimales." | Usuario | arch-auditor WARN 6; el PRD no fijaba la escala |
+| D-02 | 2026-11-04 | PLAN | Si el tope de identificación se graba vacío, queda sin valor y sigue el aviso de FR-08; también se puede vaciar un tope ya cargado. | Usuario | Derivado de AC-02 y FR-08; confirmado por el usuario |
+| D-03 | 2026-11-04 | PLAN | Grabar reemplaza los cuatro valores juntos y la última grabación gana (una sola operadora, una PC); después de grabar, la pantalla vuelve a leer y muestra lo guardado. | Agente | arch-auditor WARN 9; R-08 del threat model |
+| D-04 | 2026-11-04 | PLAN | Sin la fila de configuración (base alterada a mano) es un estado corrupto: la lectura lanza y la Api responde 500 genérico; no se recrea en silencio. | Agente | arch-auditor WARN 9; impact-scanner nota 4 |
+| D-05 | 2026-11-04 | PLAN | Las pruebas e2e de configuración corren contra su propia Api y su propia base por navegador, separadas de las de acceso, que dejan la base con otra contraseña y bloqueada. | Agente | impact-scanner gap 4 |
+| D-06 | 2026-11-04 | PLAN | No se registra quién cambió un parámetro: la contraseña es compartida por diseño (PRD-001). Cada grabación queda en el log de la Api con valores anteriores y nuevos y fecha y hora (R-04). | Agente | arch-auditor WARN 16 |
+| D-07 | 2026-11-04 | PLAN | La traducción entre `CondicionFiscal` y su texto (`responsable_inscripto`, `monotributo`) vive en la política de dominio: el mismo texto es el contrato de la Api y el valor de la columna, y así hay una sola fuente. | Agente | arch-auditor ronda 2, N5 |
