@@ -19,6 +19,12 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Valores iniciales al instalar o al actualizar una base existente: 21, Responsable Inscripto y 0,01; el tope queda sin valor y la pantalla avisa que falta cargarlo.
   - `GET` y `POST /api/configuracion`: todos los errores por campo, valores leídos de la base en cada operación (sin reiniciar), cada grabación registrada con los valores anteriores y nuevos (también en el Registro de eventos de Windows).
   - Pruebas de punta a punta con una Api y una base por navegador y por archivo de pruebas.
+- [FEAT-002a] Alta de artículos con precio de venta calculado:
+  - Pantalla `/articulos/nuevo`, con sesión iniciada, para dar de alta un artículo con descripción (hasta 200 caracteres), código de proveedor (hasta 50), costo y margen (hasta 2 decimales).
+  - Código interno asignado por el sistema y precio de venta calculado como `costo × (100 + margen) / 100`, redondeado hacia arriba al múltiplo comercial configurado, sin errores de punto flotante (ADR-010).
+  - Código de proveedor único sin distinguir mayúsculas, espacios en blanco de los extremos ni formas Unicode equivalentes (ADR-009); se rechaza el texto con UTF-16 inválido junto al campo.
+  - `POST /api/articulos` y `GET /api/articulos/{codigo}`, con todos los errores por campo; tabla `Articulo` con restricciones e índice único.
+  - Pruebas de punta a punta del alta en Chrome y Edge.
 
 ### Security
 - [FEAT-001b] `ConflictoAlConfirmarException` ya no admite una excepción interna, así que el hash de la contraseña que viaja en los `Entries` de EF Core no puede llegar al log por esa vía.
