@@ -14,9 +14,20 @@ uno con su Api, su puerto y su base nueva:
 | Proyecto | Navegador (canal) | Archivo | Puerto (con `OPTICA_E2E_PUERTO` por defecto) |
 |---|---|---|---|
 | `chrome-acceso` | `chrome` | `acceso.spec.ts` | 5543 |
-| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5544 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5545 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5546 |
+| `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5544 |
+| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5545 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5546 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5547 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5548 |
+
+Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
+cada uno, los archivos en orden alfabético. Por eso un archivo nuevo corre los puertos de los que vienen después:
+`articulos.spec.ts` (FEAT-002a) movió `chrome-configuracion` de 5544 a 5545 y los de Edge de 5545–5546 a 5546–5548. Si
+tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
+al arrancar.
+
+`articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
+y lo vuelve a 0,01 (AC-10), y al final deja Monotributo (AC-09). Por eso sus pruebas también van en ese orden.
 
 Dentro de un proyecto las pruebas corren en orden y de a una, porque dependen de lo que dejó la anterior en su base.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
@@ -91,5 +102,5 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 ## Diagnóstico sin Chrome ni Edge
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
-(proyectos `chromium-acceso` y `chromium-configuracion`).
+(proyectos `chromium-acceso`, `chromium-articulos` y `chromium-configuracion`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.
