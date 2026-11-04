@@ -79,6 +79,27 @@ describe('Inicio', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/cambiar-contrasena');
   });
 
+  it('Inicio_EnlaceConfiguracion', async () => {
+    servidorFalso({
+      ...conSesion,
+      'GET /api/configuracion': json(200, {
+        alicuotaIva: 21,
+        condicionFiscal: 'responsable_inscripto',
+        multiploRedondeo: 0.01,
+        topeIdentificacion: null,
+        faltaTope: true,
+      }),
+    });
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Configuración' });
+    expect(enlace.getAttribute('href')).toBe('/configuracion');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Configuración' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/configuracion');
+  });
+
   it.each([
     ['sin mensaje', { otro: 'La contraseña se cambió.' }],
     ['mensaje que no es texto', { mensaje: 42 }],

@@ -45,14 +45,16 @@ body {
   margin-bottom: 1rem;
 }
 
-.campo input {
+.campo input,
+.campo select {
   font-size: 1rem;
   padding: 0.5rem;
   border: 1px solid #8a8a8a;
   border-radius: 4px;
 }
 
-.campo input[aria-invalid='true'] {
+.campo input[aria-invalid='true'],
+.campo select[aria-invalid='true'] {
   border-color: var(--color-error);
 }
 
@@ -64,6 +66,14 @@ body {
 
 .mensaje-exito {
   margin: 0.25rem 0;
+}
+
+/* Aviso de un dato pendiente (FR-08 de FEAT-001c): destacado sin el color de error, porque no impide trabajar. */
+.aviso {
+  margin: 0.25rem 0 1rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid var(--color-primario);
+  background-color: #ffffff;
 }
 
 button {

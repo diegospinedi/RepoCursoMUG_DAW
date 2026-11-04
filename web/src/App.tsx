@@ -4,6 +4,7 @@ import { alPerderLaSesion } from './api/cliente';
 import { Encabezado } from './componentes/Encabezado';
 import { MarcaProvider } from './marca/MarcaProvider';
 import { CambiarContrasena } from './paginas/CambiarContrasena';
+import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
 import { Ingreso } from './paginas/Ingreso';
 import { Arranque } from './rutas/Arranque';
@@ -31,6 +32,7 @@ export function App() {
             <Route path="/definir-contrasena" element={<DefinirContrasena />} />
             <Route path="/ingreso" element={<Ingreso />} />
             <Route path="/cambiar-contrasena" element={<CambiarContrasena />} />
+            <Route path="/configuracion" element={<Configuracion />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

@@ -49,6 +49,9 @@ export function Inicio() {
       <p>
         <Link to="/cambiar-contrasena">Cambiar la contraseña</Link>
       </p>
+      <p>
+        <Link to="/configuracion">Configuración</Link>
+      </p>
       <button type="button" onClick={alSalir} disabled={saliendo}>
         Salir
       </button>
