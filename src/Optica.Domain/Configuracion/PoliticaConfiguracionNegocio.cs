@@ -1,3 +1,5 @@
+using Optica.Domain.Comun;
+
 namespace Optica.Domain.Configuracion;
 
 /// <summary>
@@ -29,12 +31,8 @@ public static class PoliticaConfiguracionNegocio
     public const decimal AlicuotaMaxima = 100m;
     public const decimal MultiploMinimo = 0.01m;
 
-    /// <summary>
-    /// El mayor importe cuyo valor en centavos entra en un entero de 64 bits (<c>long.MaxValue / 100</c>, truncado a
-    /// 2 decimales), que es como el modelo representa los importes (ADR-008). Es el límite del tipo, no un tope de
-    /// negocio.
-    /// </summary>
-    public const decimal ImporteMaximo = 92_233_720_368_547_758.07m;
+    /// <summary>Alias de <see cref="ReglasImporte.ImporteMaximo"/>, que es donde vive la regla (D-12 de FEAT-002a).</summary>
+    public const decimal ImporteMaximo = ReglasImporte.ImporteMaximo;
 
     private const string TextoResponsableInscripto = "responsable_inscripto";
     private const string TextoMonotributo = "monotributo";
@@ -148,6 +146,5 @@ public static class PoliticaConfiguracionNegocio
         return tope > ImporteMaximo ? InfraccionConfiguracion.TopeFueraDeRango : null;
     }
 
-    // Por el valor, no por decimal.Scale: 21.500 y 0.010 llegan con escala 3 y tienen 2 decimales o menos.
-    private static bool TieneMasDeDosDecimales(decimal valor) => valor != decimal.Round(valor, 2);
+    private static bool TieneMasDeDosDecimales(decimal valor) => ReglasImporte.TieneMasDeDosDecimales(valor);
 }
