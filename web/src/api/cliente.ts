@@ -11,6 +11,8 @@
  *   "sin sesión" y avisa al manejador registrado con {@link alPerderLaSesion}.
  */
 
+import { IMPORTE_MAXIMO_SEGURO } from '../configuracion/numeros';
+
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
 export const MENSAJE_PEDIDO_RECHAZADO = 'No se pudo completar la operación. Recargá la página y reintentá.';
@@ -20,6 +22,7 @@ export const MENSAJE_SIN_CONTRASENA = 'Todavía no hay una contraseña. Definí 
 export const MENSAJE_BLOQUEADO = 'El acceso está bloqueado temporalmente. Volvé a intentar en unos minutos.';
 export const MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR = 'No hay una contraseña definida. Volvé a ingresar.';
 export const MENSAJE_CONFIGURACION_GRANDE = 'Los valores enviados son demasiado largos. Revisalos y grabá de nuevo.';
+export const MENSAJE_ARTICULO_GRANDE = 'Los datos enviados son demasiado largos. Revisalos y grabá de nuevo.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
@@ -31,6 +34,31 @@ export const CAMPO_ALICUOTA = 'alicuotaIva';
 export const CAMPO_CONDICION = 'condicionFiscal';
 export const CAMPO_MULTIPLO = 'multiploRedondeo';
 export const CAMPO_TOPE = 'topeIdentificacion';
+
+/** Campos del cuerpo y de `errors` de `/api/articulos`. */
+export const CAMPO_CODIGO_PROVEEDOR = 'codigoProveedor';
+export const CAMPO_DESCRIPCION = 'descripcion';
+export const CAMPO_PRECIO_COSTO = 'precioCosto';
+export const CAMPO_MARGEN_UTILIDAD = 'margenUtilidad';
+
+/** Lo que se graba en `POST /api/articulos`. */
+export interface DatosArticulo {
+  codigoProveedor: string;
+  descripcion: string;
+  precioCosto: number;
+  margenUtilidad: number;
+}
+
+/** Lo que devuelven `POST /api/articulos` (201) y `GET /api/articulos/{codigo}`. */
+export interface ArticuloGrabado extends DatosArticulo {
+  codigo: number;
+  precioVenta: number;
+  /** "Precio de costo negativo o cero" (FR-05), o `null`. */
+  advertencia: string | null;
+}
+
+/** El resultado de grabar un artículo: como {@link ResultadoGrabacion}, un 400 trae todos los campos inválidos. */
+export type ResultadoAlta = Resultado<ArticuloGrabado> | { tipo: 'campos'; errores: ErrorDeCampo[] };
 
 /** Los textos de la condición fiscal en el contrato de la Api. */
 export const CONDICIONES_FISCALES = ['responsable_inscripto', 'monotributo'] as const;
@@ -204,8 +232,8 @@ function primerError(cuerpo: unknown): { campo: string; mensaje: string } | unde
 }
 
 /**
- * Todos los mensajes de `errors` de un ValidationProblemDetails, el primero de cada campo, en el orden del cuerpo. Solo
- * lo usa {@link grabarConfiguracion}: la configuración informa todos los campos inválidos juntos.
+ * Todos los mensajes de `errors` de un ValidationProblemDetails, el primero de cada campo, en el orden del cuerpo. Lo
+ * usan {@link grabarConfiguracion} y {@link grabarArticulo}: esas pantallas informan todos los campos inválidos juntos.
  */
 function todosLosErrores(cuerpo: unknown): ErrorDeCampo[] {
   if (!esObjeto(cuerpo) || !esObjeto(cuerpo.errors)) {
@@ -258,6 +286,35 @@ const leerConfiguracion: Lector<ConfiguracionNegocio> = (cuerpo) =>
       }
     : undefined;
 
+/**
+ * Un importe dentro del límite del navegador (D-19): un número finito cuyo módulo no supera
+ * {@link IMPORTE_MAXIMO_SEGURO}, el mayor entero seguro / 100; uno mayor hace ilegible la respuesta. Dentro del
+ * límite los centavos son exactos solo hasta 2^46 (70.368.744.177.664); ver D-22 en
+ * `docs/ddw/specs/decisions-FEAT-002a.md`.
+ */
+const esImporte = (valor: unknown): valor is number => esNumero(valor) && Math.abs(valor) <= IMPORTE_MAXIMO_SEGURO;
+
+const leerArticulo: Lector<ArticuloGrabado> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.codigo === 'number' &&
+  Number.isSafeInteger(cuerpo.codigo) &&
+  typeof cuerpo.codigoProveedor === 'string' &&
+  typeof cuerpo.descripcion === 'string' &&
+  esImporte(cuerpo.precioCosto) &&
+  esNumero(cuerpo.margenUtilidad) &&
+  esImporte(cuerpo.precioVenta) &&
+  (cuerpo.advertencia === null || typeof cuerpo.advertencia === 'string')
+    ? {
+        codigo: cuerpo.codigo,
+        codigoProveedor: cuerpo.codigoProveedor,
+        descripcion: cuerpo.descripcion,
+        precioCosto: cuerpo.precioCosto,
+        margenUtilidad: cuerpo.margenUtilidad,
+        precioVenta: cuerpo.precioVenta,
+        advertencia: cuerpo.advertencia,
+      }
+    : undefined;
+
 export const consultarEstado = () => pedir({ metodo: 'GET', ruta: '/api/acceso/estado' }, leerEstado);
 
 export const consultarSesion = () => pedirSinDatos({ metodo: 'GET', ruta: '/api/sesion' });
@@ -304,24 +361,47 @@ export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/c
  * navegador limita cada número a 32 caracteres, así que solo un cuerpo alterado supera el límite de la Api, y no hay
  * un campo al que atribuirlo.
  */
-export async function grabarConfiguracion(datos: DatosConfiguracion): Promise<ResultadoGrabacion> {
-  const opciones: Opciones = { metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos };
+export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<ResultadoGrabacion> =>
+  grabarConCampos({ metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos }, leerConfiguracion, MENSAJE_CONFIGURACION_GRANDE);
+
+/**
+ * Graba un artículo y devuelve lo que quedó guardado, con su código y su precio de venta (FR-01, FR-11). Como
+ * {@link grabarConfiguracion}: un 400 devuelve TODOS los campos de `errors` (incluido el código duplicado, D-07) y un
+ * 413 es un mensaje general propio, porque los campos del navegador tienen largo máximo y solo un cuerpo alterado
+ * supera el límite de la Api. La Api no responde 409 en el alta.
+ */
+export const grabarArticulo = (datos: DatosArticulo): Promise<ResultadoAlta> =>
+  grabarConCampos({ metodo: 'POST', ruta: '/api/articulos', cuerpo: datos }, leerArticulo, MENSAJE_ARTICULO_GRANDE);
+
+/**
+ * Un artículo por su código. Un código que no es un entero positivo no se consulta (no puede existir); un 404 es un
+ * mensaje general.
+ */
+export const consultarArticulo = (codigo: number): Promise<Resultado<ArticuloGrabado>> =>
+  Number.isSafeInteger(codigo) && codigo > 0
+    ? pedir({ metodo: 'GET', ruta: `/api/articulos/${codigo}` }, leerArticulo)
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO });
+
+/** Un POST cuyo 400 trae todos los campos inválidos y cuyo 413 es un mensaje general propio de la pantalla. */
+async function grabarConCampos<T>(
+  opciones: Opciones,
+  leer: Lector<T>,
+  mensaje413: string,
+): Promise<Resultado<T> | { tipo: 'campos'; errores: ErrorDeCampo[] }> {
   const respuesta = await hacerPedido(opciones);
   if (!(respuesta instanceof Response)) {
     return respuesta;
   }
   if (respuesta.ok) {
-    const guardada = leerConfiguracion(await leerJson(respuesta));
-    return guardada === undefined
-      ? { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION }
-      : { tipo: 'ok', datos: guardada };
+    const guardado = leer(await leerJson(respuesta));
+    return guardado === undefined ? { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION } : { tipo: 'ok', datos: guardado };
   }
   if (respuesta.status === 400) {
     const errores = todosLosErrores(await leerJson(respuesta));
     return errores.length > 0 ? { tipo: 'campos', errores } : { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
   }
   if (respuesta.status === 413) {
-    return { tipo: 'general', mensaje: MENSAJE_CONFIGURACION_GRANDE };
+    return { tipo: 'general', mensaje: mensaje413 };
   }
   return traducirError(respuesta, undefined);
 }

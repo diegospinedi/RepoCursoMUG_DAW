@@ -10,6 +10,7 @@ using Optica.Api.Controllers;
 using Optica.Api.Errores;
 using Optica.Api.Web;
 using Optica.Application.Acceso;
+using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
 using Optica.Application.Marca;
@@ -120,6 +121,11 @@ public partial class Program
         // eventos de Windows).
         builder.Services.AddScoped<ObtenerConfiguracionNegocio>();
         builder.Services.AddScoped<GrabarConfiguracionNegocio>();
+
+        // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
+        // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01).
+        builder.Services.AddScoped<AltaArticulo>();
+        builder.Services.AddScoped<ObtenerArticulo>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

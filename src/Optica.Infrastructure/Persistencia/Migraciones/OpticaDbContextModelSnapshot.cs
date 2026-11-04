@@ -16,6 +16,51 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.ArticuloFila", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CodigoProveedor")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CodigoProveedorClave")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Descripcion")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MargenUtilidad")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("MargenCentesimos");
+
+                    b.Property<long>("PrecioCosto")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("PrecioCostoCentavos");
+
+                    b.Property<long>("PrecioVenta")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("PrecioVentaCentavos");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CodigoProveedorClave")
+                        .IsUnique();
+
+                    b.ToTable("Articulo", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Articulo_CodigoProveedor", "length(\"CodigoProveedor\") BETWEEN 1 AND 50");
+
+                            t.HasCheckConstraint("CK_Articulo_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
+
+                            t.HasCheckConstraint("CK_Articulo_Margen", "\"MargenCentesimos\" BETWEEN 0 AND 100000");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.ConfiguracionNegocioFila", b =>
                 {
                     b.Property<int>("Id")

@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IMPORTE_MAXIMO_SEGURO } from '../configuracion/reglas';
 import { json, problema, problemaGeneral, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 import {
   alPerderLaSesion,
   cambiarContrasena,
+  consultarArticulo,
   consultarConfiguracion,
   consultarEstado,
   consultarMarca,
   consultarSesion,
   definirContrasena,
+  grabarArticulo,
   grabarConfiguracion,
   ingresar,
+  MENSAJE_ARTICULO_GRANDE,
   MENSAJE_CONFIGURACION_GRANDE,
   MENSAJE_PEDIDO_RECHAZADO,
   MENSAJE_SIN_CONEXION,
@@ -329,4 +333,166 @@ describe('cliente de la Api: configuración', () => {
 
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
   });
+});
+
+describe('cliente de la Api: artículos', () => {
+  const DATOS = { codigoProveedor: 'ABC-1', descripcion: 'Armazón metálico', precioCosto: 1210, margenUtilidad: 50 };
+  const GRABADO = { codigo: 7, ...DATOS, precioVenta: 1815, advertencia: null };
+  const RECHAZADO = { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
+
+  it('grabarArticulo_201_EnviaLosCuatroYDevuelveElGrabado', async () => {
+    const servidor = servidorFalso({ 'POST /api/articulos': json(201, GRABADO) });
+
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'ok', datos: GRABADO });
+    const [pedido] = servidor.pedidosA('POST', '/api/articulos');
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual(DATOS);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarArticulo_201ConAdvertencia_LaDevuelve', async () => {
+    const conAdvertencia = { ...GRABADO, precioCosto: -100, precioVenta: -150, advertencia: 'Precio de costo negativo o cero' };
+    servidorFalso({ 'POST /api/articulos': json(201, conAdvertencia) });
+
+    expect(await grabarArticulo({ ...DATOS, precioCosto: -100 })).toEqual({ tipo: 'ok', datos: conAdvertencia });
+  });
+
+  it('grabarArticulo_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      'POST /api/articulos': json(400, {
+        status: 400,
+        title: 'One or more validation errors occurred.',
+        errors: {
+          codigoProveedor: ['Ese código ya pertenece a otro artículo.'],
+          margenUtilidad: ['El margen debe estar entre 0 y 1.000.'],
+          otro: 'no es una lista',
+          vacio: [],
+        },
+      }),
+    });
+
+    expect(await grabarArticulo(DATOS)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'codigoProveedor', mensaje: 'Ese código ya pertenece a otro artículo.' },
+        { campo: 'margenUtilidad', mensaje: 'El margen debe estar entre 0 y 1.000.' },
+      ],
+    });
+  });
+
+  it('grabarArticulo_400SinErroresLegibles_MensajeGeneral', async () => {
+    servidorFalso({
+      'POST /api/articulos': [
+        json(400, { title: 'Bad' }),
+        json(400, { errors: { descripcion: [3] } }),
+        () => new Response('x', { status: 400 }),
+      ],
+    });
+
+    expect(await grabarArticulo(DATOS)).toEqual(RECHAZADO);
+    expect(await grabarArticulo(DATOS)).toEqual(RECHAZADO);
+    expect(await grabarArticulo(DATOS)).toEqual(RECHAZADO);
+  });
+
+  it('grabarArticulo_413_MensajeGeneralPropio', async () => {
+    servidorFalso({ 'POST /api/articulos': vacia(413) });
+
+    expect(MENSAJE_ARTICULO_GRANDE).toBe('Los datos enviados son demasiado largos. Revisalos y grabá de nuevo.');
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_ARTICULO_GRANDE });
+  });
+
+  it.each([
+    [429, { tipo: 'general', mensaje: 'El sistema está ocupado. Intentá de nuevo en un momento.' }],
+    [415, RECHAZADO],
+    [500, { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION }],
+  ] as const)('grabarArticulo_%i_MensajeGeneral', async (estado, esperado) => {
+    servidorFalso({ 'POST /api/articulos': vacia(estado) });
+
+    expect(await grabarArticulo(DATOS)).toEqual(esperado);
+  });
+
+  it('grabarArticulo_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ 'POST /api/articulos': vacia(401) });
+
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('grabarArticulo_SinRed_MensajeGeneral', async () => {
+    servidorFalso({ 'POST /api/articulos': sinRed });
+
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it.each([
+    ['código que no es entero', { ...GRABADO, codigo: 7.5 }],
+    ['código de texto', { ...GRABADO, codigo: '7' }],
+    ['descripción ausente', { ...GRABADO, descripcion: undefined }],
+    ['código en el proveedor que no es texto', { ...GRABADO, codigoProveedor: 1 }],
+    ['precio de venta de texto', { ...GRABADO, precioVenta: '1815' }],
+    ['costo ausente', { ...GRABADO, precioCosto: undefined }],
+    ['margen ausente', { ...GRABADO, margenUtilidad: undefined }],
+    ['advertencia que no es texto', { ...GRABADO, advertencia: 1 }],
+    ['advertencia ausente', { ...GRABADO, advertencia: undefined }],
+    ['cuerpo que no es objeto', 'texto'],
+    // D-19: un importe fuera del rango que un `number` guarda con los centavos exactos es una respuesta ilegible.
+    ['precio de venta sobre el máximo seguro', { ...GRABADO, precioVenta: 90071992547410 }],
+    ['precio de venta bajo el mínimo seguro', { ...GRABADO, precioVenta: -90071992547410 }],
+    ['costo sobre el máximo seguro', { ...GRABADO, precioCosto: 90071992547410 }],
+    ['costo bajo el mínimo seguro', { ...GRABADO, precioCosto: -90071992547410 }],
+  ])('grabarArticulo_201Con%s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ 'POST /api/articulos': json(201, cuerpo) });
+
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('grabarArticulo_201ConImportesEnElMaximoSeguro_LosDevuelve', async () => {
+    const enElLimite = {
+      ...GRABADO,
+      precioCosto: -IMPORTE_MAXIMO_SEGURO,
+      precioVenta: IMPORTE_MAXIMO_SEGURO,
+    };
+    servidorFalso({ 'POST /api/articulos': json(201, enElLimite) });
+
+    expect(await grabarArticulo(DATOS)).toEqual({ tipo: 'ok', datos: enElLimite });
+  });
+
+  it('consultarArticulo_PrecioDeVentaSobreElMaximoSeguro_ErrorGeneral', async () => {
+    servidorFalso({ 'GET /api/articulos/7': json(200, { ...GRABADO, precioVenta: 1e20 }) });
+
+    expect(await consultarArticulo(7)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('consultarArticulo_200_DevuelveElArticulo', async () => {
+    const servidor = servidorFalso({ 'GET /api/articulos/7': json(200, GRABADO) });
+
+    expect(await consultarArticulo(7)).toEqual({ tipo: 'ok', datos: GRABADO });
+    const [pedido] = servidor.pedidosA('GET', '/api/articulos/7');
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it('consultarArticulo_404_MensajeGeneral', async () => {
+    servidorFalso({ 'GET /api/articulos/8': vacia(404) });
+
+    expect(await consultarArticulo(8)).toEqual(RECHAZADO);
+  });
+
+  it('consultarArticulo_401_SinSesion', async () => {
+    servidorFalso({ 'GET /api/articulos/7': vacia(401) });
+
+    expect(await consultarArticulo(7)).toEqual({ tipo: 'sinSesion' });
+  });
+
+  it.each([Number.NaN, 1.5, -1, Number.MAX_SAFE_INTEGER + 1])(
+    'consultarArticulo_CodigoInvalido_%d_NoConsulta',
+    async (codigo) => {
+      const servidor = servidorFalso({});
+
+      expect(await consultarArticulo(codigo)).toEqual(RECHAZADO);
+      expect(servidor.llamadas).toEqual([]);
+    },
+  );
 });

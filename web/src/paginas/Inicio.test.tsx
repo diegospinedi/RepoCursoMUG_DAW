@@ -100,6 +100,18 @@ describe('Inicio', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/configuracion');
   });
 
+  it('Inicio_EnlaceNuevoArticulo', async () => {
+    servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Nuevo artículo' });
+    expect(enlace.getAttribute('href')).toBe('/articulos/nuevo');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Nuevo artículo' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos/nuevo');
+  });
+
   it.each([
     ['sin mensaje', { otro: 'La contraseña se cambió.' }],
     ['mensaje que no es texto', { mensaje: 42 }],

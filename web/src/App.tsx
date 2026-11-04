@@ -7,6 +7,7 @@ import { CambiarContrasena } from './paginas/CambiarContrasena';
 import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
 import { Ingreso } from './paginas/Ingreso';
+import { NuevoArticulo } from './paginas/NuevoArticulo';
 import { Arranque } from './rutas/Arranque';
 
 /**
@@ -33,6 +34,7 @@ export function App() {
             <Route path="/ingreso" element={<Ingreso />} />
             <Route path="/cambiar-contrasena" element={<CambiarContrasena />} />
             <Route path="/configuracion" element={<Configuracion />} />
+            <Route path="/articulos/nuevo" element={<NuevoArticulo />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

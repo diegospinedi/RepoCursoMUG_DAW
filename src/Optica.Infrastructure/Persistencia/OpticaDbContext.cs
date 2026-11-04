@@ -27,6 +27,8 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
     public DbSet<EventoAccesoFila> EventosAcceso => Set<EventoAccesoFila>();
 
+    public DbSet<ArticuloFila> Articulos => Set<ArticuloFila>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<CredencialAccesoFila>(credencial =>
@@ -83,6 +85,37 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             configuracion.Property(c => c.TopeIdentificacion)
                 .HasColumnName("TopeIdentificacionCentavos").HasConversion(Centesimos);
         });
+
+        modelBuilder.Entity<ArticuloFila>(articulo =>
+        {
+            // Importes y margen en centésimos (ADR-008); los CHECK son la segunda barrera detrás de PoliticaArticulo. La
+            // clave no lleva CHECK de largo: la normalización NFC y las mayúsculas pueden alargarla. Sin columna de
+            // activo: llega con FEAT-002b (D-08).
+            articulo.ToTable("Articulo", tabla =>
+            {
+                tabla.HasCheckConstraint(
+                    "CK_Articulo_CodigoProveedor", "length(\"CodigoProveedor\") BETWEEN 1 AND 50");
+                tabla.HasCheckConstraint("CK_Articulo_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
+                tabla.HasCheckConstraint("CK_Articulo_Margen", "\"MargenCentesimos\" BETWEEN 0 AND 100000");
+            });
+            articulo.HasKey(a => a.Id);
+
+            // INTEGER PRIMARY KEY AUTOINCREMENT: un código usado no se reutiliza.
+            articulo.Property(a => a.Id).ValueGeneratedOnAdd();
+            articulo.Property(a => a.CodigoProveedor).IsRequired();
+            articulo.Property(a => a.CodigoProveedorClave).IsRequired();
+            articulo.Property(a => a.Descripcion).IsRequired();
+            articulo.Property(a => a.PrecioCosto)
+                .HasColumnName("PrecioCostoCentavos").IsRequired().HasConversion(Centesimos);
+            articulo.Property(a => a.MargenUtilidad)
+                .HasColumnName("MargenCentesimos").IsRequired().HasConversion(Centesimos);
+            articulo.Property(a => a.PrecioVenta)
+                .HasColumnName("PrecioVentaCentavos").IsRequired().HasConversion(Centesimos);
+
+            // Unicidad del código en el proveedor sobre la clave normalizada por el dominio (ADR-009). Es la única
+            // restricción única de la tabla: un conflicto al confirmar el alta solo puede venir de acá (D-07).
+            articulo.HasIndex(a => a.CodigoProveedorClave).IsUnique();
+        });
     }
 
     /// <exception cref="ArgumentException">El valor tiene más de 2 decimales. El mensaje no incluye el valor.</exception>
@@ -136,6 +169,33 @@ public sealed class ConfiguracionNegocioFila
 
     /// <summary>Importe, o null mientras no se cargue (D-02); columna <c>TopeIdentificacionCentavos</c>.</summary>
     public decimal? TopeIdentificacion { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>Articulo</c>. Los importes y el margen se ven como <c>decimal</c> y se guardan en centésimos
+/// enteros (ADR-008); la clave es <see cref="Optica.Domain.Catalogo.NormalizacionCodigo.Clave"/> del código (ADR-009).
+/// </summary>
+public sealed class ArticuloFila
+{
+    /// <summary>El código autonumérico del artículo.</summary>
+    public long Id { get; set; }
+
+    /// <summary>El código en el proveedor recortado, tal como se escribió.</summary>
+    public string CodigoProveedor { get; set; } = string.Empty;
+
+    /// <summary>La clave normalizada del código en el proveedor, con índice UNIQUE.</summary>
+    public string CodigoProveedorClave { get; set; } = string.Empty;
+
+    public string Descripcion { get; set; } = string.Empty;
+
+    /// <summary>Importe; columna <c>PrecioCostoCentavos</c>.</summary>
+    public decimal PrecioCosto { get; set; }
+
+    /// <summary>Porcentaje; columna <c>MargenCentesimos</c>.</summary>
+    public decimal MargenUtilidad { get; set; }
+
+    /// <summary>Importe ya redondeado al múltiplo; columna <c>PrecioVentaCentavos</c>.</summary>
+    public decimal PrecioVenta { get; set; }
 }
 
 /// <summary>

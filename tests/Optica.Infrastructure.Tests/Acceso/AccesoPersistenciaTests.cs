@@ -384,7 +384,7 @@ public class AccesoPersistenciaTests
         // Las migraciones del ensamblado, en orden, y todas aplicadas.
         var migraciones = contexto.Database.GetMigrations().ToList();
         Assert.Equal(
-            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio"],
+            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo"],
             migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
         Assert.Equal("20261030220627_Inicial", migraciones[0]);
@@ -402,21 +402,36 @@ public class AccesoPersistenciaTests
         Assert.Contains("ConfiguracionNegocio", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM ConfiguracionNegocio"));
 
-        // Revertir hasta Inicial elimina el índice y la tabla de configuración: los datos de los eventos y el índice
-        // de FechaHora quedan.
+        // La tabla del catálogo existe, vacía, con su índice único.
+        Assert.Contains("Articulo", Tablas(cadena));
+        Assert.Empty(Filas(cadena, "SELECT Id FROM Articulo"));
+        AfirmarIndiceClaveArticulo(cadena);
+
+        // Revertir hasta Inicial elimina el índice, la tabla de configuración y la del catálogo: los datos de los
+        // eventos y el índice de FechaHora quedan.
         migrador.Migrate(migraciones[0]);
         Assert.DoesNotContain("IX_EventoAcceso_Tipo_Resultado", Indices(cadena));
         Assert.Contains("IX_EventoAcceso_FechaHora", Indices(cadena));
         Assert.DoesNotContain("ConfiguracionNegocio", Tablas(cadena));
+        Assert.DoesNotContain("Articulo", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM EventoAcceso"));
         Assert.Equal([migraciones[0]], contexto.Database.GetAppliedMigrations());
 
-        // Y volver a aplicarlas recrea el índice, y la tabla con su fila inicial.
+        // Y volver a aplicarlas recrea el índice, la tabla de configuración con su fila inicial y la del catálogo.
         migrador.Migrate();
         AfirmarIndiceTipoResultado(cadena);
         Assert.Contains("ConfiguracionNegocio", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM ConfiguracionNegocio"));
+        Assert.Contains("Articulo", Tablas(cadena));
+        AfirmarIndiceClaveArticulo(cadena);
         Assert.Empty(contexto.Database.GetPendingMigrations());
+    }
+
+    private static void AfirmarIndiceClaveArticulo(string cadena)
+    {
+        var indice = Assert.Single(Filas(cadena,
+            "SELECT \"unique\" FROM pragma_index_list('Articulo') WHERE name = 'IX_Articulo_CodigoProveedorClave'"));
+        Assert.Equal("1", indice[0]);
     }
 
     [Fact]

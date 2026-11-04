@@ -52,6 +52,9 @@ export function Inicio() {
       <p>
         <Link to="/configuracion">Configuración</Link>
       </p>
+      <p>
+        <Link to="/articulos/nuevo">Nuevo artículo</Link>
+      </p>
       <button type="button" onClick={alSalir} disabled={saliendo}>
         Salir
       </button>

@@ -31,12 +31,19 @@ public sealed class ProteccionTests
         // Si la enumeración no encontrara las rutas protegidas conocidas, la prueba no estaría probando nada.
         Assert.Contains((HttpMethods.Get, "/api/sesion"), endpoints);
         Assert.Contains((HttpMethods.Post, "/api/acceso/salir"), endpoints);
+        // Los artículos traen costos y márgenes (R-01): la ruta con parámetro también se pide, no se excluye.
+        Assert.Contains((HttpMethods.Post, "/api/articulos"), endpoints);
+        Assert.Contains((HttpMethods.Get, "/api/articulos/{codigo:long}"), endpoints);
 
         var protegidos = endpoints.Where(e => !RutasAnonimas.Contiene(e.Metodo, e.Ruta)).ToList();
         Assert.NotEmpty(protegidos);
-        foreach (var (metodo, ruta) in protegidos)
+        var pedidas = new List<string>();
+        foreach (var (metodo, patron) in protegidos)
         {
+            // Cada parámetro de ruta se pide con un valor de ejemplo que cumple cualquier restricción en uso.
+            var ruta = ConValoresDeEjemplo(patron);
             Assert.DoesNotContain('{', ruta);
+            pedidas.Add($"{metodo} {ruta}");
             var contenido = metodo == HttpMethods.Get
                 ? null
                 : new StringContent("{}", Encoding.UTF8, "application/json");
@@ -48,6 +55,58 @@ public sealed class ProteccionTests
             Assert.Null(respuesta.Headers.Location);
             Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
         }
+
+        Assert.Contains("GET /api/articulos/1", pedidas);
+    }
+
+    /// <summary>Restricciones de ruta que el valor de ejemplo <c>1</c> cumple siempre.</summary>
+    private static readonly HashSet<string> RestriccionesQueUnoCumple = new(["int", "long"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// La ruta con cada parámetro cambiado por <c>1</c>. Solo vale para parámetros sin restricción (<c>{id}</c>) o con
+    /// <c>:int</c> o <c>:long</c>. Cualquier otra restricción (<c>:guid</c>, <c>:alpha</c>, <c>:length</c>,
+    /// <c>:regex</c>, <c>:min</c>…) hace fallar la prueba con un mensaje explícito: con un valor que no la cumple, el
+    /// pedido no llegaría al endpoint y el 401 se daría igual en una ruta inexistente, así que la ruta no quedaría
+    /// probada. Sin parámetros, la ruta tal cual.
+    /// </summary>
+    internal static string ConValoresDeEjemplo(string patron) =>
+        System.Text.RegularExpressions.Regex.Replace(patron, "\\{([^}]*)\\}", parametro =>
+        {
+            var partes = parametro.Groups[1].Value.Split(':');
+            foreach (var restriccion in partes.Skip(1))
+            {
+                var nombre = restriccion.Split('(')[0].TrimEnd('?');
+                if (!RestriccionesQueUnoCumple.Contains(nombre))
+                {
+                    Assert.Fail(
+                        $"La ruta {patron} tiene el parámetro {{{parametro.Groups[1].Value}}} con la restricción " +
+                        $"'{nombre}', que el valor de ejemplo 1 puede no cumplir: agregá un valor de ejemplo para ella.");
+                }
+            }
+
+            return "1";
+        });
+
+    [Fact]
+    public void ConValoresDeEjemplo_CambiaCadaParametroPorUno()
+    {
+        Assert.Equal("/api/articulos/1", ConValoresDeEjemplo("/api/articulos/{codigo:long}"));
+        Assert.Equal("/api/a/1/b/1", ConValoresDeEjemplo("/api/a/{x}/b/{y:int}"));
+        Assert.Equal("/api/sesion", ConValoresDeEjemplo("/api/sesion"));
+    }
+
+    [Theory]
+    [InlineData("/api/a/{id:guid}", "guid")]
+    [InlineData("/api/a/{nombre:alpha}", "alpha")]
+    [InlineData("/api/a/{x:length(6)}", "length")]
+    [InlineData("/api/a/{x:regex(^z+$)}", "regex")]
+    [InlineData("/api/a/{x:int:min(5)}", "min")]
+    public void ConValoresDeEjemplo_RestriccionQueUnoNoCumple_FallaConMensaje(string patron, string restriccion)
+    {
+        var error = Assert.Throws<Xunit.Sdk.FailException>(() => ConValoresDeEjemplo(patron));
+
+        Assert.Contains(patron, error.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{restriccion}'", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
