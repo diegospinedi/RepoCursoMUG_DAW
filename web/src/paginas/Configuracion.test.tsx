@@ -175,6 +175,10 @@ describe('Configuracion', () => {
     await rechazadoJuntoAlCampo(ETIQUETA_ALICUOTA, '101', 'La alícuota de IVA debe estar entre 0 y 100.');
   });
 
+  it('Configuracion_AlicuotaMenos1_RechazadoJuntoAlCampo', async () => {
+    await rechazadoJuntoAlCampo(ETIQUETA_ALICUOTA, '-1', 'La alícuota de IVA debe estar entre 0 y 100.');
+  });
+
   it('Configuracion_Multiplo0coma001_RechazadoJuntoAlCampo', async () => {
     await rechazadoJuntoAlCampo(ETIQUETA_MULTIPLO, '0,001', 'El valor mínimo es 0,01.');
   });

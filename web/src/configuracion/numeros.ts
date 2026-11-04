@@ -1,15 +1,16 @@
 /**
  * Lectura y presentación de los números de la configuración con coma decimal, como los escribe la operadora.
  *
- * Se acepta un número sin signo con una coma o un punto decimal ("10,5" o "10.5"), sin separador de miles ni signo:
- * "1.000,5", "+3" y "-3" no son números. Los decimales se cuentan en el texto, no en el `number`: así 21,500 tiene 1
+ * Se acepta un número con una coma o un punto decimal ("10,5" o "10.5"), sin separador de miles ni signo más:
+ * "1.000,5" y "+3" no son números. Un "-" inicial pegado a los dígitos sí se lee ("-1", "-0,5"): así las reglas del
+ * dominio informan el rango del campo en lugar de "no es un número" (AC-03). Los decimales se cuentan en el texto, no en el `number`: así 21,500 tiene 1
  * decimal y 0,001 tiene 3, sin los errores de redondeo del punto flotante.
  */
 
 /** El resultado de leer un texto: un número con sus decimales significativos, sin valor (vacío) o inválido. */
 export type LecturaDecimal = { tipo: 'numero'; valor: number; decimales: number } | { tipo: 'vacio' } | { tipo: 'invalido' };
 
-const FORMATO = /^(\d+)(?:[.,](\d+))?$/;
+const FORMATO = /^(-?\d+)(?:[.,](\d+))?$/;
 
 export function leerDecimal(texto: string): LecturaDecimal {
   const limpio = texto.trim();

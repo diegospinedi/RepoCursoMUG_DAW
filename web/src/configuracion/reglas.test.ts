@@ -105,6 +105,12 @@ describe('reglas de la configuración', () => {
     expect(errorDe({ topeIdentificacion: '90071992547409,91' }, 'topeIdentificacion')).toBeUndefined();
   });
 
+  it('reglas_Negativos_MensajeDeLaReglaDelCampo', () => {
+    expect(errorDe({ alicuotaIva: '-1' }, 'alicuotaIva')).toBe(MENSAJE_ALICUOTA_FUERA_DE_RANGO);
+    expect(errorDe({ multiploRedondeo: '-1' }, 'multiploRedondeo')).toBe(MENSAJE_MULTIPLO_MINIMO);
+    expect(errorDe({ topeIdentificacion: '-1' }, 'topeIdentificacion')).toBe(MENSAJE_TOPE_NO_POSITIVO);
+  });
+
   it('reglas_VariosCamposInvalidos_UnErrorPorCampo', () => {
     expect(con({ alicuotaIva: '101', multiploRedondeo: '0,001', topeIdentificacion: '0' })).toEqual({
       tipo: 'errores',

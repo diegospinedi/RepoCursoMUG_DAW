@@ -38,7 +38,18 @@ describe('leerDecimal', () => {
     expect(leerDecimal('+3')).toEqual({ tipo: 'invalido' });
   });
 
-  it.each(['-3', '1,2,3', '1.000.000', '10,', ',5', '1e3', '0x10', '1 000', '12a', 'Infinity', 'NaN'])(
+  it('leerDecimal_Negativos_Validos', () => {
+    // El signo menos se lee: así las reglas del dominio informan el rango ("-1" no es "no es un número").
+    expect(leerDecimal('-1')).toEqual({ tipo: 'numero', valor: -1, decimales: 0 });
+    expect(leerDecimal('-0,5')).toEqual({ tipo: 'numero', valor: -0.5, decimales: 1 });
+    expect(leerDecimal('-0.015')).toEqual({ tipo: 'numero', valor: -0.015, decimales: 3 });
+  });
+
+  it.each(['-', '--1', '- 1', '+1', '-+1', '1-', '-,5'])('leerDecimal_SignoMal_%s_Invalido', (texto) => {
+    expect(leerDecimal(texto)).toEqual({ tipo: 'invalido' });
+  });
+
+  it.each(['1,2,3', '1.000.000', '10,', ',5', '1e3', '0x10', '1 000', '12a', 'Infinity', 'NaN'])(
     'leerDecimal_%s_Invalido',
     (texto) => {
       expect(leerDecimal(texto)).toEqual({ tipo: 'invalido' });
