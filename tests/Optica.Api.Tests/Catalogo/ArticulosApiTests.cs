@@ -958,9 +958,21 @@ public sealed class ArticulosApiTests
     /// La unidad de trabajo real, precedida una vez por otra escritura confirmada sobre el mismo artículo (incrementa su
     /// versión desde otro alcance), como otra pestaña que graba entre la lectura y la grabación (D-16).
     /// </summary>
+    /// <remarks>
+    /// La escritura cruzada abre otra conexión que escribe: dentro de <see cref="EjecutarEnTransaccionAsync"/> esperaría
+    /// la transacción de la propia operación hasta agotar el tiempo de espera. Por eso, con un cruce pendiente, recibir
+    /// una operación lanza en lugar de bloquearse (D-19 de FEAT-002c).
+    /// </remarks>
     private sealed class UnidadQueSeCruza(IUnidadDeTrabajo interna, IServiceScopeFactory alcances, Cruce cruce)
         : IUnidadDeTrabajo
     {
+        public Task<T> EjecutarEnTransaccionAsync<T>(
+            Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default) =>
+            cruce.Articulo is not null
+                ? throw new InvalidOperationException(
+                    "La escritura cruzada no puede correr dentro de una operación en transacción: se bloquearía.")
+                : interna.EjecutarEnTransaccionAsync(operacion, cancelacion);
+
         public async Task ConfirmarAsync(CancellationToken cancelacion = default)
         {
             if (cruce.Articulo is { } codigo)
@@ -999,6 +1011,11 @@ public sealed class ArticulosApiTests
         public void Actualizar(Articulo articulo, long versionLeida) => throw Falla();
 
         public void CambiarEstado(long codigo, bool activo) => throw Falla();
+
+        public Task<IReadOnlyList<Articulo>> ListarParaRecalculoAsync(CancellationToken cancelacion = default) =>
+            throw Falla();
+
+        public void RegistrarPrecioRecalculado(Articulo articulo) => throw Falla();
     }
 
     private static string Cuerpo(string? codigoProveedor, string? descripcion, decimal? precioCosto, decimal? margenUtilidad) =>

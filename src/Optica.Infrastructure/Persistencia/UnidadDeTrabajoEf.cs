@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Optica.Application.Comun;
 
 namespace Optica.Infrastructure.Persistencia;
@@ -24,10 +25,86 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
     /// </summary>
     private const string RestriccionCredencialUnica = "CK_CredencialAcceso_Id";
 
+    private const string MensajeAnidada = "La operación en transacción no se anida.";
+
+    private const string MensajeCambiosSinConfirmar =
+        "La operación en transacción terminó con cambios registrados sin confirmar.";
+
+    /// <summary>
+    /// Abre la transacción con <c>BeginTransactionAsync</c>, que en Microsoft.Data.Sqlite emite <c>BEGIN IMMEDIATE</c>:
+    /// toma la escritura antes de la primera lectura de la operación (ADR-013). Si la operación termina sin cambios
+    /// pendientes en el contexto, confirma. Si lanza, si deja cambios registrados sin confirmar o si falla el commit,
+    /// revierte explícitamente (sin el token de la operación), descarta lo pendiente del contexto y propaga la excepción
+    /// original sin envolver, aunque la reversión falle.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// El contexto ya tiene una transacción en curso (la operación no se anida, D-19), o la operación terminó con cambios
+    /// registrados sin confirmar. Los mensajes son fijos y no llevan valores.
+    /// </exception>
+    public async Task<T> EjecutarEnTransaccionAsync<T>(
+        Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(operacion);
+        if (contexto.Database.CurrentTransaction is not null)
+        {
+            throw new InvalidOperationException(MensajeAnidada);
+        }
+
+        await using var transaccion = await contexto.Database.BeginTransactionAsync(cancelacion);
+        try
+        {
+            var resultado = await operacion(cancelacion);
+
+            // Lo registrado y no confirmado se perdería en silencio al confirmar: es un error de programación.
+            if (contexto.ChangeTracker.HasChanges())
+            {
+                throw new InvalidOperationException(MensajeCambiosSinConfirmar);
+            }
+
+            await transaccion.CommitAsync(cancelacion);
+            return resultado;
+        }
+        catch
+        {
+            await RevertirSinReemplazarLaFallaAsync(transaccion);
+            contexto.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Revierte explícitamente, sin el token de la operación: un pedido cancelado no debe impedir la reversión. Si la
+    /// reversión falla, la falla se descarta para no reemplazar la excepción original; la transacción igual se revierte al
+    /// descartarse sin confirmar, y EF Core deja constancia del error en su log de transacciones.
+    /// </summary>
+    private static async Task RevertirSinReemplazarLaFallaAsync(IDbContextTransaction transaccion)
+    {
+        try
+        {
+            await transaccion.RollbackAsync(CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            // Intencional: la excepción que importa es la de la operación, que el llamador relanza.
+        }
+    }
+
+    /// <summary>
+    /// Fuera de una operación, graba en su propia transacción y la confirma. Dentro de
+    /// <see cref="EjecutarEnTransaccionAsync"/> reutiliza <c>Database.CurrentTransaction</c> y solo llama a
+    /// <c>SaveChanges</c>, que graba bajo un savepoint automático de EF Core: si falla, vuelve a ese savepoint y la
+    /// transacción de la operación sigue abierta (D-18 de FEAT-002c).
+    /// </summary>
     public async Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         try
         {
+            if (contexto.Database.CurrentTransaction is not null)
+            {
+                await contexto.SaveChangesAsync(cancelacion);
+                return;
+            }
+
             await using var transaccion = await contexto.Database.BeginTransactionAsync(cancelacion);
             await contexto.SaveChangesAsync(cancelacion);
             await transaccion.CommitAsync(cancelacion);

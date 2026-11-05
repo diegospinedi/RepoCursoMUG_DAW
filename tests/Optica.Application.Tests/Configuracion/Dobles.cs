@@ -16,6 +16,7 @@ internal sealed class ConfiguracionEnMemoria : IConfiguracionNegocioRepository, 
         new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
 
     private ConfiguracionNegocio? _pendiente;
+    private bool _enOperacion;
 
     public ConfiguracionNegocio? Guardada { get; set; } = Inicial();
 
@@ -46,6 +47,38 @@ internal sealed class ConfiguracionEnMemoria : IConfiguracionNegocioRepository, 
 
         Reemplazos++;
         _pendiente = nueva;
+    }
+
+    /// <summary>
+    /// Ejecuta la operación; si lanza, lo guardado vuelve a como estaba al entrar y lo pendiente se descarta, como la
+    /// transacción real que se revierte (ADR-013). Como la real, rechaza el anidamiento con
+    /// <see cref="InvalidOperationException"/> (D-19).
+    /// </summary>
+    public async Task<T> EjecutarEnTransaccionAsync<T>(
+        Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(operacion);
+        if (_enOperacion)
+        {
+            throw new InvalidOperationException("La operación en transacción no se anida.");
+        }
+
+        var guardadaAlEntrar = Guardada;
+        _enOperacion = true;
+        try
+        {
+            return await operacion(cancelacion);
+        }
+        catch
+        {
+            Guardada = guardadaAlEntrar;
+            _pendiente = null;
+            throw;
+        }
+        finally
+        {
+            _enOperacion = false;
+        }
     }
 
     public Task ConfirmarAsync(CancellationToken cancelacion = default)

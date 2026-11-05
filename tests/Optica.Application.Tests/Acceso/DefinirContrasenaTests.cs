@@ -105,6 +105,9 @@ public class DefinirContrasenaTests
 
     private sealed class UnidadQueChoca : IUnidadDeTrabajo
     {
+        public Task<T> EjecutarEnTransaccionAsync<T>(
+            Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default) => operacion(cancelacion);
+
         public Task ConfirmarAsync(CancellationToken cancelacion = default) =>
             throw new ConflictoAlConfirmarException("duplicada", MotivoConflicto.Unicidad);
     }
