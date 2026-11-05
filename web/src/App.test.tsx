@@ -33,6 +33,20 @@ describe('App', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/cambiar-contrasena');
     expect(screen.getByRole('img', { name: 'Logo de la óptica' }).getAttribute('src')).toBe('/api/marca/logo');
   });
+
+  it.each([
+    ['/articulos', 'Artículos'],
+    ['/articulos/7', 'Editar artículo'],
+    // La ruta del alta sigue siendo el alta, no la edición de un artículo con código "nuevo".
+    ['/articulos/nuevo', 'Nuevo artículo'],
+  ])('App_Ruta%s_MuestraSuPantalla', async (ruta, titulo) => {
+    servidorFalso({ 'GET /api/sesion': vacia(204) });
+
+    renderizarApp(ruta);
+
+    expect(await screen.findByRole('heading', { name: titulo })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe(ruta);
+  });
 });
 
 /**
@@ -81,6 +95,8 @@ function rutasDeLaApp(): string[] {
 
 interface Pantalla {
   ruta: string;
+  /** La dirección que se abre, para una ruta con parámetros (`/articulos/:codigo`); por defecto, `ruta`. */
+  url?: string;
   descripcion: string;
   preparar: () => void;
   titulo: string;
@@ -183,6 +199,8 @@ const PANTALLAS: Pantalla[] = [
           margenUtilidad: 50,
           precioVenta: -150,
           advertencia: 'Precio de costo negativo o cero',
+          activo: true,
+          version: 0,
         }),
       }),
     titulo: 'Nuevo artículo',
@@ -193,6 +211,48 @@ const PANTALLAS: Pantalla[] = [
       fireEvent.change(screen.getByLabelText('Margen de utilidad (%)'), { target: { value: '50' } });
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
       expect(await screen.findByText('Artículo grabado con el código 1.')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/articulos',
+    descripcion: 'listado de artículos',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/articulos?pagina=1': json(200, {
+          articulos: [
+            { codigo: 1, codigoProveedor: 'ABC-1', descripcion: 'Armazón metálico', precioVenta: 1815, activo: true },
+          ],
+          pagina: 1,
+          tamanoPagina: 50,
+          total: 1,
+        }),
+      }),
+    titulo: 'Artículos',
+    interactuar: async () => {
+      expect(await screen.findByText('Armazón metálico')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/articulos/:codigo',
+    url: '/articulos/1',
+    descripcion: 'edición de un artículo inactivo',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/articulos/1': json(200, {
+          codigo: 1,
+          codigoProveedor: 'ABC-1',
+          descripcion: 'Armazón metálico',
+          precioCosto: 1210,
+          margenUtilidad: 50,
+          precioVenta: 1815,
+          advertencia: null,
+          activo: false,
+          version: 2,
+        }),
+      }),
+    titulo: 'Editar artículo',
+    interactuar: async () => {
+      expect(await screen.findByText('Este artículo está inactivo. Reactivalo para editarlo.')).toBeTruthy();
     },
   },
 ];
@@ -209,11 +269,8 @@ describe('Sin datos de ARCA en pantalla', () => {
 
     for (const pantalla of PANTALLAS) {
       pantalla.preparar();
-      renderizarApp(
-        pantalla.estadoNavegacion === undefined
-          ? pantalla.ruta
-          : { pathname: pantalla.ruta, state: pantalla.estadoNavegacion },
-      );
+      const url = pantalla.url ?? pantalla.ruta;
+      renderizarApp(pantalla.estadoNavegacion === undefined ? url : { pathname: url, state: pantalla.estadoNavegacion });
       expect(await screen.findByRole('heading', { name: pantalla.titulo })).toBeTruthy();
       await pantalla.interactuar?.();
 

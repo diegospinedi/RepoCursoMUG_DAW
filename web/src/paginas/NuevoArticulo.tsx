@@ -12,14 +12,12 @@ import {
 import {
   LARGO_MAXIMO_CODIGO,
   LARGO_MAXIMO_DESCRIPCION,
+  LARGO_MAXIMO_NUMERO,
   validarArticulo,
   type ErroresArticulo,
   type TextosArticulo,
 } from '../catalogo/reglas';
 import { mostrarImporte } from '../configuracion/numeros';
-
-/** Largo máximo de cada número escrito: alcanza para cualquier importe válido y limita el cuerpo enviado. */
-const LARGO_MAXIMO_NUMERO = 32;
 
 const VACIOS: TextosArticulo = { codigoProveedor: '', descripcion: '', precioCosto: '', margenUtilidad: '' };
 

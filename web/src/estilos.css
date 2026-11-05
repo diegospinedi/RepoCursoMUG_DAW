@@ -94,3 +94,49 @@ button:disabled {
 a {
   color: var(--color-primario);
 }
+
+/* Pantallas con tablas (el listado de artículos): el marco se ensancha solo cuando las contiene. */
+.marco:has(.pantalla--ancha) {
+  max-width: 64rem;
+}
+
+.tabla-contenedor {
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.tabla {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tabla caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+}
+
+.tabla th,
+.tabla td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #d0d0d0;
+  white-space: nowrap;
+}
+
+.tabla th.tabla__importe,
+.tabla td.tabla__importe {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabla td button {
+  padding: 0.25rem 0.75rem;
+}
+
+.paginacion {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}

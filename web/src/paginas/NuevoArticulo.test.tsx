@@ -36,6 +36,8 @@ const GRABADO = {
   margenUtilidad: 50,
   precioVenta: 1815,
   advertencia: null,
+  activo: true,
+  version: 0,
 };
 
 const conSesion = { 'GET /api/sesion': vacia(204) };
