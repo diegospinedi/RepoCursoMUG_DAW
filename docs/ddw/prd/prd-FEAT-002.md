@@ -12,8 +12,8 @@
 | Sub-ticket | Title | PRD | ACs | Dependencies | Status |
 |---|---|---|---|---|---|
 | FEAT-002a | Alta de artículos con precio de venta calculado | prd-FEAT-002a.md | AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-10, AC-11, AC-12 | none | done (merged into master, PR #5) |
-| FEAT-002b | Búsqueda, edición y baja de artículos | prd-FEAT-002b.md | AC-13, AC-14, AC-15, AC-19, AC-20, AC-21 | depends on a | active |
-| FEAT-002c | Recálculo del catálogo por configuración y volumen | prd-FEAT-002c.md | AC-09, AC-16, AC-17, AC-18, AC-22 | depends on a and b | pending |
+| FEAT-002b | Búsqueda, edición y baja de artículos | prd-FEAT-002b.md | AC-13, AC-14, AC-15, AC-19, AC-20, AC-21 | depends on a | done (merged into master, PR #6) |
+| FEAT-002c | Recálculo del catálogo por configuración y volumen | prd-FEAT-002c.md | AC-09, AC-16, AC-17, AC-18, AC-22 | depends on a and b | active |
 
 AC-01 a AC-22 vienen de `prd-DISC-001-02.md` (PRD 02 de DISC-001), sin criterios agregados en DEFINE.
 
