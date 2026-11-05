@@ -305,6 +305,103 @@ public class ArticuloTests
         Assert.Equal(inactivo.Version, reactivado.Version);
     }
 
+    [Fact]
+    public void ConPrecioRecalculado_PrecioFueraDeRango_Rechazado()
+    {
+        // FEAT-002c, Block 1: un precio inválido con la configuración nueva es FueraDeRango, nunca un desborde.
+        var articulo = new Articulo(
+            9L, "MAX-1", "Lente", ReglasImporte.ImporteMaximo, 0m, ReglasImporte.ImporteMaximo, activo: true, version: 1L);
+
+        var resultado = articulo.ConPrecioRecalculado(ResponsableInscripto(multiplo: 50m));
+
+        Assert.Same(ResultadoRecalculo.FueraDeRango, resultado);
+        Assert.True(resultado.EsFueraDeRango);
+        Assert.False(resultado.EsCambiado);
+        Assert.False(resultado.EsSinCambio);
+        Assert.Null(resultado.Articulo);
+    }
+
+    [Fact]
+    public void ConPrecioRecalculado_Multiplo50_1815A1850()
+    {
+        // AC-02 de FEAT-002c: costo 1210 y margen 50 pasan de 1815 a 1850 con múltiplo 50, sin editar el artículo.
+        var original = Guardado();
+
+        var resultado = original.ConPrecioRecalculado(ResponsableInscripto(multiplo: 50m));
+
+        Assert.True(resultado.EsCambiado);
+        Assert.False(resultado.EsSinCambio);
+        Assert.False(resultado.EsFueraDeRango);
+        Assert.Equal(1850m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(original.Codigo, resultado.Articulo.Codigo);
+        Assert.Equal(original.CodigoProveedor, resultado.Articulo.CodigoProveedor);
+        Assert.Equal(original.CodigoProveedorClave, resultado.Articulo.CodigoProveedorClave);
+        Assert.Equal(original.Descripcion, resultado.Articulo.Descripcion);
+        Assert.Equal(original.PrecioCosto, resultado.Articulo.PrecioCosto);
+        Assert.Equal(original.MargenUtilidad, resultado.Articulo.MargenUtilidad);
+        Assert.True(resultado.Articulo.Activo);
+        Assert.Equal(original.Version, resultado.Articulo.Version);
+        Assert.Equal(1815m, original.PrecioVenta);
+    }
+
+    [Fact]
+    public void ConPrecioRecalculado_Inactivo_SeRecalcula()
+    {
+        // AC-03 de FEAT-002c: los inactivos también se recalculan y siguen inactivos.
+        var inactivo = Guardado(activo: false);
+
+        var resultado = inactivo.ConPrecioRecalculado(ResponsableInscripto(multiplo: 50m));
+
+        Assert.True(resultado.EsCambiado);
+        Assert.Equal(1850m, resultado.Articulo.PrecioVenta);
+        Assert.False(resultado.Articulo.Activo);
+        Assert.Equal(inactivo.Codigo, resultado.Articulo.Codigo);
+        Assert.Equal(inactivo.Version, resultado.Articulo.Version);
+    }
+
+    [Fact]
+    public void ConPrecioRecalculado_AlicuotaDistinta_SinCambio()
+    {
+        // ADR-010 y AC-01 de FEAT-002c: la alícuota se cancela; 1105 y 50 % dan 1657,50 con 21 y con 10,5.
+        var articulo = new Articulo(11L, "ABC-2", "Lente", 1105m, 50m, 1657.50m, activo: true, version: 2L);
+
+        var resultado = articulo.ConPrecioRecalculado(
+            new ConfiguracionNegocio(10.5m, CondicionFiscal.ResponsableInscripto, 0.01m, null));
+
+        Assert.Same(ResultadoRecalculo.SinCambio, resultado);
+        Assert.True(resultado.EsSinCambio);
+        Assert.False(resultado.EsCambiado);
+        Assert.False(resultado.EsFueraDeRango);
+        Assert.Null(resultado.Articulo);
+    }
+
+    [Fact]
+    public void ConPrecioRecalculado_VigenteNula_LanzaError()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() => Guardado().ConPrecioRecalculado(null!));
+
+        Assert.Equal("vigente", error.ParamName);
+        Assert.DoesNotContain("1815", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("1210", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConPrecioRecalculado_MismoPrecioOtraEscala_SinCambio()
+    {
+        // El precio guardado vuelve de la base como centésimos / 100 (escala 0) y el cálculo con múltiplo 0,01 lo da
+        // con escala 2: el mismo importe con otra escala no es un cambio.
+        var guardado = new Articulo(7L, "ABC-1", "Lente", 1210m, 50m, 181500 / 100m, activo: true, version: 3L);
+        var configuracion = ResponsableInscripto(multiplo: 0.01m);
+        var calculado = CalculadoraPrecioVenta.Calcular(1210m, 50m, configuracion).Precio!.PrecioVenta;
+        Assert.Equal(0, guardado.PrecioVenta.Scale);
+        Assert.Equal(2, calculado.Scale);
+        Assert.Equal("1815.00", calculado.ToString(CultureInfo.InvariantCulture));
+
+        var resultado = guardado.ConPrecioRecalculado(configuracion);
+
+        Assert.Same(ResultadoRecalculo.SinCambio, resultado);
+    }
+
     private static Articulo Guardado(bool activo = true) =>
         new(7L, "ABC-1", "Lente", 1210m, 50m, 1815m, activo, version: 3L);
 

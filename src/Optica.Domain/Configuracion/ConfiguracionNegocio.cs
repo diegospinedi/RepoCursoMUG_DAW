@@ -48,6 +48,20 @@ public sealed class ConfiguracionNegocio
     /// <summary>Verdadero mientras el tope de identificación no tenga valor (FR-08).</summary>
     public bool FaltaTope => TopeIdentificacion is null;
 
+    /// <summary>
+    /// Verdadero si respecto de <paramref name="anterior"/> cambia la alícuota, la condición fiscal o el múltiplo: los
+    /// parámetros que disparan el recálculo del catálogo (FR-01 de FEAT-002c, D-07). El tope solo no lo dispara.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="anterior"/> es null.</exception>
+    public bool CambiaParametrosDePrecioRespectoDe(ConfiguracionNegocio anterior)
+    {
+        ArgumentNullException.ThrowIfNull(anterior);
+
+        return AlicuotaIva != anterior.AlicuotaIva
+            || CondicionFiscal != anterior.CondicionFiscal
+            || MultiploRedondeo != anterior.MultiploRedondeo;
+    }
+
     // Los mensajes no incluyen el valor recibido, como el resto de las invariantes del dominio.
     private static ArgumentException Error(InfraccionConfiguracion infraccion) => infraccion switch
     {
