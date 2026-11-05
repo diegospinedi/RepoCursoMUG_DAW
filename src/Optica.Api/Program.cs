@@ -125,11 +125,11 @@ public partial class Program
         // Marca (colores y logo), anónima: la de Optica:Marca:Directorio o la de ejemplo.
         builder.Services.AddScoped<ObtenerMarca>();
 
-        // Configuración de negocio, con sesión: se lee de la base en cada pedido (sin caché) y cada grabación queda
-        // en el log (categoría Optica.Application.Configuracion, que appsettings.json envía también al Registro de
-        // eventos de Windows).
+        // Configuración de negocio, con sesión: se lee de la base en cada pedido (sin caché) y cada grabación, que
+        // recalcula el catálogo (FEAT-002c, D-10), queda en el log (categoría Optica.Application.Configuracion.Grabacion,
+        // que appsettings.json envía también al Registro de eventos de Windows, D-17).
         builder.Services.AddScoped<ObtenerConfiguracionNegocio>();
-        builder.Services.AddScoped<GrabarConfiguracionNegocio>();
+        builder.Services.AddScoped<GrabarConfiguracionConRecalculo>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el

@@ -1,5 +1,6 @@
 using Optica.Application.Catalogo;
 using Optica.Application.Comun;
+using Optica.Application.Configuracion;
 using Optica.Domain.Configuracion;
 
 namespace Optica.Application.Tests.Catalogo;
@@ -247,6 +248,85 @@ public class AltaArticuloTests
         Assert.True(resultado.EsGrabado);
         Assert.Equal(Assert.Single(_articulos.Guardados).Codigo, resultado.Articulo.Codigo);
     }
+
+    /// <summary>
+    /// D-05 y D-18 de FEAT-002c: la lectura de la configuración, la verificación de la clave, el registro y la
+    /// confirmación van dentro de una operación en transacción; la relectura del artículo grabado, después.
+    /// </summary>
+    [Fact]
+    public async Task Alta_LeeYConfirmaDentroDeLaOperacion()
+    {
+        var configuracion = new ConfiguracionVariable { Unidad = _articulos };
+
+        var resultado = await new AltaArticulo(_articulos, configuracion, _articulos).EjecutarAsync(Validos());
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(
+            [
+                (ConfiguracionVariable.AccesoConfiguracion, true),
+                ("ExisteClaveAsync", true),
+                ("Agregar", true),
+                ("ConfirmarAsync", true),
+                ("ObtenerPorClaveAsync", false),
+            ],
+            _articulos.Accesos);
+        Assert.Equal(1, _articulos.Operaciones);
+        Assert.Equal(1, _articulos.OperacionesConfirmadas);
+    }
+
+    /// <summary>Un rechazo dentro de la operación (duplicado por el índice) la termina sin cambios.</summary>
+    [Fact]
+    public async Task Alta_ConflictoAlConfirmar_TerminaLaOperacionSinCambios()
+    {
+        _articulos.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto al confirmar.", MotivoConflicto.Unicidad);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos());
+
+        Assert.False(resultado.EsGrabado);
+        Assert.Equal(1, _articulos.Operaciones);
+        Assert.Equal(1, _articulos.OperacionesConfirmadas);
+        Assert.Empty(_articulos.Guardados);
+    }
+
+    /// <summary>AC-01 de FEAT-002c: grabada la alícuota 10,5, un alta de costo 1.105 y margen 50 vale 1.657,50.</summary>
+    [Fact]
+    public async Task Alta_DespuesDeCambiarAlicuota_1105y50_1657coma50()
+    {
+        var almacen = new CatalogoYConfiguracionEnMemoria();
+        var grabacion = await GrabarConfiguracionAsync(almacen, alicuota: 10.5m, multiplo: 0.01m);
+
+        var resultado = await new AltaArticulo(almacen.Articulos, almacen, almacen).EjecutarAsync(
+            Validos(costo: 1105m, margen: 50m));
+
+        Assert.True(grabacion.EsGrabado);
+        Assert.Equal(10.5m, almacen.Guardada!.AlicuotaIva);
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(1657.50m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(1657.50m, Assert.Single(almacen.Articulos.Guardados).PrecioVenta);
+        Assert.Equal(2, almacen.Articulos.OperacionesConfirmadas);
+    }
+
+    /// <summary>D-22 de FEAT-002c: el alta lee la configuración nueva; con múltiplo 50, 1.105 y 50 dan 1.700.</summary>
+    [Fact]
+    public async Task Alta_DespuesDeCambiarMultiplo50_1105y50_1700()
+    {
+        var almacen = new CatalogoYConfiguracionEnMemoria();
+        var grabacion = await GrabarConfiguracionAsync(almacen, alicuota: 21m, multiplo: 50m);
+
+        var resultado = await new AltaArticulo(almacen.Articulos, almacen, almacen).EjecutarAsync(
+            Validos(costo: 1105m, margen: 50m));
+
+        Assert.True(grabacion.EsGrabado);
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(1700m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(2, almacen.Articulos.OperacionesConfirmadas);
+    }
+
+    private static Task<ResultadoGrabacionConfiguracion> GrabarConfiguracionAsync(
+        CatalogoYConfiguracionEnMemoria almacen, decimal alicuota, decimal multiplo) =>
+        new GrabarConfiguracionConRecalculo(
+            almacen, almacen.Articulos, almacen, new Acceso.RelojFijo(), new FabricaRegistrosFalsa())
+            .EjecutarAsync(new DatosConfiguracion(alicuota, "responsable_inscripto", multiplo, null));
 
     [Fact]
     public async Task Alta_DatosNulos_Lanza()

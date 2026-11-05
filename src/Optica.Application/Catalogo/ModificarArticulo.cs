@@ -89,7 +89,9 @@ public sealed class ResultadoEdicionArticulo
 /// <see cref="Articulo.Modificar"/>: inactivo (D-02), inválido con todos los errores o, si el código en el proveedor ya
 /// lo tiene otro artículo, inválido con el duplicado. Registra la modificación con la versión enviada y confirma: un
 /// conflicto de unicidad es el duplicado; uno de concurrencia relee y responde inactivo, no encontrado o cambiado
-/// (D-08). Grabado devuelve el artículo releído. Cualquier otra falla se propaga. No registra nada en el log (D-12).
+/// (D-08). Todo eso corre dentro de una operación en transacción (ADR-013, D-05 y D-18 de FEAT-002c). Grabado devuelve
+/// el artículo releído después de la operación. Cualquier otra falla revierte la transacción y se propaga. No registra
+/// nada en el log (D-12).
 /// </summary>
 /// <remarks>
 /// Resultados posibles: <see cref="TipoResultadoEdicion.Grabado"/>, <see cref="TipoResultadoEdicion.Invalido"/> (datos,
@@ -114,66 +116,83 @@ public sealed class ModificarArticulo(
         }
 
         var versionEnviada = version!.Value;
-        var leido = await articulos.ObtenerAsync(codigo, cancelacion);
-        if (leido is null)
-        {
-            return ResultadoEdicionArticulo.NoEncontrado;
-        }
 
-        if (leido.Version != versionEnviada)
-        {
-            // Misma precedencia que la relectura tras un conflicto: inactivo antes que cambiado.
-            return leido.Activo ? ResultadoEdicionArticulo.CambiadoAlEditar : ResultadoEdicionArticulo.Inactivo;
-        }
-
-        var vigente = await configuracion.ObtenerAsync(cancelacion);
-        var modificacion = leido.Modificar(
-            datos.CodigoProveedor, datos.Descripcion, datos.PrecioCosto, datos.MargenUtilidad, vigente);
-        if (modificacion.EsInactivo)
-        {
-            return ResultadoEdicionArticulo.Inactivo;
-        }
-
-        if (modificacion.EsInvalido)
-        {
-            return ResultadoEdicionArticulo.Invalido([.. modificacion.Infracciones.Select(ValidacionArticulo.Traducir)]);
-        }
-
-        if (!modificacion.EsModificado)
-        {
-            throw new UnreachableException("Resultado de la modificación del artículo no previsto.");
-        }
-
-        var modificado = modificacion.Articulo;
-        if (await articulos.ExisteClaveDeOtroAsync(modificado.CodigoProveedorClave, codigo, cancelacion))
-        {
-            return ResultadoEdicionArticulo.Invalido([ValidacionArticulo.CodigoDuplicado]);
-        }
-
-        articulos.Actualizar(modificado, versionEnviada);
-
-        try
-        {
-            await unidadDeTrabajo.ConfirmarAsync(cancelacion);
-        }
-        catch (ConflictoAlConfirmarException conflicto) when (conflicto.Motivo == MotivoConflicto.Unicidad)
-        {
-            // El índice único de la clave: otro artículo la tomó entre el chequeo y la grabación.
-            return ResultadoEdicionArticulo.Invalido([ValidacionArticulo.CodigoDuplicado]);
-        }
-        catch (ConflictoAlConfirmarException)
-        {
-            // Concurrencia (D-08): no se guardó nada; la relectura dice por qué.
-            var releido = await articulos.ObtenerAsync(codigo, cancelacion);
-            return releido switch
+        // ADR-013 y D-18 de FEAT-002c: la lectura del artículo, las verificaciones de versión y de clave, la lectura de la
+        // configuración, el cálculo, el registro, la confirmación y la atención de un conflicto, en una sola transacción
+        // de escritura. Un conflicto atendido termina la operación sin cambios. Null: la modificación se grabó.
+        var rechazo = await unidadDeTrabajo.EjecutarEnTransaccionAsync<ResultadoEdicionArticulo?>(
+            async operacion =>
             {
-                null => ResultadoEdicionArticulo.NoEncontrado,
-                { Activo: false } => ResultadoEdicionArticulo.Inactivo,
-                _ => ResultadoEdicionArticulo.CambiadoAlEditar,
-            };
+                var leido = await articulos.ObtenerAsync(codigo, operacion);
+                if (leido is null)
+                {
+                    return ResultadoEdicionArticulo.NoEncontrado;
+                }
+
+                if (leido.Version != versionEnviada)
+                {
+                    // Misma precedencia que la relectura tras un conflicto: inactivo antes que cambiado.
+                    return leido.Activo ? ResultadoEdicionArticulo.CambiadoAlEditar : ResultadoEdicionArticulo.Inactivo;
+                }
+
+                var vigente = await configuracion.ObtenerAsync(operacion);
+                var modificacion = leido.Modificar(
+                    datos.CodigoProveedor, datos.Descripcion, datos.PrecioCosto, datos.MargenUtilidad, vigente);
+                if (modificacion.EsInactivo)
+                {
+                    return ResultadoEdicionArticulo.Inactivo;
+                }
+
+                if (modificacion.EsInvalido)
+                {
+                    return ResultadoEdicionArticulo.Invalido(
+                        [.. modificacion.Infracciones.Select(ValidacionArticulo.Traducir)]);
+                }
+
+                if (!modificacion.EsModificado)
+                {
+                    throw new UnreachableException("Resultado de la modificación del artículo no previsto.");
+                }
+
+                var modificado = modificacion.Articulo;
+                if (await articulos.ExisteClaveDeOtroAsync(modificado.CodigoProveedorClave, codigo, operacion))
+                {
+                    return ResultadoEdicionArticulo.Invalido([ValidacionArticulo.CodigoDuplicado]);
+                }
+
+                articulos.Actualizar(modificado, versionEnviada);
+
+                try
+                {
+                    await unidadDeTrabajo.ConfirmarAsync(operacion);
+                }
+                catch (ConflictoAlConfirmarException conflicto) when (conflicto.Motivo == MotivoConflicto.Unicidad)
+                {
+                    // El índice único de la clave: otro artículo la tomó entre el chequeo y la grabación.
+                    return ResultadoEdicionArticulo.Invalido([ValidacionArticulo.CodigoDuplicado]);
+                }
+                catch (ConflictoAlConfirmarException)
+                {
+                    // Concurrencia (D-08): no se guardó nada; la relectura dice por qué. Dentro de la transacción la
+                    // rama queda como defensa ante un escritor externo (D-18).
+                    var releido = await articulos.ObtenerAsync(codigo, operacion);
+                    return releido switch
+                    {
+                        null => ResultadoEdicionArticulo.NoEncontrado,
+                        { Activo: false } => ResultadoEdicionArticulo.Inactivo,
+                        _ => ResultadoEdicionArticulo.CambiadoAlEditar,
+                    };
+                }
+
+                return null;
+            },
+            cancelacion);
+        if (rechazo is not null)
+        {
+            return rechazo;
         }
 
-        // Sin cancelación a propósito, como el alta: la modificación ya quedó confirmada.
+        // Después de la operación. Sin cancelación a propósito, como el alta: la modificación ya quedó confirmada.
         var grabado = await articulos.ObtenerAsync(codigo, CancellationToken.None)
             ?? throw new InvalidOperationException("El artículo confirmado no se encontró por su código: estado corrupto.");
         return ResultadoEdicionArticulo.Grabado(ArticuloGrabado.Desde(grabado));

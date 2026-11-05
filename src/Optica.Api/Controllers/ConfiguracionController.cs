@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Optica.Api.Acceso;
 using Optica.Api.Errores;
+using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
 
@@ -18,7 +19,7 @@ public sealed record SolicitudConfiguracion(
 
 /// <summary>
 /// Consulta y graba los parámetros de negocio (FEAT-001c). Solo traduce HTTP: delega en
-/// <see cref="ObtenerConfiguracionNegocio"/> y <see cref="GrabarConfiguracionNegocio"/>, que validan y registran cada
+/// <see cref="ObtenerConfiguracionNegocio"/> y <see cref="GrabarConfiguracionConRecalculo"/>, que validan y registran cada
 /// grabación. Exige sesión por la política por defecto (no está en <see cref="RutasAnonimas"/>, R-01): sin sesión, 401
 /// antes del 415 y del 413. El Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (R-02,
 /// R-05). Sin fila de configuración (D-04), la excepción termina en el 500 genérico de
@@ -28,7 +29,7 @@ public sealed record SolicitudConfiguracion(
 [Route("api/configuracion")]
 public sealed class ConfiguracionController(
     ObtenerConfiguracionNegocio obtenerConfiguracion,
-    GrabarConfiguracionNegocio grabarConfiguracion) : ControllerBase
+    GrabarConfiguracionConRecalculo grabarConfiguracion) : ControllerBase
 {
     /// <summary>Tamaño máximo del cuerpo del POST; más grande, 413.</summary>
     public const long CuerpoMaximo = 1024;
@@ -65,7 +66,8 @@ public sealed class ConfiguracionController(
             new DatosConfiguracion(
                 solicitud?.AlicuotaIva, solicitud?.CondicionFiscal, solicitud?.MultiploRedondeo, solicitud?.TopeIdentificacion),
             cancelacion);
-        return await ResponderGrabacionAsync(resultado.Tipo, resultado.Errores, cancelacion);
+        return await ResponderGrabacionAsync(
+            resultado.EsGrabado ? TipoResultado.Exito : TipoResultado.Invalido, resultado.Errores, cancelacion);
     }
 
     /// <summary>

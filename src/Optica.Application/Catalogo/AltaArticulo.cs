@@ -82,11 +82,12 @@ public sealed class ResultadoAlta
 
 /// <summary>
 /// Da de alta un artículo con su precio de venta calculado (FR-01 a FR-10). Si algún campo incumple la política
-/// devuelve <see cref="ResultadoAlta.Invalido"/> con todos los errores sin leer la configuración ni la base. Si no, lee
-/// la configuración vigente en cada llamada (FR-08), calcula el precio (fuera de rango: error en el margen, D-06),
-/// rechaza un código en el proveedor ya usado (por el chequeo previo o por el índice único al confirmar, D-07) y graba.
-/// Sin fila de configuración, y ante cualquier otra falla al confirmar, la excepción se propaga. No registra en el log
-/// los datos del pedido.
+/// devuelve <see cref="ResultadoAlta.Invalido"/> con todos los errores sin leer la configuración ni la base. Si no,
+/// dentro de una operación en transacción (ADR-013, D-05 y D-18 de FEAT-002c), lee la configuración vigente en cada
+/// llamada (FR-08), calcula el precio (fuera de rango: error en el margen, D-06), rechaza un código en el proveedor ya
+/// usado (por el chequeo previo o por el índice único al confirmar, D-07) y graba; la relectura del artículo grabado va
+/// después. Sin fila de configuración, y ante cualquier otra falla al confirmar, la transacción se revierte y la
+/// excepción se propaga. No registra en el log los datos del pedido.
 /// </summary>
 public sealed class AltaArticulo(
     IArticuloRepository articulos,
@@ -107,34 +108,50 @@ public sealed class AltaArticulo(
         var costo = datos.PrecioCosto!.Value;
         var margen = datos.MargenUtilidad!.Value;
 
-        var vigente = await configuracion.ObtenerAsync(cancelacion);
-        var calculo = CalculadoraPrecioVenta.Calcular(costo, margen, vigente);
-        if (calculo.Infraccion is { } infraccion)
-        {
-            return ResultadoAlta.Invalido([ValidacionArticulo.Traducir(infraccion)]);
-        }
-
         var clave = NormalizacionCodigo.Clave(codigoProveedor);
-        if (await articulos.ExisteClaveAsync(clave, cancelacion))
+
+        // ADR-013 y D-18 de FEAT-002c: la lectura de la configuración, la verificación de la clave, el registro y la
+        // confirmación, en una sola transacción de escritura; así ninguna grabación de la configuración (con su
+        // recálculo) confirma entre la lectura y la grabación del artículo. Null: el artículo se grabó.
+        var rechazo = await unidadDeTrabajo.EjecutarEnTransaccionAsync<ResultadoAlta?>(
+            async operacion =>
+            {
+                var vigente = await configuracion.ObtenerAsync(operacion);
+                var calculo = CalculadoraPrecioVenta.Calcular(costo, margen, vigente);
+                if (calculo.Infraccion is { } infraccion)
+                {
+                    return ResultadoAlta.Invalido([ValidacionArticulo.Traducir(infraccion)]);
+                }
+
+                if (await articulos.ExisteClaveAsync(clave, operacion))
+                {
+                    return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
+                }
+
+                articulos.Agregar(Articulo.Nuevo(
+                    codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
+
+                try
+                {
+                    await unidadDeTrabajo.ConfirmarAsync(operacion);
+                }
+                catch (ConflictoAlConfirmarException)
+                {
+                    // D-07: en el alta solo puede venir del índice único de la clave; no se guardó nada, y la operación
+                    // termina sin cambios (D-18).
+                    return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
+                }
+
+                return null;
+            },
+            cancelacion);
+        if (rechazo is not null)
         {
-            return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
+            return rechazo;
         }
 
-        articulos.Agregar(Articulo.Nuevo(
-            codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
-
-        try
-        {
-            await unidadDeTrabajo.ConfirmarAsync(cancelacion);
-        }
-        catch (ConflictoAlConfirmarException)
-        {
-            // D-07: en el alta de un artículo solo puede venir del índice único de la clave; no se guardó nada.
-            return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
-        }
-
-        // Sin cancelación a propósito: el alta ya quedó confirmada, y cortar esta lectura haría que la operadora, al
-        // reintentar, viera "código duplicado" por su propio artículo.
+        // Después de la operación. Sin cancelación a propósito: el alta ya quedó confirmada, y cortar esta lectura haría
+        // que la operadora, al reintentar, viera "código duplicado" por su propio artículo.
         var grabado = await articulos.ObtenerPorClaveAsync(clave, CancellationToken.None)
             ?? throw new InvalidOperationException("El artículo confirmado no se encontró por su clave: estado corrupto.");
         return ResultadoAlta.Grabado(ArticuloGrabado.Desde(grabado));

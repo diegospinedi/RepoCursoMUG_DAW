@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Optica.Application.Catalogo;
 using Optica.Application.Configuracion;
 using Optica.Infrastructure.Persistencia;
 
@@ -305,7 +306,8 @@ public sealed class ConfiguracionApiTests
             .BuildServiceProvider())
         {
             var fabricaRegistros = servicios.GetRequiredService<ILoggerFactory>();
-            fabricaRegistros.CreateLogger<GrabarConfiguracionNegocio>().LogInformation("grabacion-de-configuracion");
+            fabricaRegistros.CreateLogger(GrabarConfiguracionConRecalculo.CategoriaRegistro)
+                .LogInformation("grabacion-de-configuracion");
             fabricaRegistros.CreateLogger("Optica.Prueba").LogInformation("otra-categoria-information");
             fabricaRegistros.CreateLogger("Optica.Prueba").LogWarning("otra-categoria-warning");
         }

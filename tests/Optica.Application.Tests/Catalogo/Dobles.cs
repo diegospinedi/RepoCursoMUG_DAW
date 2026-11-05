@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Optica.Application.Comun;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
@@ -16,7 +17,8 @@ namespace Optica.Application.Tests.Catalogo;
 /// <remarks>
 /// <see cref="EjecutarEnTransaccionAsync"/> imita la transacción de ADR-013 (D-20 de FEAT-002c): guarda una copia de lo
 /// guardado al entrar y la restaura si la operación lanza, rechaza el anidamiento con
-/// <see cref="InvalidOperationException"/> y permite simular una falla del commit externo con
+/// <see cref="InvalidOperationException"/>, rechaza igual (y revierte) una operación que termina con algo registrado sin
+/// confirmar, como <c>UnidadDeTrabajoEf</c>, y permite simular una falla del commit externo con
 /// <see cref="ErrorAlConfirmarOperacion"/> (la falla de <see cref="ConfirmarAsync"/> sigue siendo
 /// <see cref="ErrorAlConfirmar"/>). <see cref="RegistrarPrecioRecalculado"/> registra aparte, en
 /// <see cref="PreciosRecalculadosRegistrados"/>, y acepta artículos inactivos (AC-03).
@@ -76,11 +78,30 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     /// </summary>
     public Exception? ErrorAlConfirmarOperacion { get; set; }
 
+    /// <summary>
+    /// Se ejecuta al empezar <see cref="ListarParaRecalculoAsync"/>, antes de verificar el token (por ejemplo, para
+    /// cancelar el pedido en medio de la operación).
+    /// </summary>
+    public Action? AlListarParaRecalculo { get; set; }
+
     /// <summary>Cuántas veces se llamó a <see cref="ListarParaRecalculoAsync"/>.</summary>
     public int ListadosParaRecalculo { get; private set; }
 
     /// <summary>Cada artículo recibido por <see cref="RegistrarPrecioRecalculado"/>, en orden, se haya guardado o no.</summary>
     public List<Articulo> PreciosRecalculadosRegistrados { get; } = [];
+
+    /// <summary>Verdadero mientras corre una operación de <see cref="EjecutarEnTransaccionAsync"/>.</summary>
+    public bool EnOperacion => _enOperacion;
+
+    /// <summary>
+    /// Cada lectura, verificación, registro y confirmación, en orden, con si ocurrió dentro de una operación de
+    /// <see cref="EjecutarEnTransaccionAsync"/>: fija el límite de la operación de D-18 de FEAT-002c. La configuración
+    /// anota aquí sus lecturas si se la crea con esta unidad (<see cref="ConfiguracionVariable.Unidad"/>).
+    /// </summary>
+    public List<(string Accion, bool DentroDeOperacion)> Accesos { get; } = [];
+
+    /// <summary>Anota un acceso con el estado actual de la operación.</summary>
+    public void Anotar(string accion) => Accesos.Add((accion, _enOperacion));
 
     /// <summary>Guarda un artículo ya confirmado, como si existiera de antes; el precio de venta es costo × 1,5.</summary>
     public Articulo Sembrar(
@@ -120,6 +141,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     public Task<bool> ExisteClaveAsync(string clave, CancellationToken cancelacion = default)
     {
         ConsultasDeClave++;
+        Anotar(nameof(ExisteClaveAsync));
         return Task.FromResult(Guardados.Any(articulo => articulo.CodigoProveedorClave == clave));
     }
 
@@ -132,6 +154,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         }
 
         Agregados++;
+        Anotar(nameof(Agregar));
         _pendientes.Add(articulo);
     }
 
@@ -139,6 +162,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     {
         // Como EF Core: un token cancelado corta la lectura.
         cancelacion.ThrowIfCancellationRequested();
+        Anotar(nameof(ObtenerAsync));
         return Task.FromResult(Guardados.SingleOrDefault(articulo => articulo.Codigo == codigo));
     }
 
@@ -146,6 +170,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     {
         // Como EF Core: un token cancelado corta la lectura.
         cancelacion.ThrowIfCancellationRequested();
+        Anotar(nameof(ObtenerPorClaveAsync));
         return Task.FromResult(
             OcultarAlLeerPorClave ? null : Guardados.SingleOrDefault(articulo => articulo.CodigoProveedorClave == clave));
     }
@@ -179,6 +204,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     public Task<bool> ExisteClaveDeOtroAsync(string clave, long codigo, CancellationToken cancelacion = default)
     {
         ConsultasDeClaveDeOtro++;
+        Anotar(nameof(ExisteClaveDeOtroAsync));
         return Task.FromResult(
             Guardados.Any(articulo => articulo.CodigoProveedorClave == clave && articulo.Codigo != codigo));
     }
@@ -192,6 +218,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         }
 
         Actualizaciones++;
+        Anotar(nameof(Actualizar));
         _actualizaciones.Add((articulo, versionLeida));
     }
 
@@ -207,6 +234,8 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     /// <summary>Como el repositorio real: todos, activos e inactivos, ordenados por código.</summary>
     public Task<IReadOnlyList<Articulo>> ListarParaRecalculoAsync(CancellationToken cancelacion = default)
     {
+        // Antes de la verificación del token: sirve para cancelar el pedido durante la operación.
+        AlListarParaRecalculo?.Invoke();
         cancelacion.ThrowIfCancellationRequested();
         ListadosParaRecalculo++;
         return Task.FromResult<IReadOnlyList<Articulo>>([.. Guardados.OrderBy(articulo => articulo.Codigo)]);
@@ -244,6 +273,13 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         try
         {
             var resultado = await operacion(cancelacion);
+            if (_pendientes.Count > 0 || _actualizaciones.Count > 0 || _cambiosDeEstado.Count > 0 ||
+                _preciosRecalculados.Count > 0)
+            {
+                // Como UnidadDeTrabajoEf: lo registrado sin confirmar no se confirma; se revierte todo.
+                throw new InvalidOperationException("La operación terminó con cambios sin confirmar.");
+            }
+
             if (ErrorAlConfirmarOperacion is { } error)
             {
                 throw error;
@@ -269,6 +305,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     public Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         Confirmaciones++;
+        Anotar(nameof(ConfirmarAsync));
         AntesDeConfirmar?.Invoke();
         try
         {
@@ -402,9 +439,13 @@ internal sealed class ConfiguracionVariable : IConfiguracionNegocioRepository
 
     public int Lecturas { get; private set; }
 
+    /// <summary>Si tiene valor, cada lectura se anota en sus <see cref="ArticulosEnMemoria.Accesos"/> (D-18).</summary>
+    public ArticulosEnMemoria? Unidad { get; init; }
+
     public Task<ConfiguracionNegocio> ObtenerAsync(CancellationToken cancelacion = default)
     {
         Lecturas++;
+        Unidad?.Anotar(AccesoConfiguracion);
         return Vigente is null
             ? throw new InvalidOperationException("No hay fila de configuración de negocio.")
             : Task.FromResult(Vigente);
@@ -412,4 +453,155 @@ internal sealed class ConfiguracionVariable : IConfiguracionNegocioRepository
 
     public void Reemplazar(ConfiguracionNegocio nueva) =>
         throw new InvalidOperationException("El alta de artículos no reemplaza la configuración.");
+
+    /// <summary>El nombre con que se anota la lectura de la configuración.</summary>
+    public const string AccesoConfiguracion = "Configuracion";
+}
+
+/// <summary>
+/// La configuración de negocio y el catálogo en una sola unidad de trabajo en memoria (D-20 de FEAT-002c), como el
+/// contexto compartido real: <see cref="Reemplazar"/> deja la configuración pendiente y <see cref="ConfirmarAsync"/> la
+/// guarda junto con lo registrado en <see cref="Articulos"/>, todo o nada. <see cref="EjecutarEnTransaccionAsync"/> usa
+/// la operación de <see cref="Articulos"/> (copia al entrar, rechazo del anidamiento y de los artículos registrados sin
+/// confirmar, falla simulada del commit externo con <see cref="ArticulosEnMemoria.ErrorAlConfirmarOperacion"/>) y además
+/// restaura la configuración si algo lanza. Como la real, una operación que termina con la configuración reemplazada
+/// sin confirmar se revierte y lanza <see cref="InvalidOperationException"/>. La falla de <see cref="ConfirmarAsync"/> se simula con
+/// <see cref="ArticulosEnMemoria.ErrorAlConfirmar"/>.
+/// </summary>
+internal sealed class CatalogoYConfiguracionEnMemoria : IConfiguracionNegocioRepository, IUnidadDeTrabajo
+{
+    private ConfiguracionNegocio? _pendiente;
+
+    public ArticulosEnMemoria Articulos { get; } = new();
+
+    /// <summary>La configuración confirmada; null simula la base sin fila (D-04 de FEAT-001c).</summary>
+    public ConfiguracionNegocio? Guardada { get; set; } =
+        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+
+    public int Lecturas { get; private set; }
+
+    public int Reemplazos { get; private set; }
+
+    public Task<ConfiguracionNegocio> ObtenerAsync(CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Lecturas++;
+        Articulos.Anotar(ConfiguracionVariable.AccesoConfiguracion);
+        return Guardada is null
+            ? throw new InvalidOperationException("No hay fila de configuración de negocio.")
+            : Task.FromResult(Guardada);
+    }
+
+    public void Reemplazar(ConfiguracionNegocio nueva)
+    {
+        ArgumentNullException.ThrowIfNull(nueva);
+        if (Guardada is null)
+        {
+            throw new InvalidOperationException("No hay fila de configuración de negocio.");
+        }
+
+        Reemplazos++;
+        Articulos.Anotar(nameof(Reemplazar));
+        _pendiente = nueva;
+    }
+
+    public async Task<T> EjecutarEnTransaccionAsync<T>(
+        Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(operacion);
+        var guardadaAlEntrar = Guardada;
+        try
+        {
+            return await Articulos.EjecutarEnTransaccionAsync(
+                async token =>
+                {
+                    var resultado = await operacion(token);
+                    if (_pendiente is not null)
+                    {
+                        throw new InvalidOperationException("La operación terminó con cambios sin confirmar.");
+                    }
+
+                    return resultado;
+                },
+                cancelacion);
+        }
+        catch
+        {
+            Guardada = guardadaAlEntrar;
+            _pendiente = null;
+            throw;
+        }
+    }
+
+    public async Task ConfirmarAsync(CancellationToken cancelacion = default)
+    {
+        try
+        {
+            await Articulos.ConfirmarAsync(cancelacion);
+        }
+        catch
+        {
+            _pendiente = null;
+            throw;
+        }
+
+        if (_pendiente is not null)
+        {
+            Guardada = _pendiente;
+            _pendiente = null;
+        }
+    }
+}
+
+/// <summary>Una entrada del registro: nivel, mensaje ya formateado y los valores de sus marcadores.</summary>
+internal sealed record EntradaRegistro(
+    LogLevel Nivel, string Mensaje, IReadOnlyDictionary<string, object?> Valores, Exception? Error);
+
+/// <summary>
+/// Fábrica de loggers de prueba: anota cada categoría pedida y guarda las entradas de todos sus loggers.
+/// <see cref="AlRegistrar"/> se ejecuta en cada entrada, antes de guardarla (por ejemplo, para ver qué estaba confirmado
+/// en ese momento).
+/// </summary>
+internal sealed class FabricaRegistrosFalsa : ILoggerFactory
+{
+    public List<string> Categorias { get; } = [];
+
+    public List<EntradaRegistro> Entradas { get; } = [];
+
+    public Action? AlRegistrar { get; set; }
+
+    public ILogger CreateLogger(string categoryName)
+    {
+        Categorias.Add(categoryName);
+        return new Registro(this);
+    }
+
+    public void AddProvider(ILoggerProvider provider) =>
+        throw new NotSupportedException("La fábrica de prueba no admite proveedores.");
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Registro(FabricaRegistrosFalsa fabrica) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            fabrica.AlRegistrar?.Invoke();
+            var valores = state is IEnumerable<KeyValuePair<string, object?>> pares
+                ? pares.ToDictionary(par => par.Key, par => par.Value)
+                : new Dictionary<string, object?>();
+            fabrica.Entradas.Add(new EntradaRegistro(logLevel, formatter(state, exception), valores, exception));
+        }
+    }
 }

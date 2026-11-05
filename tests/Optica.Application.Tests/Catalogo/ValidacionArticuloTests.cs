@@ -75,6 +75,70 @@ public class ValidacionArticuloTests
             errores);
     }
 
+    // ---- Recálculo fuera de rango (D-01, D-08, D-12, D-25 y D-26 de FEAT-002c) ----
+
+    private const string InicioFueraDeRango = "No se grabó el cambio: el precio de venta de ";
+    private const string FinFueraDeRango = "Revisá esos artículos o el múltiplo";
+    private const string AgregadoInactivo = "; un artículo inactivo hay que reactivarlo para editarlo";
+
+    private static Articulo Grabado(long codigo, bool activo = true) =>
+        new(codigo, $"PRV-{codigo}", "Armazón", 100m, 50m, 150m, activo, 0);
+
+    private static ErrorValidacion ErrorMultiplo(string accion) => new("multiploRedondeo", accion);
+
+    [Fact]
+    public void FueraDeRango_ListaDesordenada_CodigosEnOrdenNumerico()
+    {
+        var error = ValidacionArticulo.PrecioVentaRecalculadoFueraDeRango(
+            [Grabado(12), Grabado(3), Grabado(100), Grabado(7)]);
+
+        Assert.Equal(
+            ErrorMultiplo(
+                InicioFueraDeRango + "4 artículos sería demasiado grande (códigos 3, 7, 12 y 100). " + FinFueraDeRango + "."),
+            error);
+    }
+
+    [Fact]
+    public void FueraDeRango_InactivoDespuesDelDecimo_AgregaElAvisoSinMarca()
+    {
+        var articulos = Enumerable.Range(1, 10).Select(codigo => Grabado(codigo)).Append(Grabado(11, activo: false)).ToList();
+
+        var error = ValidacionArticulo.PrecioVentaRecalculadoFueraDeRango(articulos);
+
+        // D-26: el aviso va aunque ningún código nombrado lleve la marca.
+        Assert.Equal(
+            ErrorMultiplo(
+                InicioFueraDeRango + "11 artículos sería demasiado grande (códigos 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 y 1 más). " +
+                FinFueraDeRango + AgregadoInactivo + "."),
+            error);
+        Assert.DoesNotContain(", inactivo", error.Accion, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FueraDeRango_VariosInactivos_MarcaCadaUno()
+    {
+        var error = ValidacionArticulo.PrecioVentaRecalculadoFueraDeRango(
+            [Grabado(42, activo: false), Grabado(15, activo: false), Grabado(27)]);
+
+        Assert.Equal(
+            ErrorMultiplo(
+                InicioFueraDeRango + "3 artículos sería demasiado grande (códigos 15, inactivo, 27 y 42, inactivo). " +
+                FinFueraDeRango + AgregadoInactivo + "."),
+            error);
+    }
+
+    [Fact]
+    public void FueraDeRango_UnoSoloInactivo_CodigoEnSingularConMarca()
+    {
+        var error = ValidacionArticulo.PrecioVentaRecalculadoFueraDeRango([Grabado(42, activo: false)]);
+
+        Assert.Equal(
+            ErrorMultiplo(
+                InicioFueraDeRango + "1 artículo sería demasiado grande (código 42, inactivo). " +
+                FinFueraDeRango + AgregadoInactivo + "."),
+            error);
+    }
+
     [Fact]
     public void AccionesNumericas_TextosDeConfiguracion_NoCambian()
     {
