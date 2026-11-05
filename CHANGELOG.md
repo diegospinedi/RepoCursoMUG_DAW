@@ -25,6 +25,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Código de proveedor único sin distinguir mayúsculas, espacios en blanco de los extremos ni formas Unicode equivalentes (ADR-009); se rechaza el texto con UTF-16 inválido junto al campo.
   - `POST /api/articulos` y `GET /api/articulos/{codigo}`, con todos los errores por campo; tabla `Articulo` con restricciones e índice único.
   - Pruebas de punta a punta del alta en Chrome y Edge.
+- [FEAT-002b] Búsqueda, edición y baja de artículos:
+  - Pantalla `/articulos`, con sesión iniciada: búsqueda por código, código en el proveedor o descripción sin distinguir mayúsculas ni tildes (la ñ cuenta como letra; ADR-011), páginas de 50 ordenadas por descripción con la ñ entre la n y la o, sin costo ni margen, y Desactivar o Reactivar por fila.
+  - Pantalla `/articulos/{codigo}`: edición con el Precio de Venta de solo lectura; el precio se recalcula solo si cambia el costo o el margen; un artículo inactivo se ve en solo lectura y hay que reactivarlo para editarlo.
+  - Una edición hecha en otra pestaña no se pisa: la Api responde 409 y la pantalla pide volver a abrir el artículo.
+  - `GET /api/articulos`, `PUT /api/articulos/{codigo}` y `PUT /api/articulos/{codigo}/estado`; columnas `Activo` y `Version` agregadas sin reconstruir la tabla (ADR-012).
+  - Pruebas de punta a punta en Chrome y Edge.
+
+### Fixed
+- [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
 
 ### Security
 - [FEAT-001b] `ConflictoAlConfirmarException` ya no admite una excepción interna, así que el hash de la contraseña que viaja en los `Entries` de EF Core no puede llegar al log por esa vía.
+- [FEAT-002b] El costo, el margen, la descripción y el texto buscado no llegan al log aunque se suba el nivel de registro: los datos de los pedidos no se imprimen y la Api fija en código el piso `Warning` para el registro de pedidos y de MVC.
+- [FEAT-002b] El Edge de las pruebas de punta a punta solo resuelve `localhost`, así ya no transmite a Microsoft datos de la identidad del empleado ni de la organización.
