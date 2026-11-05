@@ -29,7 +29,7 @@ public class AltaArticuloTests
         Assert.Empty(resultado.Errores);
         var guardado = Assert.Single(_articulos.Guardados);
         Assert.Equal(
-            new ArticuloGrabado(guardado.Codigo!.Value, "ABC-1", "Armazón", 1210m, 50m, 1815m, null),
+            new ArticuloGrabado(guardado.Codigo!.Value, "ABC-1", "Armazón", 1210m, 50m, 1815m, null, true, 0),
             resultado.Articulo);
         Assert.Equal(1815m, guardado.PrecioVenta);
         Assert.Equal(1, _articulos.Confirmaciones);

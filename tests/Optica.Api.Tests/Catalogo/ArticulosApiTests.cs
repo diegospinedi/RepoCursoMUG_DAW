@@ -445,7 +445,10 @@ public sealed class ArticulosApiTests
         string? advertencia)
     {
         Assert.Equal(
-            ["codigo", "codigoProveedor", "descripcion", "precioCosto", "margenUtilidad", "precioVenta", "advertencia"],
+            [
+                "codigo", "codigoProveedor", "descripcion", "precioCosto", "margenUtilidad", "precioVenta", "advertencia",
+                "activo", "version",
+            ],
             json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
         Assert.Equal(codigo, json.GetProperty("codigo").GetInt64());
         Assert.Equal(codigoProveedor, json.GetProperty("codigoProveedor").GetString());

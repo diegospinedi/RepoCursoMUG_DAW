@@ -25,7 +25,7 @@ public sealed class CierrePorDefectoArticulosTests
     public async Task ResponderAlta_CadaResultadoPrevisto_SuCodigo()
     {
         var controller = Crear();
-        var articulo = new ArticuloGrabado(7, "ABC-1", "Armazón", 1210m, 50m, 1815m, null);
+        var articulo = new ArticuloGrabado(7, "ABC-1", "Armazón", 1210m, 50m, 1815m, null, true, 0);
 
         var grabado = Assert.IsType<CreatedAtActionResult>(
             await controller.ResponderAltaAsync(ResultadoAlta.Grabado(articulo)));
