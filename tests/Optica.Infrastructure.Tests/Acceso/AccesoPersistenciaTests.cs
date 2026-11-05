@@ -384,7 +384,10 @@ public class AccesoPersistenciaTests
         // Las migraciones del ensamblado, en orden, y todas aplicadas.
         var migraciones = contexto.Database.GetMigrations().ToList();
         Assert.Equal(
-            ["Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo"],
+            [
+                "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
+                "CatalogoActivo",
+            ],
             migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
         Assert.Equal("20261030220627_Inicial", migraciones[0]);
@@ -594,6 +597,7 @@ public class AccesoPersistenciaTests
 
         // Mensaje genérico y sin excepción interna: nada de lo que se loguee con ella lleva un hash.
         Assert.Equal("Los datos a guardar cambiaron después de leerlos.", error.Message);
+        Assert.Equal(MotivoConflicto.Concurrencia, error.Motivo);
         Assert.Null(error.InnerException);
         var completa = error.ToString();
         Assert.DoesNotContain(anterior.Hash, completa, StringComparison.Ordinal);
@@ -737,6 +741,51 @@ public class AccesoPersistenciaTests
         var hash = contexto.Model.FindEntityType(typeof(CredencialAccesoFila))?.FindProperty(nameof(CredencialAccesoFila.Hash));
         Assert.NotNull(hash);
         Assert.True(hash.IsConcurrencyToken);
+
+        // La versión del artículo es el token de la modificación y del cambio de estado (D-08); Activo también, así una
+        // fila inactiva no recibe datos nuevos (D-22). Ninguna de las dos lleva DEFAULT en el modelo (D-21).
+        var articulo = contexto.Model.FindEntityType(typeof(ArticuloFila));
+        Assert.NotNull(articulo);
+        foreach (var nombre in new[] { nameof(ArticuloFila.Version), nameof(ArticuloFila.Activo) })
+        {
+            var propiedad = articulo.FindProperty(nombre);
+            Assert.NotNull(propiedad);
+            Assert.True(propiedad.IsConcurrencyToken, nombre);
+            Assert.Null(propiedad.GetDefaultValueSql());
+            Assert.False(propiedad.TryGetDefaultValue(out _), nombre);
+        }
+    }
+
+    [Fact]
+    public async Task UnidadDeTrabajo_ClavePrimariaYCheck_MotivoUnicidad()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        Ejecutar(cadena, "INSERT INTO CredencialAcceso (Id, Hash, DefinidaEn) VALUES (1, '"
+            + HasherQueSeAdelanta.HashDeLaOtra + "', '2026-10-30T14:00:00.0000000Z')");
+
+        // Clave primaria duplicada (1555): motivo Unicidad (D-18).
+        var duplicada = baseTemporal.CrearContexto();
+        new CredencialAccesoRepository(duplicada).Agregar(
+            new CredencialAcceso(new HasherContrasenaPbkdf2().Calcular("clave-valida"), Instante.UtcDateTime));
+        var porClave = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(duplicada).ConfirmarAsync());
+        Assert.Equal(MotivoConflicto.Unicidad, porClave.Motivo);
+        Assert.Null(porClave.InnerException);
+
+        // El CHECK de credencial única (Id = 2, 275): también Unicidad.
+        var segunda = baseTemporal.CrearContexto();
+        segunda.CredencialesAcceso.Add(new CredencialAccesoFila
+        {
+            Id = 2,
+            Hash = HasherQueSeAdelanta.HashDeLaOtra,
+            DefinidaEn = Instante.UtcDateTime,
+        });
+        var porCheck = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(segunda).ConfirmarAsync());
+        Assert.Equal(MotivoConflicto.Unicidad, porCheck.Motivo);
+        Assert.Null(porCheck.InnerException);
+        Assert.Equal("Los datos a guardar chocan con datos existentes.", porCheck.Message);
     }
 
     private static string Describir(string escenario, IEnumerable<DateTime> fechas) =>

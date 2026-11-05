@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Optica.Domain.Comun;
+using Optica.Domain.Configuracion;
 
 namespace Optica.Domain.Catalogo;
 
@@ -9,14 +10,17 @@ namespace Optica.Domain.Catalogo;
 /// </summary>
 public sealed class Articulo
 {
+    /// <summary>Reconstruye un artículo; el alta usa <see cref="Nuevo"/> (D-10).</summary>
     /// <param name="codigo">El código autonumérico; null antes de grabar.</param>
+    /// <param name="activo">Si el artículo está activo (FR-05, FR-06); obligatorio (D-10).</param>
+    /// <param name="version">La versión para la concurrencia optimista, desde 0; la incrementa la persistencia.</param>
     /// <exception cref="ArgumentException">
-    /// Algún valor incumple la política, o el precio de venta tiene más de 2 decimales o no entra en el tipo. El
-    /// mensaje nombra el campo y no incluye el valor recibido.
+    /// Algún valor incumple la política, el precio de venta tiene más de 2 decimales o no entra en el tipo, o la
+    /// versión es negativa. El mensaje nombra el campo y no incluye el valor recibido.
     /// </exception>
     public Articulo(
         long? codigo, string codigoProveedor, string descripcion, decimal precioCosto, decimal margenUtilidad,
-        decimal precioVenta)
+        decimal precioVenta, bool activo, long version)
     {
         var infracciones = PoliticaArticulo.Evaluar(codigoProveedor, descripcion, precioCosto, margenUtilidad);
         if (infracciones.Count > 0)
@@ -29,6 +33,11 @@ public sealed class Articulo
             throw new ArgumentException("El precio de venta no es válido.", nameof(precioVenta));
         }
 
+        if (version < 0)
+        {
+            throw new ArgumentException("La versión no es válida.", nameof(version));
+        }
+
         Codigo = codigo;
         CodigoProveedor = NormalizacionCodigo.Recortar(codigoProveedor);
         CodigoProveedorClave = NormalizacionCodigo.Clave(codigoProveedor);
@@ -36,7 +45,15 @@ public sealed class Articulo
         PrecioCosto = precioCosto;
         MargenUtilidad = margenUtilidad;
         PrecioVenta = precioVenta;
+        Activo = activo;
+        Version = version;
     }
+
+    /// <summary>Un artículo para dar de alta: sin código, activo y con versión 0 (D-10).</summary>
+    /// <exception cref="ArgumentException">Igual que el constructor.</exception>
+    public static Articulo Nuevo(
+        string codigoProveedor, string descripcion, decimal precioCosto, decimal margenUtilidad, decimal precioVenta) =>
+        new(null, codigoProveedor, descripcion, precioCosto, margenUtilidad, precioVenta, activo: true, version: 0);
 
     /// <summary>El código autonumérico; null antes de grabar.</summary>
     public long? Codigo { get; }
@@ -61,25 +78,109 @@ public sealed class Articulo
     /// <summary>Verdadero si el precio de costo es cero o negativo: lleva la advertencia de FR-05.</summary>
     public bool CostoNoPositivo => PrecioCosto <= 0m;
 
+    /// <summary>Falso si el artículo está dado de baja: no se modifica hasta reactivarlo (FR-05, D-02).</summary>
+    public bool Activo { get; }
+
+    /// <summary>La versión para la concurrencia optimista, desde 0.</summary>
+    public long Version { get; }
+
+    /// <summary>
+    /// Los datos modificados (FR-03). Inactivo: <see cref="ResultadoModificacion.Inactivo"/> sin evaluar los datos
+    /// (D-02, D-20). Si no, evalúa <see cref="PoliticaArticulo"/> y, si alguno incumple, devuelve
+    /// <see cref="ResultadoModificacion.Invalido"/> con todas las infracciones, una por campo. El precio de venta se
+    /// conserva si el costo y el margen son iguales a los guardados, y si alguno cambió se calcula con la configuración
+    /// vigente; su infracción de rango va en la misma lista (D-03, D-06 de FEAT-002a). Sin infracciones devuelve
+    /// <see cref="ResultadoModificacion.Modificado"/> con una copia con el mismo código y la misma versión, que
+    /// incrementa la persistencia. Nunca lanza por los datos.
+    /// </summary>
+    public ResultadoModificacion Modificar(
+        string? codigoProveedor, string? descripcion, decimal? precioCosto, decimal? margenUtilidad,
+        ConfiguracionNegocio vigente)
+    {
+        ArgumentNullException.ThrowIfNull(vigente);
+        if (!Activo)
+        {
+            return ResultadoModificacion.Inactivo;
+        }
+
+        var infracciones = new List<InfraccionArticulo>(
+            PoliticaArticulo.Evaluar(codigoProveedor, descripcion, precioCosto, margenUtilidad));
+
+        decimal? precioVenta = null;
+        if (precioCosto is { } costo && margenUtilidad is { } margen && !TieneInfraccionDeCostoOMargen(infracciones))
+        {
+            if (costo == PrecioCosto && margen == MargenUtilidad)
+            {
+                precioVenta = PrecioVenta;
+            }
+            else
+            {
+                var calculo = CalculadoraPrecioVenta.Calcular(costo, margen, vigente);
+                if (calculo.Infraccion is { } infraccion)
+                {
+                    infracciones.Add(infraccion);
+                }
+                else
+                {
+                    precioVenta = calculo.Precio!.PrecioVenta;
+                }
+            }
+        }
+
+        if (infracciones.Count > 0)
+        {
+            return ResultadoModificacion.Invalido(infracciones);
+        }
+
+        // Sin infracciones, la política aceptó los cuatro y el precio quedó calculado o conservado.
+        return ResultadoModificacion.Modificado(new Articulo(
+            Codigo, codigoProveedor!, descripcion!, precioCosto!.Value, margenUtilidad!.Value, precioVenta!.Value,
+            activo: true, Version));
+    }
+
+    /// <summary>Una copia que solo cambia <see cref="Activo"/>: los demás datos y la versión quedan igual (D-09).</summary>
+    public Articulo ConEstado(bool activo) =>
+        new(Codigo, CodigoProveedor, Descripcion, PrecioCosto, MargenUtilidad, PrecioVenta, activo, Version);
+
+    private static bool TieneInfraccionDeCostoOMargen(List<InfraccionArticulo> infracciones) =>
+        infracciones.Exists(infraccion => CampoDe(infraccion) is Campo.PrecioCosto or Campo.MargenUtilidad);
+
     // Los mensajes no incluyen el valor recibido, como el resto de las invariantes del dominio.
-    private static ArgumentException Error(InfraccionArticulo infraccion) => infraccion switch
+    private static ArgumentException Error(InfraccionArticulo infraccion) => CampoDe(infraccion) switch
+    {
+        Campo.CodigoProveedor => new ArgumentException("El código en el proveedor no es válido.", "codigoProveedor"),
+        Campo.Descripcion => new ArgumentException("La descripción no es válida.", "descripcion"),
+        Campo.PrecioCosto => new ArgumentException("El precio de costo no es válido.", "precioCosto"),
+        Campo.MargenUtilidad => new ArgumentException("El margen de utilidad no es válido.", "margenUtilidad"),
+        Campo.PrecioVenta => new ArgumentException("El precio de venta no es válido.", "precioVenta"),
+        _ => throw new UnreachableException("Campo de artículo sin mensaje asignado."),
+    };
+
+    // El único lugar que dice a qué campo pertenece cada infracción.
+    private static Campo CampoDe(InfraccionArticulo infraccion) => infraccion switch
     {
         InfraccionArticulo.CodigoFaltante
             or InfraccionArticulo.CodigoConCaracteresInvalidos
-            or InfraccionArticulo.CodigoDemasiadoLargo =>
-            new ArgumentException("El código en el proveedor no es válido.", "codigoProveedor"),
+            or InfraccionArticulo.CodigoDemasiadoLargo => Campo.CodigoProveedor,
         InfraccionArticulo.DescripcionFaltante
             or InfraccionArticulo.DescripcionConCaracteresInvalidos
-            or InfraccionArticulo.DescripcionDemasiadoLarga =>
-            new ArgumentException("La descripción no es válida.", "descripcion"),
+            or InfraccionArticulo.DescripcionDemasiadoLarga => Campo.Descripcion,
         InfraccionArticulo.CostoFaltante
             or InfraccionArticulo.CostoConMasDeDosDecimales
-            or InfraccionArticulo.CostoFueraDeRango =>
-            new ArgumentException("El precio de costo no es válido.", "precioCosto"),
+            or InfraccionArticulo.CostoFueraDeRango => Campo.PrecioCosto,
         InfraccionArticulo.MargenFaltante
             or InfraccionArticulo.MargenFueraDeRango
-            or InfraccionArticulo.MargenConMasDeDosDecimales =>
-            new ArgumentException("El margen de utilidad no es válido.", "margenUtilidad"),
+            or InfraccionArticulo.MargenConMasDeDosDecimales => Campo.MargenUtilidad,
+        InfraccionArticulo.PrecioVentaFueraDeRango => Campo.PrecioVenta,
         _ => throw new UnreachableException("Infracción de artículo sin campo asignado."),
     };
+
+    private enum Campo
+    {
+        CodigoProveedor,
+        Descripcion,
+        PrecioCosto,
+        MargenUtilidad,
+        PrecioVenta,
+    }
 }

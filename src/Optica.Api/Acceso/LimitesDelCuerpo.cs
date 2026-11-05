@@ -10,14 +10,15 @@ namespace Optica.Api.Acceso;
 public static class LimitesDelCuerpo
 {
     /// <summary>
-    /// Todo POST exige <c>Content-Type: application/json</c> (con o sin <c>charset</c>), aun sin cuerpo: otro tipo, o
-    /// ninguno, 415. Con un <c>[RequestSizeLimit]</c> en el endpoint, un <c>Content-Length</c> mayor responde 413 sin
-    /// leer el cuerpo, y un cuerpo sin <c>Content-Length</c> (en partes) se corta con 413 al pasar el límite.
+    /// Todo POST y todo PUT exigen <c>Content-Type: application/json</c> (con o sin <c>charset</c>), aun sin cuerpo:
+    /// otro tipo, o ninguno, 415 (R-02; para PUT, D-11 de FEAT-002b). Con un <c>[RequestSizeLimit]</c> en el endpoint,
+    /// un <c>Content-Length</c> mayor responde 413 sin leer el cuerpo, y un cuerpo sin <c>Content-Length</c> (en partes)
+    /// se corta con 413 al pasar el límite.
     /// </summary>
     public static Task AplicarAsync(HttpContext contexto, RequestDelegate siguiente)
     {
         var pedido = contexto.Request;
-        if (HttpMethods.IsPost(pedido.Method) && !EsJson(pedido.ContentType))
+        if ((HttpMethods.IsPost(pedido.Method) || HttpMethods.IsPut(pedido.Method)) && !EsJson(pedido.ContentType))
         {
             contexto.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
             return Task.CompletedTask;

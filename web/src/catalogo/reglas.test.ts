@@ -7,6 +7,10 @@ import {
 } from '../configuracion/reglas';
 import {
   esUtf16Valido,
+  LARGO_MAXIMO_BUSQUEDA,
+  LARGO_MAXIMO_NUMERO,
+  MENSAJE_BUSQUEDA_LARGA,
+  validarBusqueda,
   MENSAJE_CARACTERES_INVALIDOS,
   MENSAJE_CODIGO_FALTANTE,
   MENSAJE_CODIGO_LARGO,
@@ -239,5 +243,23 @@ describe('reglas del margen de utilidad', () => {
 
   it.each(['0', '1000', '1000,00', '50,25', '150'])('reglas_Margen_%j_Valido', (texto) => {
     expect(errorDe({ margenUtilidad: texto }, 'margenUtilidad')).toBeUndefined();
+  });
+});
+
+describe('reglas de la búsqueda', () => {
+  it('reglas_Busqueda_LimitesPropios', () => {
+    expect(LARGO_MAXIMO_BUSQUEDA).toBe(200);
+    expect(MENSAJE_BUSQUEDA_LARGA).toBe('Usá hasta 200 caracteres.');
+    expect(LARGO_MAXIMO_NUMERO).toBe(32);
+  });
+
+  it.each([
+    ['vacío', '', { texto: '' }],
+    ['recortado', `${NBSP} armazón${TAB}`, { texto: 'armazón' }],
+    ['200 tras el recorte', ` ${'a'.repeat(200)} `, { texto: 'a'.repeat(200) }],
+    ['201 tras el recorte', 'a'.repeat(201), { error: 'Usá hasta 200 caracteres.' }],
+    ['UTF-16 inválido', `a${SURROGATE_ALTO}`, { error: MENSAJE_CARACTERES_INVALIDOS }],
+  ])('reglas_ValidarBusqueda_%s', (_caso, escrito, esperado) => {
+    expect(validarBusqueda(escrito)).toEqual(esperado);
   });
 });

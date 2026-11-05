@@ -15,19 +15,30 @@ uno con su Api, su puerto y su base nueva:
 |---|---|---|---|
 | `chrome-acceso` | `chrome` | `acceso.spec.ts` | 5543 |
 | `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5544 |
-| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5545 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5546 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5547 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5548 |
+| `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
+| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5547 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5548 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5549 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5550 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
-cada uno, los archivos en orden alfabético. Por eso un archivo nuevo corre los puertos de los que vienen después:
-`articulos.spec.ts` (FEAT-002a) movió `chrome-configuracion` de 5544 a 5545 y los de Edge de 5545–5546 a 5546–5548. Si
-tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
-al arrancar.
+cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
+antes que `articulos-edicion`: un nombre que es el comienzo de otro ordena primero). Un archivo nuevo corre los puertos
+de los que vienen después: `articulos.spec.ts` (FEAT-002a) movió `chrome-configuracion` de 5544 a 5545 y los de Edge de
+5545–5546 a 5546–5548, y `articulos-edicion.spec.ts` (FEAT-002b) movió `chrome-configuracion` a 5546 y los de Edge a
+5547–5550. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe
+`servidor.mjs` al arrancar.
 
 `articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
 y lo vuelve a 0,01 (AC-10), y al final deja Monotributo (AC-09). Por eso sus pruebas también van en ese orden.
+
+`articulos-edicion.spec.ts` (FEAT-002b, AC-01 a AC-06) es la excepción al párrafo siguiente: sus pruebas no dependen
+del orden. La que corre primero define la contraseña de la base y las demás ingresan con ella; cada prueba crea sus
+artículos por la Api con la sesión de la página y con sus propios códigos en el proveedor (`ED-…`), y las que
+verifican un precio (AC-01, AC-02, AC-03 y AC-05) dejan antes Responsable Inscripto, alícuota 21 y múltiplo 0,01
+desde la pantalla de configuración. Solo la prueba de AC-04 graba descripciones con "armazón", porque esa búsqueda
+tiene que listar todas las que lo contienen y ninguna más.
 
 Dentro de un proyecto las pruebas corren en orden y de a una, porque dependen de lo que dejó la anterior en su base.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
@@ -37,6 +48,12 @@ La lista de archivos sale de `tests/`: un `*.spec.ts` nuevo tiene sus proyectos 
 `msedge-<archivo>`), con su Api y su base, sin tocar la configuración. Su nombre tiene que ser palabras en minúsculas
 unidas por guiones (por ejemplo, `presupuestos-borrador.spec.ts`); si no, `playwright.config.ts` falla con un error
 que nombra el archivo, en lugar de dejarlo sin correr.
+
+**Edge sin red externa.** Con un perfil nuevo, Edge inicia sesión solo con la cuenta del equipo y consulta servicios
+de Microsoft (Graph, Office, Bing); mientras lo hace, el navegador deja de atender pedidos por varios segundos y las
+pruebas fallaban de forma intermitente en "Cargando…" (W-VER-03 de FEAT-001a y FEAT-001b). Los proyectos `msedge-*`
+arrancan con `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost`: solo se resuelve `localhost`, así esos pedidos
+fallan en el acto y no sale ningún dato de la cuenta (FEAT-002b, D-30). No subas `expect.timeout` para taparlo.
 
 Si una Api termina o no responde al arrancar, o si `OPTICA_E2E_INSTANCIAS` tiene un nombre mal formado o repetido o un
 puerto fuera de 1 a 65535, `servidor.mjs` termina con código 1 y Playwright no corre ninguna prueba.
@@ -102,5 +119,5 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 ## Diagnóstico sin Chrome ni Edge
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
-(proyectos `chromium-acceso`, `chromium-articulos` y `chromium-configuracion`).
+(proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion` y `chromium-configuracion`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

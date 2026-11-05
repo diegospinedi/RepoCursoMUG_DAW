@@ -112,6 +112,21 @@ describe('Inicio', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos/nuevo');
   });
 
+  it('Inicio_EnlaceArticulos', async () => {
+    servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, { articulos: [], pagina: 1, tamanoPagina: 50, total: 0 }),
+    });
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Artículos' });
+    expect(enlace.getAttribute('href')).toBe('/articulos');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Artículos' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos');
+  });
+
   it.each([
     ['sin mensaje', { otro: 'La contraseña se cambió.' }],
     ['mensaje que no es texto', { mensaje: 42 }],

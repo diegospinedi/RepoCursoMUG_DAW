@@ -3,9 +3,11 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router';
 import { alPerderLaSesion } from './api/cliente';
 import { Encabezado } from './componentes/Encabezado';
 import { MarcaProvider } from './marca/MarcaProvider';
+import { Articulos } from './paginas/Articulos';
 import { CambiarContrasena } from './paginas/CambiarContrasena';
 import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
+import { EditarArticulo } from './paginas/EditarArticulo';
 import { Ingreso } from './paginas/Ingreso';
 import { NuevoArticulo } from './paginas/NuevoArticulo';
 import { Arranque } from './rutas/Arranque';
@@ -34,7 +36,10 @@ export function App() {
             <Route path="/ingreso" element={<Ingreso />} />
             <Route path="/cambiar-contrasena" element={<CambiarContrasena />} />
             <Route path="/configuracion" element={<Configuracion />} />
+            <Route path="/articulos" element={<Articulos />} />
+            {/* El alta antes que la edición: "nuevo" no es un código (react-router ya prefiere el segmento fijo). */}
             <Route path="/articulos/nuevo" element={<NuevoArticulo />} />
+            <Route path="/articulos/:codigo" element={<EditarArticulo />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

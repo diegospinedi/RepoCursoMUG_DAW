@@ -98,6 +98,46 @@ public static class RespuestasValidacion
         };
     }
 
+    // El 409 de los artículos (D-19): su título fijo, los dos valores de la extensión motivo y quien los arma.
+
+    /// <summary>El <c>title</c> fijo de los 409 de la modificación y del cambio de estado de un artículo (D-19).</summary>
+    public const string TituloConflictoArticulo = "No se pudo grabar el artículo.";
+
+    /// <summary>Valor de la extensión <c>motivo</c> de un 409: el artículo está inactivo (D-02).</summary>
+    public const string MotivoInactivo = "inactivo";
+
+    /// <summary>Valor de la extensión <c>motivo</c> de un 409: otra escritura cambió el artículo (D-08, D-16).</summary>
+    public const string MotivoCambiado = "cambiado";
+
+    /// <summary>
+    /// 409 con ProblemDetails para un artículo que no se pudo grabar (D-19): <c>title</c> fijo
+    /// (<see cref="TituloConflictoArticulo"/>), <paramref name="detalle"/> en <c>detail</c> (el texto fijo del caso de
+    /// uso, que no repite datos recibidos) y <paramref name="motivo"/> en la extensión <c>motivo</c>
+    /// (<see cref="MotivoInactivo"/> o <see cref="MotivoCambiado"/>), que la pantalla traduce a su propio texto. Sin
+    /// <c>errors</c>: no es un error de un campo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los dos previstos, o el detalle está vacío.</exception>
+    public static ActionResult ConflictoArticulo(this ControllerBase controller, string motivo, string detalle)
+    {
+        if (motivo is not (MotivoInactivo or MotivoCambiado))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(detalle);
+        var problema = controller.ProblemDetailsFactory.CreateProblemDetails(
+            controller.HttpContext,
+            statusCode: StatusCodes.Status409Conflict,
+            title: TituloConflictoArticulo,
+            detail: detalle);
+        problema.Extensions["motivo"] = motivo;
+        return new ObjectResult(problema)
+        {
+            StatusCode = StatusCodes.Status409Conflict,
+            ContentTypes = { "application/problem+json" },
+        };
+    }
+
     private static ActionResult ConErrores(
         this ControllerBase controller, int codigo, string? detalle, params ErrorValidacion[] errores)
     {

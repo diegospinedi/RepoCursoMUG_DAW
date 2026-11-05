@@ -24,6 +24,15 @@ export const MENSAJE_MARGEN_FUERA_DE_RANGO = 'El margen debe estar entre 0 y 1.0
 
 export const LARGO_MAXIMO_CODIGO = 50;
 export const LARGO_MAXIMO_DESCRIPCION = 200;
+/** Largo máximo de cada número escrito en el alta y la edición: alcanza para cualquier importe válido y limita el cuerpo. */
+export const LARGO_MAXIMO_NUMERO = 32;
+
+/**
+ * Largo máximo del texto buscado después del recorte (Block 3 de FEAT-002b). Es propio de la búsqueda: coincide hoy con
+ * el de la descripción, pero no depende de él.
+ */
+export const LARGO_MAXIMO_BUSQUEDA = 200;
+export const MENSAJE_BUSQUEDA_LARGA = 'Usá hasta 200 caracteres.';
 const MARGEN_MINIMO = 0;
 const MARGEN_MAXIMO = 1000;
 const DECIMALES_MAXIMOS = 2;
@@ -71,6 +80,19 @@ export function esUtf16Valido(texto: string): boolean {
     }
   }
   return true;
+}
+
+/**
+ * El texto a buscar, recortado como en el servidor, o el mensaje que va junto al campo: las mismas reglas que la Api
+ * (UTF-16 válido y hasta {@link LARGO_MAXIMO_BUSQUEDA} caracteres), para no enviar lo que rechaza. Vacío es válido:
+ * lista todo el catálogo.
+ */
+export function validarBusqueda(escrito: string): { texto: string } | { error: string } {
+  const texto = recortar(escrito);
+  if (!esUtf16Valido(texto)) {
+    return { error: MENSAJE_CARACTERES_INVALIDOS };
+  }
+  return texto.length > LARGO_MAXIMO_BUSQUEDA ? { error: MENSAJE_BUSQUEDA_LARGA } : { texto };
 }
 
 /** Lo que hay escrito en el formulario. */

@@ -21,7 +21,19 @@ public class ConflictoAlConfirmarExceptionTests
 
         Assert.Empty(constructoresConCausa);
 
-        var conflicto = new ConflictoAlConfirmarException("conflicto");
+        var conflicto = new ConflictoAlConfirmarException("conflicto", MotivoConflicto.Concurrencia);
         Assert.Null(conflicto.InnerException);
+        Assert.Equal(MotivoConflicto.Concurrencia, conflicto.Motivo);
+        Assert.Equal(
+            MotivoConflicto.Unicidad, new ConflictoAlConfirmarException("conflicto", MotivoConflicto.Unicidad).Motivo);
+    }
+
+    [Fact]
+    public void ConflictoAlConfirmar_MotivoFueraDelEnum_Rechazado()
+    {
+        var error = Assert.Throws<ArgumentOutOfRangeException>(
+            () => new ConflictoAlConfirmarException("conflicto", (MotivoConflicto)99));
+
+        Assert.Equal("motivo", error.ParamName);
     }
 }

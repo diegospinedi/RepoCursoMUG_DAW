@@ -1,6 +1,7 @@
 using System.Globalization;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Comun;
+using Optica.Domain.Configuracion;
 
 namespace Optica.Domain.Tests.Catalogo;
 
@@ -54,7 +55,7 @@ public class ArticuloTests
     public void Constructor_ValoresValidos_GuardaRecortadoYClave()
     {
         var articulo = new Articulo(
-            null, "  abc-1\u00A0", "\tArmaz\u00F3n met\u00E1lico  ", 1210m, 50m, 1815m);
+            null, "  abc-1\u00A0", "\tArmaz\u00F3n met\u00E1lico  ", 1210m, 50m, 1815m, activo: true, version: 0);
 
         Assert.Null(articulo.Codigo);
         Assert.Equal("abc-1", articulo.CodigoProveedor);
@@ -69,7 +70,7 @@ public class ArticuloTests
     [Fact]
     public void Constructor_ConCodigo_ExponeElCodigo()
     {
-        var articulo = new Articulo(42L, "ABC-1", "Lente", 1000m, 50m, 1500m);
+        var articulo = new Articulo(42L, "ABC-1", "Lente", 1000m, 50m, 1500m, activo: true, version: 0);
 
         Assert.Equal(42L, articulo.Codigo);
     }
@@ -81,7 +82,7 @@ public class ArticuloTests
     [InlineData("0.01", "0.02", false)]
     public void Articulo_CostoNoPositivo_Advertencia(string costo, string venta, bool esperado)
     {
-        var articulo = new Articulo(null, "ABC-1", "Lente", Leer(costo), 50m, Leer(venta));
+        var articulo = new Articulo(null, "ABC-1", "Lente", Leer(costo), 50m, Leer(venta), activo: true, version: 0);
 
         Assert.Equal(esperado, articulo.CostoNoPositivo);
     }
@@ -111,7 +112,7 @@ public class ArticuloTests
         string? valor)
     {
         var error = Assert.Throws<ArgumentException>(
-            () => new Articulo(null, codigo!, descripcion!, costo, margen, venta));
+            () => new Articulo(null, codigo!, descripcion!, costo, margen, venta, activo: true, version: 0));
 
         Assert.Equal(parametro, error.ParamName);
         if (valor is not null)
@@ -137,11 +138,178 @@ public class ArticuloTests
         foreach (var (codigo, descripcion, parametro) in casos)
         {
             var error = Assert.Throws<ArgumentException>(
-                () => new Articulo(null, codigo, descripcion, 10m, 10m, 11m));
+                () => new Articulo(null, codigo, descripcion, 10m, 10m, 11m, activo: true, version: 0));
 
             Assert.Equal(parametro, error.ParamName);
         }
     }
+
+    [Fact]
+    public void Constructor_VersionNegativaInvalida_Lanza()
+    {
+        var error = Assert.Throws<ArgumentException>(
+            () => new Articulo(1L, "ABC-1", "Lente", 10m, 10m, 11m, activo: true, version: -1L));
+
+        Assert.Equal("version", error.ParamName);
+        Assert.DoesNotContain("-1", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Nuevo_QuedaActivoConVersionCero()
+    {
+        var articulo = Articulo.Nuevo(" abc-1 ", " Lente ", 1210m, 50m, 1815m);
+
+        Assert.Null(articulo.Codigo);
+        Assert.True(articulo.Activo);
+        Assert.Equal(0L, articulo.Version);
+        Assert.Equal("abc-1", articulo.CodigoProveedor);
+        Assert.Equal("ABC-1", articulo.CodigoProveedorClave);
+        Assert.Equal("Lente", articulo.Descripcion);
+        Assert.Equal(1815m, articulo.PrecioVenta);
+    }
+
+    [Fact]
+    public void Modificar_InactivoRechazado_DevuelveResultadoInactivo()
+    {
+        // D-02, D-20: con datos que la política rechazaría, el resultado sigue siendo Inactivo.
+        var inactivo = Guardado(activo: false);
+
+        var resultado = inactivo.Modificar(null, null, null, null, ResponsableInscripto());
+
+        Assert.True(resultado.EsInactivo);
+        Assert.False(resultado.EsModificado);
+        Assert.False(resultado.EsInvalido);
+        Assert.Null(resultado.Articulo);
+        Assert.Empty(resultado.Infracciones);
+    }
+
+    [Fact]
+    public void Modificar_DatosInvalidos_DevuelveTodasLasInfracciones()
+    {
+        var resultado = Guardado().Modificar(
+            null, new string('W', 201), 10.555m, 1000.01m, ResponsableInscripto());
+
+        Assert.False(resultado.EsModificado);
+        Assert.False(resultado.EsInactivo);
+        Assert.True(resultado.EsInvalido);
+        Assert.Equal(
+            [
+                InfraccionArticulo.CodigoFaltante,
+                InfraccionArticulo.DescripcionDemasiadoLarga,
+                InfraccionArticulo.CostoConMasDeDosDecimales,
+                InfraccionArticulo.MargenFueraDeRango,
+            ],
+            resultado.Infracciones);
+    }
+
+    [Fact]
+    public void Modificar_PrecioFueraDeRango_DevuelveInfraccionDeRango()
+    {
+        // D-06 de FEAT-002a: un error de rango en la lista, no un desborde.
+        var resultado = Guardado().Modificar(
+            "ABC-1", "Lente", ReglasImporte.ImporteMaximo, 1000m, ResponsableInscripto());
+
+        Assert.False(resultado.EsModificado);
+        Assert.True(resultado.EsInvalido);
+        Assert.Equal([InfraccionArticulo.PrecioVentaFueraDeRango], resultado.Infracciones);
+    }
+
+    [Fact]
+    public void Modificar_CostoYMargenInvalidos_NoAgregaInfraccionDeRango()
+    {
+        // Con el margen inválido el precio no se calcula: solo la infracción del margen, aunque el costo máximo con
+        // margen 1000 daría fuera de rango.
+        var resultado = Guardado().Modificar(
+            "ABC-1", "Lente", ReglasImporte.ImporteMaximo, 1000.01m, ResponsableInscripto());
+
+        Assert.True(resultado.EsInvalido);
+        Assert.Equal([InfraccionArticulo.MargenFueraDeRango], resultado.Infracciones);
+    }
+
+    [Fact]
+    public void Modificar_MargenDe50A60_Recalcula1936()
+    {
+        // AC-02: alícuota 21, múltiplo 0,01; 1210 × 1,60 = 1936.
+        var resultado = Guardado().Modificar("ABC-1", "Lente", 1210m, 60m, ResponsableInscripto());
+
+        Assert.True(resultado.EsModificado);
+        Assert.False(resultado.EsInvalido);
+        Assert.Empty(resultado.Infracciones);
+        Assert.Equal(1936m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(60m, resultado.Articulo.MargenUtilidad);
+        Assert.Equal(7L, resultado.Articulo.Codigo);
+        Assert.Equal(3L, resultado.Articulo.Version);
+        Assert.True(resultado.Articulo.Activo);
+    }
+
+    [Fact]
+    public void Modificar_CostoDe1210A2420_Recalcula3630()
+    {
+        // AC-03: alícuota 21, múltiplo 0,01; 2420 × 1,50 = 3630.
+        var resultado = Guardado().Modificar("ABC-1", "Lente", 2420m, 50m, ResponsableInscripto());
+
+        Assert.True(resultado.EsModificado);
+        Assert.Equal(3630m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(2420m, resultado.Articulo.PrecioCosto);
+        Assert.Equal(7L, resultado.Articulo.Codigo);
+        Assert.Equal(3L, resultado.Articulo.Version);
+    }
+
+    [Fact]
+    public void Modificar_SoloDescripcion_ConservaPrecioVenta()
+    {
+        // D-03: con múltiplo 100 un recálculo daría 1900; sin cambios de costo ni margen se conserva 1815.
+        var resultado = Guardado().Modificar(
+            " xyz-9 ", " Armaz\U000000F3n nuevo ", 1210.00m, 50.0m, ResponsableInscripto(multiplo: 100m));
+
+        Assert.True(resultado.EsModificado);
+        Assert.Equal(1815m, resultado.Articulo.PrecioVenta);
+        Assert.Equal("Armaz\U000000F3n nuevo", resultado.Articulo.Descripcion);
+        Assert.Equal("xyz-9", resultado.Articulo.CodigoProveedor);
+        Assert.Equal("XYZ-9", resultado.Articulo.CodigoProveedorClave);
+        Assert.Equal(7L, resultado.Articulo.Codigo);
+        Assert.Equal(3L, resultado.Articulo.Version);
+    }
+
+    [Fact]
+    public void ConEstado_Desactivar_ConservaLosDatos()
+    {
+        // AC-05: solo cambia Activo (D-09).
+        var original = Guardado();
+
+        var desactivado = original.ConEstado(false);
+
+        Assert.False(desactivado.Activo);
+        Assert.Equal(original.Codigo, desactivado.Codigo);
+        Assert.Equal(original.CodigoProveedor, desactivado.CodigoProveedor);
+        Assert.Equal(original.CodigoProveedorClave, desactivado.CodigoProveedorClave);
+        Assert.Equal(original.Descripcion, desactivado.Descripcion);
+        Assert.Equal(original.PrecioCosto, desactivado.PrecioCosto);
+        Assert.Equal(original.MargenUtilidad, desactivado.MargenUtilidad);
+        Assert.Equal(original.PrecioVenta, desactivado.PrecioVenta);
+        Assert.Equal(original.Version, desactivado.Version);
+        Assert.True(original.Activo);
+    }
+
+    [Fact]
+    public void ConEstado_Reactivar_QuedaActivo()
+    {
+        // AC-06.
+        var inactivo = Guardado(activo: false);
+
+        var reactivado = inactivo.ConEstado(true);
+
+        Assert.True(reactivado.Activo);
+        Assert.Equal(inactivo.Descripcion, reactivado.Descripcion);
+        Assert.Equal(inactivo.PrecioVenta, reactivado.PrecioVenta);
+        Assert.Equal(inactivo.Version, reactivado.Version);
+    }
+
+    private static Articulo Guardado(bool activo = true) =>
+        new(7L, "ABC-1", "Lente", 1210m, 50m, 1815m, activo, version: 3L);
+
+    private static ConfiguracionNegocio ResponsableInscripto(decimal multiplo = 0.01m) =>
+        new(21m, CondicionFiscal.ResponsableInscripto, multiplo, null);
 
     private static decimal Leer(string texto) => decimal.Parse(texto, CultureInfo.InvariantCulture);
 }

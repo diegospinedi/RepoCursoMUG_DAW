@@ -108,6 +108,8 @@ public sealed class SinDatosArcaTests
         Assert.Contains("/api/acceso/estado", conJson);
         Assert.Contains("/api/marca", conJson);
         Assert.Contains(RutaArticulo, conJson);
+        // El listado de FEAT-002b, con el artículo grabado en su primera página.
+        Assert.Contains(RutaArticulos, conJson);
         Assert.Contains("/api/sesion", sinCuerpo);
     }
 

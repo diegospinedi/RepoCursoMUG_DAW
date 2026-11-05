@@ -6,12 +6,20 @@ using Optica.Domain.Configuracion;
 namespace Optica.Application.Catalogo;
 
 /// <summary>Los cuatro datos del artículo tal como llegan; la política los valida, una infracción por campo.</summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra ningún valor (<c>DatosArticulo { }</c>): el de un record mostraría el costo y
+/// el margen en cualquier log que lo reciba (R-06 de FEAT-002b).
+/// </remarks>
 public sealed record DatosArticulo(
-    string? CodigoProveedor, string? Descripcion, decimal? PrecioCosto, decimal? MargenUtilidad);
+    string? CodigoProveedor, string? Descripcion, decimal? PrecioCosto, decimal? MargenUtilidad)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
 
 /// <summary>
 /// Un artículo grabado: su código autonumérico, los textos recortados, los importes y el precio de venta ya
-/// redondeado, y <see cref="Advertencia"/> con el texto de FR-05 si el costo es cero o negativo (null si no).
+/// redondeado, <see cref="Advertencia"/> con el texto de FR-05 si el costo es cero o negativo (null si no), su estado
+/// (FR-05, FR-06) y la <see cref="Version"/> que la pantalla de edición devuelve al grabar (D-08, D-17).
 /// </summary>
 public sealed record ArticuloGrabado(
     long Codigo,
@@ -20,7 +28,9 @@ public sealed record ArticuloGrabado(
     decimal PrecioCosto,
     decimal MargenUtilidad,
     decimal PrecioVenta,
-    string? Advertencia)
+    string? Advertencia,
+    bool Activo,
+    long Version)
 {
     /// <exception cref="InvalidOperationException">El artículo no tiene código: todavía no se grabó.</exception>
     internal static ArticuloGrabado Desde(Articulo articulo) => new(
@@ -30,7 +40,9 @@ public sealed record ArticuloGrabado(
         articulo.PrecioCosto,
         articulo.MargenUtilidad,
         articulo.PrecioVenta,
-        articulo.CostoNoPositivo ? ValidacionArticulo.AdvertenciaCostoNoPositivo : null);
+        articulo.CostoNoPositivo ? ValidacionArticulo.AdvertenciaCostoNoPositivo : null,
+        articulo.Activo,
+        articulo.Version);
 }
 
 /// <summary>Cómo terminó un alta: grabado, con el artículo, o inválido, con un error por campo.</summary>
@@ -108,8 +120,8 @@ public sealed class AltaArticulo(
             return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
         }
 
-        articulos.Agregar(new Articulo(
-            null, codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
+        articulos.Agregar(Articulo.Nuevo(
+            codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
 
         try
         {

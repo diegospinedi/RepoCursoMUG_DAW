@@ -73,7 +73,7 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Content-Type JSON en todo POST (415) y tamaño máximo del cuerpo (413), antes del limitador (R-04, R-05).
+// Content-Type JSON en todo POST y PUT (415) y tamaño máximo del cuerpo (413), antes del limitador (R-04, R-05).
 app.Use(LimitesDelCuerpo.AplicarAsync);
 
 app.UseRateLimiter();
@@ -105,6 +105,15 @@ public partial class Program
         // los deja en Debug y el manejador de errores registra uno propio con la ruta visible.
         builder.Services.AgregarInfraestructura(builder.Configuration);
 
+        // Piso del log en código (D-12, R-06): el registro de pedidos de ASP.NET Core escribe la URL con la query string
+        // (el texto buscado del listado) y el de MVC, los argumentos de las acciones. Quedan en Warning aunque la
+        // configuración baje Microsoft.AspNetCore (appsettings o variable de entorno): una regla de categoría más
+        // específica le gana a la de Microsoft.AspNetCore y, entre dos de la misma categoría, gana la que se agrega
+        // después, que es esta. Solo la pisa una regla propia de un proveedor (Logging:<Proveedor>:LogLevel:...), y la
+        // configuración del proyecto no tiene ninguna para estas categorías: no agregues una.
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Mvc.Infrastructure", LogLevel.Warning);
+
         // Casos de uso de acceso.
         builder.Services.AddScoped<ConsultarEstadoAcceso>();
         builder.Services.AddScoped<DefinirContrasena>();
@@ -123,9 +132,13 @@ public partial class Program
         builder.Services.AddScoped<GrabarConfiguracionNegocio>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
-        // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01).
+        // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
+        // listado (sin costo ni margen, D-12), la modificación con versión (D-08, D-17) y el cambio de estado (D-09).
         builder.Services.AddScoped<AltaArticulo>();
         builder.Services.AddScoped<ObtenerArticulo>();
+        builder.Services.AddScoped<BuscarArticulos>();
+        builder.Services.AddScoped<ModificarArticulo>();
+        builder.Services.AddScoped<CambiarEstadoArticulo>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

@@ -23,6 +23,11 @@ export const MENSAJE_BLOQUEADO = 'El acceso está bloqueado temporalmente. Volv�
 export const MENSAJE_SIN_CREDENCIAL_AL_CAMBIAR = 'No hay una contraseña definida. Volvé a ingresar.';
 export const MENSAJE_CONFIGURACION_GRANDE = 'Los valores enviados son demasiado largos. Revisalos y grabá de nuevo.';
 export const MENSAJE_ARTICULO_GRANDE = 'Los datos enviados son demasiado largos. Revisalos y grabá de nuevo.';
+export const MENSAJE_ARTICULO_NO_ENCONTRADO = 'No se encontró el artículo.';
+/** Textos propios de los 409 de los artículos, según su `motivo` (D-19): nunca el `detail` del servidor. */
+export const MENSAJE_ARTICULO_INACTIVO = 'Este artículo está inactivo. Reactivalo para editarlo.';
+export const MENSAJE_ARTICULO_CAMBIADO = 'El artículo cambió mientras lo editabas. Volvé a abrirlo.';
+export const MENSAJE_LISTADO_CAMBIADO = 'El artículo cambió. Volvé a cargar el listado.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
@@ -40,6 +45,10 @@ export const CAMPO_CODIGO_PROVEEDOR = 'codigoProveedor';
 export const CAMPO_DESCRIPCION = 'descripcion';
 export const CAMPO_PRECIO_COSTO = 'precioCosto';
 export const CAMPO_MARGEN_UTILIDAD = 'margenUtilidad';
+/** Campo del cuerpo y de `errors` de `PUT /api/articulos/{codigo}` con la versión leída (D-17). */
+export const CAMPO_VERSION = 'version';
+/** Parámetro de `GET /api/articulos` y campo de `errors` del texto buscado. */
+export const CAMPO_TEXTO = 'texto';
 
 /** Lo que se graba en `POST /api/articulos`. */
 export interface DatosArticulo {
@@ -49,13 +58,39 @@ export interface DatosArticulo {
   margenUtilidad: number;
 }
 
-/** Lo que devuelven `POST /api/articulos` (201) y `GET /api/articulos/{codigo}`. */
+/**
+ * Lo que devuelven `POST /api/articulos` (201), `GET /api/articulos/{codigo}` y los dos `PUT` (200): el artículo
+ * completo, con su estado y la versión que la edición envía de vuelta (D-08, D-17).
+ */
 export interface ArticuloGrabado extends DatosArticulo {
   codigo: number;
   precioVenta: number;
   /** "Precio de costo negativo o cero" (FR-05), o `null`. */
   advertencia: string | null;
+  activo: boolean;
+  /** Entero de 0 a 2^53 − 1 (D-17). */
+  version: number;
 }
+
+/** Una fila del listado: sin costo ni margen (D-12). */
+export interface ArticuloListado {
+  codigo: number;
+  codigoProveedor: string;
+  descripcion: string;
+  precioVenta: number;
+  activo: boolean;
+}
+
+/** Una página de `GET /api/articulos` (D-01). */
+export interface PaginaArticulos {
+  articulos: ArticuloListado[];
+  pagina: number;
+  tamanoPagina: number;
+  total: number;
+}
+
+/** Los motivos de un 409 de los artículos (D-19). */
+export type MotivoConflicto = 'inactivo' | 'cambiado';
 
 /** El resultado de grabar un artículo: como {@link ResultadoGrabacion}, un 400 trae todos los campos inválidos. */
 export type ResultadoAlta = Resultado<ArticuloGrabado> | { tipo: 'campos'; errores: ErrorDeCampo[] };
@@ -90,8 +125,11 @@ export type Resultado<T> =
   | { tipo: 'ok'; datos: T }
   /** Error que se muestra junto al campo indicado. */
   | { tipo: 'campo'; campo: string; mensaje: string }
-  /** 409: la operación no corresponde al estado del acceso. */
-  | { tipo: 'conflicto'; mensaje: string }
+  /**
+   * 409: la operación no corresponde al estado del acceso o del artículo. En los artículos lleva el `motivo` que
+   * informó la Api (D-19) y el texto propio de la pantalla para ese motivo.
+   */
+  | { tipo: 'conflicto'; mensaje: string; motivo?: MotivoConflicto }
   /** Error que se muestra como mensaje general de la pantalla. */
   | { tipo: 'general'; mensaje: string }
   /** 423: el ingreso está bloqueado por intentos fallidos; se muestra como mensaje general. */
@@ -122,12 +160,21 @@ type Lector<T> = (cuerpo: unknown) => T | undefined;
 type Fallo = Exclude<Resultado<never>, { tipo: 'ok' }>;
 
 interface Opciones {
-  metodo: 'GET' | 'POST';
+  metodo: 'GET' | 'POST' | 'PUT';
   ruta: string;
   cuerpo?: unknown;
   mensaje409?: string;
+  /**
+   * Para los 409 con `motivo` (D-19): el texto propio de cada motivo que la operación admite. Con esta opción el 409
+   * se lee: un motivo que no está acá, o un cuerpo ilegible, es una respuesta ilegible.
+   */
+  motivos409?: Partial<Record<MotivoConflicto, string>>;
+  /** Mensaje general de un 404; sin él, el mensaje de pedido rechazado. */
+  mensaje404?: string;
   /** Campo del formulario donde se muestra un 413 (cuerpo demasiado grande); por defecto, {@link CAMPO_CONTRASENA}. */
   campo413?: string;
+  /** Mensaje general de un 413, para un pedido sin un campo al que atribuirlo; tiene prioridad sobre `campo413`. */
+  mensaje413?: string;
 }
 
 /** Pedido cuya respuesta exitosa trae datos: `leer` valida la forma del JSON. */
@@ -150,9 +197,7 @@ async function pedirSinDatos(opciones: Opciones): Promise<Resultado<void>> {
 async function enviar(opciones: Opciones): Promise<{ tipo: 'respuesta'; respuesta: Response } | Fallo> {
   const respuesta = await hacerPedido(opciones);
   if (respuesta instanceof Response) {
-    return respuesta.ok
-      ? { tipo: 'respuesta', respuesta }
-      : traducirError(respuesta, opciones.mensaje409, opciones.campo413);
+    return respuesta.ok ? { tipo: 'respuesta', respuesta } : traducirError(respuesta, opciones);
   }
   return respuesta;
 }
@@ -160,8 +205,8 @@ async function enviar(opciones: Opciones): Promise<{ tipo: 'respuesta'; respuest
 /** El `fetch` de un pedido: la respuesta tal cual (con cualquier código), o el fallo de red ya traducido. */
 async function hacerPedido({ metodo, ruta, cuerpo }: Opciones): Promise<Response | Fallo> {
   const init: RequestInit = { method: metodo, credentials: 'same-origin', cache: 'no-store' };
-  if (metodo === 'POST') {
-    // La Api exige Content-Type: application/json en todo POST, aunque no lleve cuerpo (R-04).
+  if (metodo === 'POST' || metodo === 'PUT') {
+    // La Api exige Content-Type: application/json en todo POST y PUT, aunque no lleve cuerpo (R-04; D-11: si no, 415).
     init.headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
     if (cuerpo !== undefined) {
       init.body = JSON.stringify(cuerpo);
@@ -177,8 +222,7 @@ async function hacerPedido({ metodo, ruta, cuerpo }: Opciones): Promise<Response
 
 async function traducirError(
   respuesta: Response,
-  mensaje409: string | undefined,
-  campo413: string = CAMPO_CONTRASENA,
+  { mensaje409, motivos409, mensaje404, campo413 = CAMPO_CONTRASENA, mensaje413 }: Opciones,
 ): Promise<Fallo> {
   switch (respuesta.status) {
     case 400: {
@@ -193,10 +237,16 @@ async function traducirError(
       manejadorSinSesion?.();
       return { tipo: 'sinSesion' };
     }
+    case 404:
+      return { tipo: 'general', mensaje: mensaje404 ?? MENSAJE_PEDIDO_RECHAZADO };
     case 409:
-      return { tipo: 'conflicto', mensaje: mensaje409 ?? MENSAJE_PEDIDO_RECHAZADO };
+      return motivos409 === undefined
+        ? { tipo: 'conflicto', mensaje: mensaje409 ?? MENSAJE_PEDIDO_RECHAZADO }
+        : conflictoConMotivo(await leerJson(respuesta), motivos409);
     case 413:
-      return { tipo: 'campo', campo: campo413, mensaje: MENSAJE_CUERPO_GRANDE };
+      return mensaje413 !== undefined
+        ? { tipo: 'general', mensaje: mensaje413 }
+        : { tipo: 'campo', campo: campo413, mensaje: MENSAJE_CUERPO_GRANDE };
     case 423:
       // El texto es propio, no el `detail` del servidor: la Api no informa hasta cuándo dura el bloqueo.
       return { tipo: 'bloqueado', mensaje: MENSAJE_BLOQUEADO };
@@ -208,6 +258,22 @@ async function traducirError(
         mensaje: respuesta.status >= 500 ? MENSAJE_SIN_CONEXION : MENSAJE_PEDIDO_RECHAZADO,
       };
   }
+}
+
+/**
+ * Un 409 con `motivo` (D-19): el motivo, si es uno de los que la operación admite, con el texto propio de la pantalla.
+ * El `detail` del servidor no se usa. Un motivo desconocido, ausente o un cuerpo ilegible es una respuesta ilegible:
+ * el mismo mensaje general que una respuesta exitosa con una forma inesperada.
+ */
+function conflictoConMotivo(cuerpo: unknown, motivos: Partial<Record<MotivoConflicto, string>>): Fallo {
+  const motivo = esObjeto(cuerpo) ? cuerpo.motivo : undefined;
+  if (motivo === 'inactivo' || motivo === 'cambiado') {
+    const mensaje = motivos[motivo];
+    if (mensaje !== undefined) {
+      return { tipo: 'conflicto', motivo, mensaje };
+    }
+  }
+  return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
 }
 
 async function leerJson(respuesta: Response): Promise<unknown> {
@@ -303,7 +369,9 @@ const leerArticulo: Lector<ArticuloGrabado> = (cuerpo) =>
   esImporte(cuerpo.precioCosto) &&
   esNumero(cuerpo.margenUtilidad) &&
   esImporte(cuerpo.precioVenta) &&
-  (cuerpo.advertencia === null || typeof cuerpo.advertencia === 'string')
+  (cuerpo.advertencia === null || typeof cuerpo.advertencia === 'string') &&
+  typeof cuerpo.activo === 'boolean' &&
+  esVersion(cuerpo.version)
     ? {
         codigo: cuerpo.codigo,
         codigoProveedor: cuerpo.codigoProveedor,
@@ -312,8 +380,60 @@ const leerArticulo: Lector<ArticuloGrabado> = (cuerpo) =>
         margenUtilidad: cuerpo.margenUtilidad,
         precioVenta: cuerpo.precioVenta,
         advertencia: cuerpo.advertencia,
+        activo: cuerpo.activo,
+        version: cuerpo.version,
       }
     : undefined;
+
+/** Un entero seguro dentro del rango indicado: `Number.isSafeInteger` ya limita a 2^53 − 1. */
+const esEnteroEntre = (valor: unknown, minimo: number): valor is number =>
+  typeof valor === 'number' && Number.isSafeInteger(valor) && valor >= minimo;
+
+/** La versión del artículo: entero de 0 a 9.007.199.254.740.991 (2^53 − 1, D-17). */
+const esVersion = (valor: unknown): valor is number => esEnteroEntre(valor, 0);
+
+/** Una fila del listado. Solo copia los cinco campos de D-12: si la respuesta trajera costo o margen, se descartan. */
+const leerFila: Lector<ArticuloListado> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.codigo === 'number' &&
+  Number.isSafeInteger(cuerpo.codigo) &&
+  typeof cuerpo.codigoProveedor === 'string' &&
+  typeof cuerpo.descripcion === 'string' &&
+  esImporte(cuerpo.precioVenta) &&
+  typeof cuerpo.activo === 'boolean'
+    ? {
+        codigo: cuerpo.codigo,
+        codigoProveedor: cuerpo.codigoProveedor,
+        descripcion: cuerpo.descripcion,
+        precioVenta: cuerpo.precioVenta,
+        activo: cuerpo.activo,
+      }
+    : undefined;
+
+/** Una página del listado: cualquier fila ilegible hace ilegible la página entera (sin importes falsos). */
+const leerPagina: Lector<PaginaArticulos> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    !Array.isArray(cuerpo.articulos) ||
+    !esEnteroEntre(cuerpo.pagina, 1) ||
+    !esEnteroEntre(cuerpo.tamanoPagina, 1) ||
+    !esEnteroEntre(cuerpo.total, 0)
+  ) {
+    return undefined;
+  }
+  const articulos: ArticuloListado[] = [];
+  for (const elemento of cuerpo.articulos as unknown[]) {
+    const fila = leerFila(elemento);
+    if (fila === undefined) {
+      return undefined;
+    }
+    articulos.push(fila);
+  }
+  return { articulos, pagina: cuerpo.pagina, tamanoPagina: cuerpo.tamanoPagina, total: cuerpo.total };
+};
+
+/** Un código de artículo que puede existir: entero positivo seguro. */
+export const esCodigoArticulo = (codigo: number) => Number.isSafeInteger(codigo) && codigo > 0;
 
 export const consultarEstado = () => pedir({ metodo: 'GET', ruta: '/api/acceso/estado' }, leerEstado);
 
@@ -362,7 +482,10 @@ export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/c
  * un campo al que atribuirlo.
  */
 export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<ResultadoGrabacion> =>
-  grabarConCampos({ metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos }, leerConfiguracion, MENSAJE_CONFIGURACION_GRANDE);
+  grabarConCampos(
+    { metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos, mensaje413: MENSAJE_CONFIGURACION_GRANDE },
+    leerConfiguracion,
+  );
 
 /**
  * Graba un artículo y devuelve lo que quedó guardado, con su código y su precio de venta (FR-01, FR-11). Como
@@ -371,22 +494,92 @@ export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<Resultad
  * supera el límite de la Api. La Api no responde 409 en el alta.
  */
 export const grabarArticulo = (datos: DatosArticulo): Promise<ResultadoAlta> =>
-  grabarConCampos({ metodo: 'POST', ruta: '/api/articulos', cuerpo: datos }, leerArticulo, MENSAJE_ARTICULO_GRANDE);
+  grabarConCampos(
+    { metodo: 'POST', ruta: '/api/articulos', cuerpo: datos, mensaje413: MENSAJE_ARTICULO_GRANDE },
+    leerArticulo,
+  );
 
 /**
- * Un artículo por su código. Un código que no es un entero positivo no se consulta (no puede existir); un 404 es un
- * mensaje general.
+ * Un artículo por su código, con su estado y su versión. Un código que no es un entero positivo no se consulta (no
+ * puede existir); ese caso y un 404 son el mensaje general {@link MENSAJE_ARTICULO_NO_ENCONTRADO}.
  */
 export const consultarArticulo = (codigo: number): Promise<Resultado<ArticuloGrabado>> =>
-  Number.isSafeInteger(codigo) && codigo > 0
-    ? pedir({ metodo: 'GET', ruta: `/api/articulos/${codigo}` }, leerArticulo)
-    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO });
+  esCodigoArticulo(codigo)
+    ? pedir(
+        { metodo: 'GET', ruta: `/api/articulos/${codigo}`, mensaje404: MENSAJE_ARTICULO_NO_ENCONTRADO },
+        leerArticulo,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO });
 
-/** Un POST cuyo 400 trae todos los campos inválidos y cuyo 413 es un mensaje general propio de la pantalla. */
+/**
+ * Una página del catálogo (D-01, FR-04). El texto viaja en la query string (D-12) y se omite si está vacío (lista
+ * todo, D-06); la pantalla ya lo recortó y validó. Las filas no traen costo ni margen.
+ */
+export const buscarArticulos = (texto: string, pagina: number): Promise<Resultado<PaginaArticulos>> => {
+  const parametros = new URLSearchParams();
+  if (texto !== '') {
+    parametros.set(CAMPO_TEXTO, texto);
+  }
+  parametros.set('pagina', String(pagina));
+  return pedir({ metodo: 'GET', ruta: `/api/articulos?${parametros.toString()}` }, leerPagina);
+};
+
+/**
+ * Modifica los datos de un artículo con la versión que leyó la pantalla (D-08, D-17) y devuelve lo grabado, con el
+ * precio de venta recalculado y la versión nueva. Como {@link grabarArticulo}: un 400 trae todos los campos y un 413
+ * es un mensaje general propio. Un 409 trae su motivo con el texto propio (D-19); un 404, "No se encontró el
+ * artículo.". Un código que no puede existir no se envía.
+ */
+export const modificarArticulo = (codigo: number, datos: DatosArticulo, version: number): Promise<ResultadoAlta> =>
+  esCodigoArticulo(codigo)
+    ? grabarConCampos(
+        {
+          metodo: 'PUT',
+          ruta: `/api/articulos/${codigo}`,
+          cuerpo: { ...datos, version },
+          motivos409: { inactivo: MENSAJE_ARTICULO_INACTIVO, cambiado: MENSAJE_ARTICULO_CAMBIADO },
+          mensaje404: MENSAJE_ARTICULO_NO_ENCONTRADO,
+          mensaje413: MENSAJE_ARTICULO_GRANDE,
+        },
+        leerArticulo,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO });
+
+/**
+ * Desactiva o reactiva un artículo (FR-05, FR-06) y devuelve el artículo con su versión nueva (D-26): la pantalla la
+ * usa en la edición siguiente. Un 409 solo puede ser `cambiado` (D-16), con el texto que elige quien llama
+ * (`mensajeCambiado`; por defecto, el del listado). Un 400 o un 413 no los produce este cliente (el cuerpo es fijo),
+ * así que son un mensaje general.
+ */
+export const cambiarEstadoArticulo = (
+  codigo: number,
+  activo: boolean,
+  mensajeCambiado: string = MENSAJE_LISTADO_CAMBIADO,
+): Promise<Resultado<ArticuloGrabado>> =>
+  esCodigoArticulo(codigo)
+    ? pedir(
+        {
+          metodo: 'PUT',
+          ruta: `/api/articulos/${codigo}/estado`,
+          cuerpo: { activo },
+          motivos409: { cambiado: mensajeCambiado },
+          mensaje404: MENSAJE_ARTICULO_NO_ENCONTRADO,
+          mensaje413: MENSAJE_PEDIDO_RECHAZADO,
+        },
+        leerArticulo,
+      ).then((resultado) =>
+        // Un 400 del cuerpo fijo no tiene un campo en la pantalla.
+        resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO });
+
+/**
+ * Un POST o PUT cuyo 400 trae todos los campos inválidos. El 413 es el mensaje general propio de la pantalla que
+ * llega en `opciones.mensaje413`, por el mismo camino que cualquier otro pedido ({@link traducirError}).
+ */
 async function grabarConCampos<T>(
-  opciones: Opciones,
+  opciones: Opciones & { mensaje413: string },
   leer: Lector<T>,
-  mensaje413: string,
 ): Promise<Resultado<T> | { tipo: 'campos'; errores: ErrorDeCampo[] }> {
   const respuesta = await hacerPedido(opciones);
   if (!(respuesta instanceof Response)) {
@@ -400,8 +593,6 @@ async function grabarConCampos<T>(
     const errores = todosLosErrores(await leerJson(respuesta));
     return errores.length > 0 ? { tipo: 'campos', errores } : { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
   }
-  if (respuesta.status === 413) {
-    return { tipo: 'general', mensaje: mensaje413 };
-  }
-  return traducirError(respuesta, undefined);
+  // El alta no responde 409; la modificación lo lee con `motivos409`.
+  return traducirError(respuesta, opciones);
 }

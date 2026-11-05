@@ -7,8 +7,9 @@ namespace Optica.Infrastructure.Persistencia;
 /// <summary>
 /// Confirma lo que registraron los repositorios con un único <c>SaveChanges</c> del contexto compartido,
 /// dentro de una transacción explícita: si algo falla antes del commit, no queda nada guardado. Las violaciones de
-/// unicidad y los tokens de concurrencia que no coinciden (<see cref="DbUpdateConcurrencyException"/>) se informan
-/// como <see cref="ConflictoAlConfirmarException"/>, nunca con la excepción de EF como causa.
+/// unicidad (motivo <see cref="MotivoConflicto.Unicidad"/>) y los tokens de concurrencia que no coinciden
+/// (<see cref="DbUpdateConcurrencyException"/>, motivo <see cref="MotivoConflicto.Concurrencia"/>) se informan como
+/// <see cref="ConflictoAlConfirmarException"/>, nunca con la excepción de EF como causa (D-18).
 /// </summary>
 public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTrabajo
 {
@@ -33,18 +34,22 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Un token de concurrencia no coincidió (la credencial cambió o se borró después de leerla): el UPDATE o
-            // DELETE afectó 0 filas y la transacción se revirtió. Lo pendiente se descarta, como en cualquier conflicto.
-            // La causa NO se adjunta: sus Entries conservan el hash anterior y el nuevo de la credencial.
+            // Un token de concurrencia no coincidió (la credencial, o la versión o el estado de un artículo, cambiaron o
+            // se borraron después de leerlos): el UPDATE o DELETE afectó 0 filas y la transacción se revirtió. Lo
+            // pendiente se descarta, como en cualquier conflicto. La causa NO se adjunta: sus Entries conservan el hash
+            // anterior y el nuevo de la credencial, o los datos del artículo.
             contexto.ChangeTracker.Clear();
-            throw new ConflictoAlConfirmarException("Los datos a guardar cambiaron después de leerlos.");
+            throw new ConflictoAlConfirmarException(
+                "Los datos a guardar cambiaron después de leerlos.", MotivoConflicto.Concurrencia);
         }
         catch (DbUpdateException error) when (EsConflicto(error))
         {
             // Lo pendiente no se guardó: se descarta para que el contexto no lo reintente. La causa tampoco se adjunta
-            // acá: sus Entries llevan el hash de la credencial duplicada.
+            // acá: sus Entries llevan el hash de la credencial duplicada. Índices UNIQUE, clave primaria y el CHECK de
+            // credencial única son todos unicidad (D-18).
             contexto.ChangeTracker.Clear();
-            throw new ConflictoAlConfirmarException("Los datos a guardar chocan con datos existentes.");
+            throw new ConflictoAlConfirmarException(
+                "Los datos a guardar chocan con datos existentes.", MotivoConflicto.Unicidad);
         }
         catch
         {

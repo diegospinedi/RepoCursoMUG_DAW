@@ -158,7 +158,7 @@ public class GrabarConfiguracionNegocioTests
     public async Task Grabar_ConflictoAlConfirmar_SePropaga()
     {
         var anterior = _almacen.Guardada;
-        _almacen.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto de prueba.");
+        _almacen.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto de prueba.", MotivoConflicto.Concurrencia);
 
         await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
             () => CrearCasoDeUso().EjecutarAsync(Validos(tope: 1m)));

@@ -22,6 +22,10 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("Activo")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("CodigoProveedor")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -46,6 +50,10 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("INTEGER")
                         .HasColumnName("PrecioVentaCentavos");
 
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CodigoProveedorClave")
@@ -53,11 +61,15 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("Articulo", null, t =>
                         {
+                            t.HasCheckConstraint("CK_Articulo_Activo", "\"Activo\" IN (0, 1)");
+
                             t.HasCheckConstraint("CK_Articulo_CodigoProveedor", "length(\"CodigoProveedor\") BETWEEN 1 AND 50");
 
                             t.HasCheckConstraint("CK_Articulo_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
 
                             t.HasCheckConstraint("CK_Articulo_Margen", "\"MargenCentesimos\" BETWEEN 0 AND 100000");
+
+                            t.HasCheckConstraint("CK_Articulo_Version", "\"Version\" >= 0");
                         });
                 });
 

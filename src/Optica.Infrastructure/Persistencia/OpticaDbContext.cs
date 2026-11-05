@@ -88,15 +88,21 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
         modelBuilder.Entity<ArticuloFila>(articulo =>
         {
+            // ADVERTENCIA (ADR-012): toda migración que toque Articulo se revisa antes de aplicarla para que EF Core no
+            // reconstruya la tabla (lo hace con AddCheckConstraint, DropCheckConstraint, AlterColumn y similares). La tabla
+            // reconstruida pierde los DEFAULT de Activo y Version, reinicia la secuencia AUTOINCREMENT (un código usado
+            // podría reutilizarse) y pierde los triggers creados con Sql(). Si hace falta, se escribe a mano como
+            // CatalogoActivo (D-23).
             // Importes y margen en centésimos (ADR-008); los CHECK son la segunda barrera detrás de PoliticaArticulo. La
-            // clave no lleva CHECK de largo: la normalización NFC y las mayúsculas pueden alargarla. Sin columna de
-            // activo: llega con FEAT-002b (D-08).
+            // clave no lleva CHECK de largo: la normalización NFC y las mayúsculas pueden alargarla.
             articulo.ToTable("Articulo", tabla =>
             {
                 tabla.HasCheckConstraint(
                     "CK_Articulo_CodigoProveedor", "length(\"CodigoProveedor\") BETWEEN 1 AND 50");
                 tabla.HasCheckConstraint("CK_Articulo_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
                 tabla.HasCheckConstraint("CK_Articulo_Margen", "\"MargenCentesimos\" BETWEEN 0 AND 100000");
+                tabla.HasCheckConstraint("CK_Articulo_Activo", "\"Activo\" IN (0, 1)");
+                tabla.HasCheckConstraint("CK_Articulo_Version", "\"Version\" >= 0");
             });
             articulo.HasKey(a => a.Id);
 
@@ -115,7 +121,19 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             // Unicidad del código en el proveedor sobre la clave normalizada por el dominio (ADR-009). Es la única
             // restricción única de la tabla: un conflicto al confirmar el alta solo puede venir de acá (D-07).
             articulo.HasIndex(a => a.CodigoProveedorClave).IsUnique();
+
+            // FEAT-002b. Los dos son tokens de concurrencia: la versión cubre la edición y el cambio de estado (D-08), y el
+            // estado impide que una fila inactiva reciba datos nuevos (D-22). Sin HasDefaultValue: el DEFAULT vive solo en
+            // la migración, para las filas que ya estaban, y el repositorio asigna siempre los dos (D-21).
+            articulo.Property(a => a.Activo).IsRequired().IsConcurrencyToken();
+            articulo.Property(a => a.Version).IsRequired().IsConcurrencyToken();
         });
+
+        // Las funciones de la búsqueda de artículos, registradas en cada conexión por FabricaConexion (ADR-011).
+        modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.Plegar))!)
+            .HasName(FuncionesSqlite.NombrePlegar);
+        modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.OrdenArticulo))!)
+            .HasName(FuncionesSqlite.NombreOrdenArticulo);
     }
 
     /// <exception cref="ArgumentException">El valor tiene más de 2 decimales. El mensaje no incluye el valor.</exception>
@@ -196,6 +214,16 @@ public sealed class ArticuloFila
 
     /// <summary>Importe ya redondeado al múltiplo; columna <c>PrecioVentaCentavos</c>.</summary>
     public decimal PrecioVenta { get; set; }
+
+    /// <summary>
+    /// 1 si el artículo está activo, 0 si está dado de baja (FR-05). Es <c>long</c> y no <c>bool</c> a propósito: SQLite
+    /// lee como verdadero cualquier entero distinto de 0, y así el repositorio puede reconocer una fila que eludió el
+    /// CHECK como estado corrupto.
+    /// </summary>
+    public long Activo { get; set; }
+
+    /// <summary>La versión para la concurrencia optimista, desde 0; cada escritura la incrementa (D-08).</summary>
+    public long Version { get; set; }
 }
 
 /// <summary>

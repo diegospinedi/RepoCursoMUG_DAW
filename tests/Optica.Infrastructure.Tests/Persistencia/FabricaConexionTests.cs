@@ -1,6 +1,8 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Optica.Application.Comun;
 using Optica.Infrastructure.Persistencia;
@@ -106,6 +108,108 @@ public class FabricaConexionTests
         Assert.Contains(FabricaConexion.ClaveDirectorio, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(perfil, error.Ruta, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(perfil, error.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Plegar_RegistradaEnCadaConexion()
+    {
+        using var baseTemporal = new BaseTemporal();
+        const string consulta =
+            "SELECT plegar('ARMAZ\U000000D3N'), orden_articulo('\U000000D1and\U000000FA'), plegar(NULL) IS NULL, " +
+            "orden_articulo(NULL) IS NULL";
+
+        // Las conexiones que abre EF Core, sincrónica y asincrónicamente, tienen las dos funciones (ADR-011).
+        var sincronico = baseTemporal.CrearContexto();
+        sincronico.Database.OpenConnection();
+        try
+        {
+            Assert.Equal(["armazon", "n{andu", "1", "1"], Leer(sincronico.Database.GetDbConnection(), consulta));
+        }
+        finally
+        {
+            sincronico.Database.CloseConnection();
+        }
+
+        var asincronico = baseTemporal.CrearContexto();
+        await asincronico.Database.OpenConnectionAsync();
+        try
+        {
+            var conexion = asincronico.Database.GetDbConnection();
+            Assert.Equal(["armazon", "n{andu", "1", "1"], Leer(conexion, consulta));
+
+            // Deterministas, como pide ADR-011.
+            var deterministas = Leer(conexion,
+                "SELECT count(*) FROM pragma_function_list WHERE name IN ('plegar', 'orden_articulo') AND (flags & 0x800) <> 0");
+            Assert.Equal(["2"], deterministas);
+        }
+        finally
+        {
+            await asincronico.Database.CloseConnectionAsync();
+        }
+    }
+
+    [Fact]
+    public void Esquema_NingunObjetoUsaPlegar()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = new SqliteConnectionStringBuilder(baseTemporal.Servicios.GetRequiredService<FabricaConexion>().CadenaConexion)
+        {
+            // Sin grupo: una conexión del grupo podría traer las funciones que registró EF Core.
+            Pooling = false,
+        }.ToString();
+
+        // La conexión de la aplicación sí las tiene: la prueba distingue las dos.
+        var contexto = baseTemporal.CrearContexto();
+        contexto.Database.OpenConnection();
+        try
+        {
+            Assert.Equal(["a"], Leer(contexto.Database.GetDbConnection(), "SELECT plegar('A')"));
+        }
+        finally
+        {
+            contexto.Database.CloseConnection();
+        }
+
+        using var cruda = new SqliteConnection(cadena);
+        cruda.Open();
+
+        // La conexión cruda no conoce las funciones, como sqlite3 o un backup con VACUUM INTO.
+        Assert.Throws<SqliteException>(() => Leer(cruda, "SELECT plegar('a')"));
+        Assert.Throws<SqliteException>(() => Leer(cruda, "SELECT orden_articulo('a')"));
+
+        // Y aun así lee el esquema completo y la base está íntegra: ningún índice, CHECK, trigger ni vista las usa (R-07).
+        var objetos = new List<string>();
+        using (var comando = cruda.CreateCommand())
+        {
+            comando.CommandText = "SELECT name, coalesce(sql, '') FROM sqlite_master";
+            using var lector = comando.ExecuteReader();
+            while (lector.Read())
+            {
+                objetos.Add(lector.GetString(0) + ": " + lector.GetString(1));
+            }
+        }
+
+        // El esquema revisado es el de FEAT-002b, con las columnas nuevas.
+        Assert.Contains(objetos, o => o.StartsWith("Articulo: ", StringComparison.Ordinal)
+            && o.Contains("\"Activo\"", StringComparison.Ordinal) && o.Contains("\"Version\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(objetos, o => o.Contains("plegar", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(objetos, o => o.Contains("orden_articulo", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(["ok"], Leer(cruda, "PRAGMA integrity_check"));
+    }
+
+    private static List<string> Leer(System.Data.Common.DbConnection conexion, string consulta)
+    {
+        using var comando = conexion.CreateCommand();
+        comando.CommandText = consulta;
+        using var lector = comando.ExecuteReader();
+        Assert.True(lector.Read());
+        var valores = new List<string>();
+        for (var i = 0; i < lector.FieldCount; i++)
+        {
+            valores.Add(Convert.ToString(lector.GetValue(i), System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
+        }
+
+        return valores;
     }
 
     private static string CarpetaDelUsuario()
