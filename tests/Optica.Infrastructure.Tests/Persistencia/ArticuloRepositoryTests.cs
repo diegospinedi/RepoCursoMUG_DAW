@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -7,15 +8,22 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Optica.Application.Catalogo;
 using Optica.Application.Comun;
+using Optica.Application.Configuracion;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
 using Optica.Infrastructure.Persistencia;
+using Optica.Pruebas.Compartido;
+using Xunit.Abstractions;
 
 namespace Optica.Infrastructure.Tests.Persistencia;
 
-public class ArticuloRepositoryTests
+public class ArticuloRepositoryTests(ITestOutputHelper salida)
 {
+    private static readonly TimeSpan LimiteRecalculo = TimeSpan.FromSeconds(10);
+
     private const int SqliteRestriccionCheck = 275; // SQLITE_CONSTRAINT_CHECK
     private const int SqliteRestriccionUnica = 2067; // SQLITE_CONSTRAINT_UNIQUE
 
@@ -781,6 +789,115 @@ public class ArticuloRepositoryTests
         Assert.Equal(MotivoConflicto.Concurrencia, porEstado.Motivo);
         Assert.Equal("185000", Assert.Single(Filas(cadena, SelectFila))[6]);
         Assert.Equal(["1", "1"], Assert.Single(Filas(cadena, SelectEstado))[1..]);
+    }
+
+    /// <summary>
+    /// AC-05 con AC-02 y AC-03 sobre 10.000 artículos sembrados (D-15): pasar el múltiplo de 0,01 a 50 recalcula los
+    /// 10.000, activos e inactivos, cada uno con el precio de la calculadora y la versión 1, sin tocar los demás datos;
+    /// el de costo 1.210 y margen 50 pasa de 1.815,00 a 1.850,00. Registra la duración y verifica que queda por debajo
+    /// de 10 s, lejos de la espera de 30 s (D-21).
+    /// </summary>
+    [Fact]
+    [Trait("Categoria", "Volumen")]
+    public async Task Volumen10000_Recalculo_Multiplo50()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var sembrados = SiembraCatalogo.Generar();
+        SiembraCatalogo.Sembrar(cadena, sembrados);
+        var antes = Filas(cadena, SelectFila);
+        Assert.Equal(SiembraCatalogo.Volumen, antes.Count);
+        Assert.Equal("181500", antes[0][6]);
+
+        var contexto = baseTemporal.CrearContexto();
+        var vigente = await new ConfiguracionNegocioRepository(baseTemporal.CrearContexto()).ObtenerAsync();
+        var caso = new GrabarConfiguracionConRecalculo(
+            new ConfiguracionNegocioRepository(contexto), new ArticuloRepository(contexto), new UnidadDeTrabajoEf(contexto),
+            TimeProvider.System, NullLoggerFactory.Instance);
+        var datos = new DatosConfiguracion(
+            vigente.AlicuotaIva, PoliticaConfiguracionNegocio.TextoDe(vigente.CondicionFiscal), 50m,
+            vigente.TopeIdentificacion);
+
+        var reloj = Stopwatch.StartNew();
+        var resultado = await caso.EjecutarAsync(datos);
+        reloj.Stop();
+        salida.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Recálculo de {SiembraCatalogo.Volumen} artículos con múltiplo 50: {reloj.Elapsed.TotalMilliseconds:F0} ms."));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(SiembraCatalogo.Volumen, resultado.PreciosCambiados);
+        Assert.True(
+            reloj.Elapsed < LimiteRecalculo,
+            string.Create(CultureInfo.InvariantCulture, $"El recálculo tardó {reloj.Elapsed.TotalMilliseconds:F0} ms."));
+
+        var nueva = new ConfiguracionNegocio(
+            vigente.AlicuotaIva, vigente.CondicionFiscal, 50m, vigente.TopeIdentificacion);
+        var despues = Filas(cadena, SelectFila);
+        Assert.Equal(antes.Count, despues.Count);
+        for (var i = 0; i < despues.Count; i++)
+        {
+            var esperado = CalculadoraPrecioVenta.Calcular(sembrados[i].PrecioCosto, sembrados[i].MargenUtilidad, nueva)
+                .Precio!.PrecioVenta;
+            Assert.Equal(antes[i][..6], despues[i][..6]);
+            Assert.Equal(SiembraCatalogo.Centesimos(esperado).ToString(CultureInfo.InvariantCulture), despues[i][6]);
+        }
+
+        Assert.Equal("185000", despues[0][6]);
+        var estados = Filas(cadena, SelectEstado);
+        Assert.Equal(sembrados.Select(s => s.Activo ? "1" : "0"), estados.Select(e => e[1]));
+        Assert.Equal(1_000, estados.Count(e => e[1] == "0"));
+        Assert.All(estados, e => Assert.Equal("1", e[2]));
+        Assert.Equal(50m, (await new ConfiguracionNegocioRepository(baseTemporal.CrearContexto()).ObtenerAsync())
+            .MultiploRedondeo);
+    }
+
+    /// <summary>
+    /// Registrar un precio recalculado no recorre todo el contexto (DetectChanges global): con 10.000 artículos
+    /// registrados uno por uno, ese recorrido en cada llamada hacía cuadrático el recálculo (Block 5 de FEAT-002c). Solo
+    /// revisa la entrada del artículo, y deja la detección automática como estaba, también si lanza.
+    /// </summary>
+    [Fact]
+    public async Task RegistrarPrecioRecalculado_NoRecorreElContexto_ConservaLaDeteccionAutomatica()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var codigos = await Grabar(baseTemporal, ("ABC-1", "Armazón"), ("ABC-2", "Estuche"), ("ABC-3", "Cristal"));
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ArticuloRepository(contexto);
+
+        // Una fila seguida, cambiada sin que el contexto lo haya detectado todavía.
+        var ajena = contexto.Articulos.Find(codigos[0])!;
+        ajena.Descripcion = "Otra descripción";
+        repositorio.RegistrarPrecioRecalculado(
+            new Articulo(codigos[1], "ABC-2", "Estuche", 1210m, 50m, 1850m, activo: true, version: 0));
+        Assert.True(contexto.ChangeTracker.AutoDetectChangesEnabled);
+
+        // La que sí se revisa es la entrada del artículo registrado: una baja sin confirmar se rechaza igual (D-04).
+        repositorio.CambiarEstado(codigos[2], activo: false);
+        Assert.Throws<InvalidOperationException>(() => repositorio.RegistrarPrecioRecalculado(
+            new Articulo(codigos[2], "ABC-3", "Cristal", 1210m, 50m, 1850m, activo: true, version: 0)));
+        Assert.True(contexto.ChangeTracker.AutoDetectChangesEnabled);
+
+        // Entries() también llama a DetectChanges si la detección automática está prendida: leerlo así detectaría el cambio
+        // ajeno en este momento y la prueba ya no vería si el registro recorrió el contexto. Se apaga solo para leer.
+        contexto.ChangeTracker.AutoDetectChangesEnabled = false;
+        var estados = contexto.ChangeTracker.Entries<ArticuloFila>().ToDictionary(e => e.Entity.Id, e => e.State);
+        contexto.ChangeTracker.AutoDetectChangesEnabled = true;
+        Assert.Equal(EntityState.Unchanged, estados[codigos[0]]);
+        Assert.Equal(EntityState.Modified, estados[codigos[1]]);
+        Assert.Equal(EntityState.Modified, estados[codigos[2]]);
+
+        // Al confirmar, SaveChanges detecta lo que el registro no revisó: el cambio ajeno se graba junto con el precio
+        // recalculado (D-29).
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        var cadena = CadenaDe(baseTemporal);
+        var filas = Filas(cadena, SelectFila).ToDictionary(f => long.Parse(f[0], CultureInfo.InvariantCulture));
+        Assert.Equal("Otra descripción", filas[codigos[0]][3]);
+        Assert.Equal("185000", filas[codigos[1]][6]);
+        Assert.Equal("Cristal", filas[codigos[2]][3]);
+        var estadosGrabados = Filas(cadena, SelectEstado).ToDictionary(f => long.Parse(f[0], CultureInfo.InvariantCulture));
+        Assert.Equal(["1", "1"], estadosGrabados[codigos[1]][1..]);
+        Assert.Equal(["0", "1"], estadosGrabados[codigos[2]][1..]);
     }
 
     [Theory]

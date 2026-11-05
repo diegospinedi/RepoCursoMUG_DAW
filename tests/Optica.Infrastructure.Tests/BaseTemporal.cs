@@ -86,10 +86,10 @@ public sealed class BaseTemporal : IDisposable
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Un archivo retenido por el sistema no hace fallar la prueba, pero queda constancia de lo que
-            // sobró en la carpeta temporal.
+            // Un archivo retenido por el sistema no hace fallar la prueba, pero queda constancia. Solo el tipo de error,
+            // como FabricaApi: la ruta, que también repite el mensaje, puede llevar el nombre de usuario (D-30).
             Console.Error.WriteLine(
-                $"[BaseTemporal] No se pudo borrar el directorio de prueba '{ruta}': {error.GetType().Name}: {error.Message}");
+                $"[BaseTemporal] No se pudo borrar un directorio de prueba ({error.GetType().Name}).");
         }
     }
 

@@ -211,6 +211,12 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
     /// artículo, los leídos: así un inactivo también se actualiza (AC-03), y si otra escritura confirmó en el medio afecta
     /// 0 filas y la unidad de trabajo lo informa como conflicto de concurrencia (D-04 de FEAT-002c).
     /// </summary>
+    /// <remarks>
+    /// Para no recorrer todo el contexto en cada llamada (D-29 de FEAT-002c): apaga temporalmente la detección automática
+    /// de cambios (<c>AutoDetectChangesEnabled</c>) y la deja como estaba al terminar, también si lanza; revisa solo la
+    /// entrada de este artículo; las demás entidades que sigue el contexto no se revisan acá, y las detecta
+    /// <c>SaveChanges</c> al confirmar la unidad de trabajo.
+    /// </remarks>
     /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
     /// <exception cref="OverflowException">La versión siguiente no entra en un <c>long</c>.</exception>
     /// <exception cref="InvalidOperationException">
@@ -229,7 +235,26 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         var versionSiguiente = checked(articulo.Version + 1);
         var activoLeido = articulo.Activo ? ValorActivo : ValorInactivo;
 
+        // Con la detección automática, cada acceso a Local recorre todo el contexto (DetectChanges): registrar 10.000
+        // precios uno por uno se volvía cuadrático (Block 5 de FEAT-002c). Se apaga solo durante el registro y se revisa
+        // únicamente la entrada de este artículo; SaveChanges detecta igual todo lo demás al confirmar.
+        var seguimiento = contexto.ChangeTracker;
+        var detectaba = seguimiento.AutoDetectChangesEnabled;
+        seguimiento.AutoDetectChangesEnabled = false;
+        try
+        {
+            Registrar(articulo, codigo, versionSiguiente, activoLeido);
+        }
+        finally
+        {
+            seguimiento.AutoDetectChangesEnabled = detectaba;
+        }
+    }
+
+    private void Registrar(Articulo articulo, long codigo, long versionSiguiente, long activoLeido)
+    {
         var seguida = contexto.Articulos.Local.FindEntry(codigo);
+        seguida?.DetectChanges();
         if (seguida is not null && !SoloPrecioYVersionModificados(seguida))
         {
             // El listado del recálculo no sigue entidades: llegar acá es un error de programación. Sin valores.
