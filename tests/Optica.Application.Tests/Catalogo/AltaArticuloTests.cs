@@ -53,7 +53,7 @@ public class AltaArticuloTests
     [Fact]
     public async Task Alta_ConflictoAlConfirmar_RechazadoComoDuplicado()
     {
-        _articulos.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto al confirmar.");
+        _articulos.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto al confirmar.", MotivoConflicto.Unicidad);
 
         var resultado = await CrearCasoDeUso().EjecutarAsync(Validos());
 

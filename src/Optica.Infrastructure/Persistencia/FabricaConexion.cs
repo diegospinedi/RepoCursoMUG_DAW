@@ -9,7 +9,7 @@ namespace Optica.Infrastructure.Persistencia;
 
 /// <summary>
 /// Resuelve dónde vive la base SQLite a partir de <c>Optica:Datos:Directorio</c> y arma las conexiones:
-/// cada conexión abierta activa las claves foráneas y el modo WAL.
+/// cada conexión abierta activa las claves foráneas y el modo WAL y registra las funciones de búsqueda (ADR-011).
 /// </summary>
 public sealed class FabricaConexion
 {
@@ -166,7 +166,10 @@ public sealed class FabricaConexion
                 (CoreEventId.SaveChangesFailed, LogLevel.Debug),
                 (CoreEventId.QueryIterationFailed, LogLevel.Debug)));
 
-    /// <summary>Activa <c>foreign_keys</c> y <c>journal_mode = WAL</c> en cada conexión que se abre.</summary>
+    /// <summary>
+    /// Activa <c>foreign_keys</c> y <c>journal_mode = WAL</c> en cada conexión que se abre, y registra las funciones
+    /// <c>plegar</c> y <c>orden_articulo</c> de la búsqueda de artículos (<see cref="FuncionesSqlite"/>, ADR-011).
+    /// </summary>
     private sealed class PragmasAlAbrir : DbConnectionInterceptor
     {
         public static readonly PragmasAlAbrir Instancia = new();
@@ -175,6 +178,7 @@ public sealed class FabricaConexion
 
         public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
         {
+            RegistrarFunciones(connection);
             using var comando = connection.CreateCommand();
             comando.CommandText = Pragmas;
             comando.ExecuteNonQuery();
@@ -183,10 +187,16 @@ public sealed class FabricaConexion
         public override async Task ConnectionOpenedAsync(
             DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
         {
+            RegistrarFunciones(connection);
             await using var comando = connection.CreateCommand();
             comando.CommandText = Pragmas;
             await comando.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        // EF Core con UseSqlite siempre abre una SqliteConnection; otra cosa es un error de configuración.
+        private static void RegistrarFunciones(DbConnection connection) =>
+            FuncionesSqlite.Registrar(connection as SqliteConnection
+                ?? throw new InvalidOperationException("La conexión de la base no es de SQLite."));
     }
 }
 

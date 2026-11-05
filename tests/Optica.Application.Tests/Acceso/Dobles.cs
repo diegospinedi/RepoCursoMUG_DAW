@@ -101,7 +101,8 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
                 _credencialPendiente = null;
                 _eliminacionPendiente = false;
                 _eventosPendientes.Clear();
-                throw new ConflictoAlConfirmarException("La credencial cambió entre la lectura y la confirmación.");
+                throw new ConflictoAlConfirmarException(
+                    "La credencial cambió entre la lectura y la confirmación.", MotivoConflicto.Concurrencia);
             }
 
             Credencial = nueva;

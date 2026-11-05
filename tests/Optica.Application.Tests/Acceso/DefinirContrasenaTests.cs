@@ -106,6 +106,6 @@ public class DefinirContrasenaTests
     private sealed class UnidadQueChoca : IUnidadDeTrabajo
     {
         public Task ConfirmarAsync(CancellationToken cancelacion = default) =>
-            throw new ConflictoAlConfirmarException("duplicada");
+            throw new ConflictoAlConfirmarException("duplicada", MotivoConflicto.Unicidad);
     }
 }
