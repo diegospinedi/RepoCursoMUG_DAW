@@ -28,7 +28,20 @@ if (!Number.isInteger(puertoBase) || puertoBase < 1024 || puertoBase > 65000) {
 
 const navegadores: Project[] = [
   { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
-  { name: 'msedge', use: { ...devices['Desktop Edge'], channel: 'msedge' } },
+  {
+    name: 'msedge',
+    use: {
+      ...devices['Desktop Edge'],
+      channel: 'msedge',
+      // Con un perfil nuevo, Edge inicia sesión solo (implicit sign-in) y consulta servicios de Microsoft
+      // (graph.microsoft.com, substrate.office.com, edge.microsoft.com) con la cuenta del equipo; mientras tanto el
+      // proceso del navegador deja de atender pedidos por 2 a 10 s y la pantalla queda en "Cargando…" (W-VER-03 de
+      // FEAT-001a y FEAT-001b, D-30 de FEAT-002b). La suite solo habla con localhost: cualquier otro nombre no se
+      // resuelve, así esos pedidos fallan en el acto y no sale ningún dato de la cuenta. Se agrega a los argumentos de
+      // Playwright sin reemplazarlos (a diferencia de --disable-features).
+      launchOptions: { args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] },
+    },
+  },
 ];
 if (process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM === '1') {
   navegadores.push({ name: 'chromium', use: { ...devices['Desktop Chrome'] } });

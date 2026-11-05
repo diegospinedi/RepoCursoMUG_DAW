@@ -49,6 +49,12 @@ La lista de archivos sale de `tests/`: un `*.spec.ts` nuevo tiene sus proyectos 
 unidas por guiones (por ejemplo, `presupuestos-borrador.spec.ts`); si no, `playwright.config.ts` falla con un error
 que nombra el archivo, en lugar de dejarlo sin correr.
 
+**Edge sin red externa.** Con un perfil nuevo, Edge inicia sesión solo con la cuenta del equipo y consulta servicios
+de Microsoft (Graph, Office, Bing); mientras lo hace, el navegador deja de atender pedidos por varios segundos y las
+pruebas fallaban de forma intermitente en "Cargando…" (W-VER-03 de FEAT-001a y FEAT-001b). Los proyectos `msedge-*`
+arrancan con `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost`: solo se resuelve `localhost`, así esos pedidos
+fallan en el acto y no sale ningún dato de la cuenta (FEAT-002b, D-30). No subas `expect.timeout` para taparlo.
+
 Si una Api termina o no responde al arrancar, o si `OPTICA_E2E_INSTANCIAS` tiene un nombre mal formado o repetido o un
 puerto fuera de 1 a 65535, `servidor.mjs` termina con código 1 y Playwright no corre ninguna prueba.
 
