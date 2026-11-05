@@ -108,9 +108,17 @@ export interface DatosConfiguracion {
   topeIdentificacion: number | null;
 }
 
-/** Lo que devuelven `GET` y `POST /api/configuracion`. */
+/** Lo que devuelve `GET /api/configuracion`. */
 export interface ConfiguracionNegocio extends DatosConfiguracion {
   faltaTope: boolean;
+}
+
+/**
+ * Lo que devuelve `POST /api/configuracion` (D-23 de FEAT-002c): lo guardado y cuántos artículos cambiaron de precio
+ * de venta al recalcular el catálogo (D-09), un entero de 0 en adelante.
+ */
+export interface ConfiguracionGrabada extends ConfiguracionNegocio {
+  preciosCambiados: number;
 }
 
 export interface ErrorDeCampo {
@@ -119,7 +127,7 @@ export interface ErrorDeCampo {
 }
 
 /** El resultado de grabar: además de los de {@link Resultado}, un 400 trae todos los campos inválidos juntos. */
-export type ResultadoGrabacion = Resultado<ConfiguracionNegocio> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+export type ResultadoGrabacion = Resultado<ConfiguracionGrabada> | { tipo: 'campos'; errores: ErrorDeCampo[] };
 
 export type Resultado<T> =
   | { tipo: 'ok'; datos: T }
@@ -392,6 +400,18 @@ const esEnteroEntre = (valor: unknown, minimo: number): valor is number =>
 /** La versión del artículo: entero de 0 a 9.007.199.254.740.991 (2^53 − 1, D-17). */
 const esVersion = (valor: unknown): valor is number => esEnteroEntre(valor, 0);
 
+/**
+ * La respuesta de grabar la configuración (D-23): la configuración, como la lee {@link leerConfiguracion}, más
+ * `preciosCambiados`, un entero seguro de 0 en adelante. Ausente o de otra forma, la respuesta es ilegible. El GET no
+ * la usa: sigue con {@link leerConfiguracion}, sin exigir la cantidad.
+ */
+const leerConfiguracionGrabada: Lector<ConfiguracionGrabada> = (cuerpo) => {
+  const configuracion = leerConfiguracion(cuerpo);
+  return configuracion !== undefined && esObjeto(cuerpo) && esEnteroEntre(cuerpo.preciosCambiados, 0)
+    ? { ...configuracion, preciosCambiados: cuerpo.preciosCambiados }
+    : undefined;
+};
+
 /** Una fila del listado. Solo copia los cinco campos de D-12: si la respuesta trajera costo o margen, se descartan. */
 const leerFila: Lector<ArticuloListado> = (cuerpo) =>
   esObjeto(cuerpo) &&
@@ -476,7 +496,8 @@ export const cambiarContrasena = (actual: string, nueva: string) =>
 export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/configuracion' }, leerConfiguracion);
 
 /**
- * Graba los cuatro parámetros juntos y devuelve lo que quedó guardado (D-03). A diferencia de las pantallas de acceso,
+ * Graba los cuatro parámetros juntos y devuelve lo que quedó guardado (D-03), con cuántos precios de venta cambiaron
+ * al recalcular el catálogo (D-09 y D-23 de FEAT-002c). A diferencia de las pantallas de acceso,
  * un 400 devuelve TODOS los campos de `errors`, y un 413 es un mensaje general propio (no el de la contraseña): el
  * navegador limita cada número a 32 caracteres, así que solo un cuerpo alterado supera el límite de la Api, y no hay
  * un campo al que atribuirlo.
@@ -484,7 +505,7 @@ export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/c
 export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<ResultadoGrabacion> =>
   grabarConCampos(
     { metodo: 'POST', ruta: '/api/configuracion', cuerpo: datos, mensaje413: MENSAJE_CONFIGURACION_GRANDE },
-    leerConfiguracion,
+    leerConfiguracionGrabada,
   );
 
 /**

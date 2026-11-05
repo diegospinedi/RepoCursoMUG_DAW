@@ -140,6 +140,23 @@ public class ValidacionArticuloTests
     }
 
     [Fact]
+    public void FueraDeRango_MasDe1000_CantidadesConPuntoDeMilesYCodigosSin()
+    {
+        // 1.250 artículos con códigos de 1000 a 2249: los nombrados (1000 a 1009) pasan de 999.
+        var articulos = Enumerable.Range(1000, 1250).Select(codigo => Grabado(codigo)).ToList();
+
+        var error = ValidacionArticulo.PrecioVentaRecalculadoFueraDeRango(articulos);
+
+        // D-27: las cantidades llevan punto de miles; los códigos, que son identificadores, no.
+        Assert.Equal(
+            ErrorMultiplo(
+                InicioFueraDeRango + "1.250 artículos sería demasiado grande (códigos 1000, 1001, 1002, 1003, 1004, " +
+                "1005, 1006, 1007, 1008, 1009 y 1.240 más). " + FinFueraDeRango + "."),
+            error);
+        Assert.DoesNotContain("1.00", error.Accion, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AccionesNumericas_TextosDeConfiguracion_NoCambian()
     {
         // D-12: los textos que la configuración ya mostraba, ahora compartidos desde Comun.

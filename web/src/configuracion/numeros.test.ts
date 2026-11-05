@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { leerDecimal, mostrarDecimal, mostrarImporte } from './numeros';
+import { leerDecimal, mostrarDecimal, mostrarEntero, mostrarImporte } from './numeros';
 import { IMPORTE_MAXIMO_SEGURO } from './reglas';
 
 describe('leerDecimal', () => {
@@ -71,6 +71,19 @@ describe('mostrarDecimal', () => {
 
   it('mostrarDecimal_SinValor_TextoVacio', () => {
     expect(mostrarDecimal(null)).toBe('');
+  });
+});
+
+describe('mostrarEntero', () => {
+  // D-27 de FEAT-002c: punto de miles, sin `Intl`, como la parte entera de mostrarImporte.
+  it.each([
+    [0, '0'],
+    [999, '999'],
+    [1000, '1.000'],
+    [10000, '10.000'],
+    [1234567, '1.234.567'],
+  ])('mostrarEntero_%d_%s', (valor, texto) => {
+    expect(mostrarEntero(valor)).toBe(texto);
   });
 });
 

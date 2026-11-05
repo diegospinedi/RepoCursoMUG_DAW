@@ -247,8 +247,31 @@ describe('cliente de la Api: configuración', () => {
     expect(manejador).toHaveBeenCalledOnce();
   });
 
+  it('consultarConfiguracion_SinPreciosCambiados_SeLee', async () => {
+    // D-23: el GET responde sin preciosCambiados y se lee; el mismo cuerpo como respuesta del POST es ilegible, porque
+    // la grabación tiene su propio lector.
+    servidorFalso({ 'GET /api/configuracion': json(200, GUARDADA), 'POST /api/configuracion': json(200, GUARDADA) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'ok', datos: GUARDADA });
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it.each([
+    ['ausente', undefined],
+    ['nulo', null],
+    ['negativo', -1],
+    ['con decimales', 1.5],
+    ['de texto', '3'],
+    ['mayor que el entero seguro', Number.MAX_SAFE_INTEGER + 1],
+  ])('grabarConfiguracion_PreciosCambiados_%s_RespuestaIlegible', async (_caso, preciosCambiados) => {
+    servidorFalso({ 'POST /api/configuracion': json(200, { ...GUARDADA, preciosCambiados }) });
+
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
   it('grabarConfiguracion_200_EnviaLosCuatroYDevuelveLoGuardado', async () => {
-    const guardada = { ...DATOS, faltaTope: false };
+    // Lo guardado y cuántos precios de venta cambiaron (D-09, D-23).
+    const guardada = { ...DATOS, faltaTope: false, preciosCambiados: 2 };
     const servidor = servidorFalso({ 'POST /api/configuracion': json(200, guardada) });
 
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'ok', datos: guardada });

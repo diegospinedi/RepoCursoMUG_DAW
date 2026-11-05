@@ -157,11 +157,11 @@ public static class ValidacionArticulo
         var restantes = articulos.Count - nombrados.Count;
 
         var lista = restantes > 0
-            ? $"{string.Join(", ", nombrados)} y {restantes} más"
+            ? $"{string.Join(", ", nombrados)} y {Cantidad(restantes)} más"
             : nombrados.Count == 1
                 ? nombrados[0]
                 : $"{string.Join(", ", nombrados.Take(nombrados.Count - 1))} y {nombrados[^1]}";
-        var cantidad = articulos.Count == 1 ? "1 artículo" : $"{articulos.Count} artículos";
+        var cantidad = articulos.Count == 1 ? "1 artículo" : $"{Cantidad(articulos.Count)} artículos";
         var codigos = articulos.Count == 1 ? "código" : "códigos";
         var agregado = articulos.Any(articulo => !articulo.Activo) ? $"; {AgregadoInactivoFueraDeRango}" : string.Empty;
 
@@ -170,6 +170,19 @@ public static class ValidacionArticulo
             $"No se grabó el cambio: el precio de venta de {cantidad} sería demasiado grande ({codigos} {lista}). " +
             $"Revisá esos artículos o el múltiplo{agregado}.");
     }
+
+    /// <summary>
+    /// Formato de las cantidades de artículos: punto de miles ("1.250"; D-27 de FEAT-002c), sin depender de la cultura
+    /// del sistema. Los códigos autonuméricos no lo usan: son identificadores y van sin separador.
+    /// </summary>
+    private static readonly NumberFormatInfo FormatoCantidad = new()
+    {
+        NumberGroupSeparator = ".",
+        NumberGroupSizes = [3],
+        NegativeSign = "-",
+    };
+
+    private static string Cantidad(int cantidad) => cantidad.ToString("#,0", FormatoCantidad);
 
     /// <summary>El error de un estado faltante en el cambio de estado.</summary>
     public static ErrorValidacion ActivoFaltante { get; } = new(CampoActivo, AccionActivoFaltante);

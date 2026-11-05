@@ -6,6 +6,10 @@ namespace Optica.Application.Configuracion;
 /// Los parámetros de negocio vigentes, con la condición fiscal en su texto de la Api (<c>responsable_inscripto</c> o
 /// <c>monotributo</c>) y <see cref="FaltaTope"/> verdadero mientras el tope no tenga valor (FR-08).
 /// </summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra ningún valor (<c>ConfiguracionVigente { }</c>, D-28 de FEAT-002c): la
+/// alícuota, la condición fiscal y el tope son información comercial confidencial y no llegan al log por esa vía.
+/// </remarks>
 public sealed record ConfiguracionVigente(
     decimal AlicuotaIva, string CondicionFiscal, decimal MultiploRedondeo, decimal? TopeIdentificacion, bool FaltaTope)
 {
@@ -15,6 +19,8 @@ public sealed record ConfiguracionVigente(
         configuracion.MultiploRedondeo,
         configuracion.TopeIdentificacion,
         configuracion.FaltaTope);
+
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
 }
 
 /// <summary>
