@@ -56,6 +56,21 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         return fila is null ? null : AEntidad(fila);
     }
 
+    // Provisorio hasta FEAT-002b Block 2: los cuatro miembros del contrato nuevo lanzan; ningún caso de uso los llama
+    // todavía.
+    public Task<PaginaArticulos> BuscarAsync(
+        string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 2.");
+
+    public Task<bool> ExisteClaveDeOtroAsync(string clave, long codigo, CancellationToken cancelacion = default) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 2.");
+
+    public void Actualizar(Articulo articulo, long versionLeida) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 2.");
+
+    public void CambiarEstado(long codigo, bool activo) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 2.");
+
     /// <summary>
     /// La entidad de una fila. Una fila que eludió los CHECK, o cuya clave guardada no es la que el dominio calcula para
     /// su código (la unicidad dejaría de valer), no puede representarse: se informa como estado corrupto y no con el
@@ -67,7 +82,9 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         try
         {
             articulo = new Articulo(
-                fila.Id, fila.CodigoProveedor, fila.Descripcion, fila.PrecioCosto, fila.MargenUtilidad, fila.PrecioVenta);
+                fila.Id, fila.CodigoProveedor, fila.Descripcion, fila.PrecioCosto, fila.MargenUtilidad, fila.PrecioVenta,
+                // Provisorio hasta FEAT-002b Block 2: la tabla todavía no tiene Activo ni Version; se leen de la fila.
+                activo: true, version: 0);
         }
         catch (ArgumentException error)
         {

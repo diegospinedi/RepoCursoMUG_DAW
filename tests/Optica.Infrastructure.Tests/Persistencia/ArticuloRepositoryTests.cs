@@ -27,13 +27,13 @@ public class ArticuloRepositoryTests
         var repositorio = new ArticuloRepository(contexto);
         var unidad = new UnidadDeTrabajoEf(contexto);
 
-        repositorio.Agregar(new Articulo(null, "ABC-1", "Armazón metálico", 1210m, 50m, 1815m));
+        repositorio.Agregar(new Articulo(null, "ABC-1", "Armazón metálico", 1210m, 50m, 1815m, activo: true, version: 0));
 
         // Agregar solo registra el alta: sin confirmar, nada llega a la base.
         Assert.Empty(Filas(cadena, SelectFila));
 
         await unidad.ConfirmarAsync();
-        repositorio.Agregar(new Articulo(null, "XYZ-9", "Cristal orgánico", 1000m, 50m, 1500m));
+        repositorio.Agregar(new Articulo(null, "XYZ-9", "Cristal orgánico", 1000m, 50m, 1500m, activo: true, version: 0));
         await unidad.ConfirmarAsync();
 
         // Leídos desde otro alcance, por la clave como lo hace el caso de uso después de confirmar (AC-01).
@@ -58,7 +58,7 @@ public class ArticuloRepositoryTests
 
         // AUTOINCREMENT: un número usado no se reutiliza aunque su fila ya no esté.
         Ejecutar(cadena, $"DELETE FROM Articulo WHERE Id = {segundo.Codigo}");
-        repositorio.Agregar(new Articulo(null, "QRS-2", "Estuche", 10m, 0m, 10m));
+        repositorio.Agregar(new Articulo(null, "QRS-2", "Estuche", 10m, 0m, 10m, activo: true, version: 0));
         await unidad.ConfirmarAsync();
         var tercero = await lector.ObtenerPorClaveAsync("QRS-2");
         Assert.Equal(segundo.Codigo + 1, tercero!.Codigo);
@@ -83,7 +83,7 @@ public class ArticuloRepositoryTests
         var repositorio = new ArticuloRepository(contexto);
 
         // AC-07: 1.210,00 con 50 % da 1.815,00. El código y la descripción se guardan recortados.
-        repositorio.Agregar(new Articulo(null, " abc-1 ", " Armazón ", 1210m, 50.25m, 1815m));
+        repositorio.Agregar(new Articulo(null, " abc-1 ", " Armazón ", 1210m, 50.25m, 1815m, activo: true, version: 0));
         await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
 
         var fila = Assert.Single(Filas(cadena, SelectFila));
@@ -102,7 +102,7 @@ public class ArticuloRepositoryTests
         var repositorio = new ArticuloRepository(contexto);
 
         // FR-05: cero y negativos son válidos.
-        repositorio.Agregar(new Articulo(null, "NEG-1", "Bonificación", -100m, 50m, -150m));
+        repositorio.Agregar(new Articulo(null, "NEG-1", "Bonificación", -100m, 50m, -150m, activo: true, version: 0));
         await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
 
         Assert.Equal(["-10000", "5000", "-15000"], Assert.Single(Filas(cadena, SelectFila))[4..]);
@@ -118,12 +118,12 @@ public class ArticuloRepositoryTests
         using var baseTemporal = new BaseTemporal();
         var cadena = CadenaDe(baseTemporal);
         var contexto = baseTemporal.CrearContexto();
-        new ArticuloRepository(contexto).Agregar(new Articulo(null, "ABC-1", "Armazón", 1210m, 50m, 1815m));
+        new ArticuloRepository(contexto).Agregar(new Articulo(null, "ABC-1", "Armazón", 1210m, 50m, 1815m, activo: true, version: 0));
         await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
 
         // Otro alcance da de alta " abc-1 ": misma clave, la segunda barrera es el índice UNIQUE (AC-02, ADR-009).
         var otroContexto = baseTemporal.CrearContexto();
-        new ArticuloRepository(otroContexto).Agregar(new Articulo(null, " abc-1 ", "Otro", 1m, 0m, 1m));
+        new ArticuloRepository(otroContexto).Agregar(new Articulo(null, " abc-1 ", "Otro", 1m, 0m, 1m, activo: true, version: 0));
 
         var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
             () => new UnidadDeTrabajoEf(otroContexto).ConfirmarAsync());
@@ -155,8 +155,8 @@ public class ArticuloRepositoryTests
         Assert.False(await repositorio.ExisteClaveAsync(NormalizacionCodigo.Clave("ABC-1")));
 
         // Guardados en minúsculas, con "ñandú" escrito con caracteres precompuestos (U+00F1, U+00FA).
-        repositorio.Agregar(new Articulo(null, "abc-1", "Armazón", 1m, 0m, 1m));
-        repositorio.Agregar(new Articulo(null, "ñandú-1", "Estuche", 1m, 0m, 1m));
+        repositorio.Agregar(new Articulo(null, "abc-1", "Armazón", 1m, 0m, 1m, activo: true, version: 0));
+        repositorio.Agregar(new Articulo(null, "ñandú-1", "Estuche", 1m, 0m, 1m, activo: true, version: 0));
         await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
 
         var lector = new ArticuloRepository(baseTemporal.CrearContexto());
@@ -347,7 +347,7 @@ public class ArticuloRepositoryTests
 
         // Agregar es un alta: el código lo asigna la base.
         var error = Assert.Throws<ArgumentException>(
-            () => repositorio.Agregar(new Articulo(7, "ABC-1", "Armazón", 1m, 0m, 1m)));
+            () => repositorio.Agregar(new Articulo(7, "ABC-1", "Armazón", 1m, 0m, 1m, activo: true, version: 0)));
 
         Assert.Equal("articulo", error.ParamName);
         Assert.False(contexto.ChangeTracker.HasChanges());

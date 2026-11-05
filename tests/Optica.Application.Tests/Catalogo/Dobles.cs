@@ -30,7 +30,9 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     /// <summary>Guarda un artículo ya confirmado, como si existiera de antes.</summary>
     public Articulo Sembrar(string codigoProveedor, string descripcion = "Existente", decimal costo = 100m)
     {
-        var articulo = new Articulo(++_ultimoCodigo, codigoProveedor, descripcion, costo, 50m, costo * 1.5m);
+        // Provisorio hasta FEAT-002b Block 3: el doble siembra siempre activos con versión 0.
+        var articulo = new Articulo(
+            ++_ultimoCodigo, codigoProveedor, descripcion, costo, 50m, costo * 1.5m, activo: true, version: 0);
         Guardados.Add(articulo);
         return articulo;
     }
@@ -67,6 +69,20 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
             OcultarAlLeerPorClave ? null : Guardados.SingleOrDefault(articulo => articulo.CodigoProveedorClave == clave));
     }
 
+    // Provisorio hasta FEAT-002b Block 3: los cuatro miembros del contrato nuevo lanzan; el alta no los usa.
+    public Task<PaginaArticulos> BuscarAsync(
+        string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 3.");
+
+    public Task<bool> ExisteClaveDeOtroAsync(string clave, long codigo, CancellationToken cancelacion = default) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 3.");
+
+    public void Actualizar(Articulo articulo, long versionLeida) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 3.");
+
+    public void CambiarEstado(long codigo, bool activo) =>
+        throw new NotSupportedException("Pendiente de FEAT-002b, Block 3.");
+
     public Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         Confirmaciones++;
@@ -84,7 +100,10 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
                 pendiente.Descripcion,
                 pendiente.PrecioCosto,
                 pendiente.MargenUtilidad,
-                pendiente.PrecioVenta));
+                pendiente.PrecioVenta,
+                // Provisorio hasta FEAT-002b Block 3: el doble guarda siempre activos con versión 0.
+                activo: true,
+                version: 0));
         }
 
         _pendientes.Clear();

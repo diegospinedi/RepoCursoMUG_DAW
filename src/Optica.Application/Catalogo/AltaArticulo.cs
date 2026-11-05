@@ -108,8 +108,8 @@ public sealed class AltaArticulo(
             return ResultadoAlta.Invalido([ValidacionArticulo.CodigoDuplicado]);
         }
 
-        articulos.Agregar(new Articulo(
-            null, codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
+        articulos.Agregar(Articulo.Nuevo(
+            codigoProveedor, datos.Descripcion!, costo, margen, calculo.Precio!.PrecioVenta));
 
         try
         {
