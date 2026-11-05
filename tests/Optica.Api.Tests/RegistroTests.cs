@@ -174,6 +174,40 @@ public sealed class RegistroTests
         Assert.DoesNotContain(lineas, l => l.TextoCompleto.Contains(fabrica.DirectorioDatos, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Piso del log en código (D-12, R-06): el registro de pedidos de ASP.NET Core (la URL con la query string) y el de
+    /// MVC (los argumentos de las acciones) quedan en Warning aunque la configuración baje <c>Microsoft.AspNetCore</c> a
+    /// Trace (en appsettings o con una variable de entorno). Con la configuración real, y con ese cambio encima.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Logging:LogLevel:Microsoft.AspNetCore")]
+    // La misma categoría que la regla del código: gana la que se agrega después, la del código.
+    [InlineData("Logging:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics")]
+    public async Task Arranque_RegistroDePedidosYDeMvc_NoHabilitadoParaInformation(string? claveEnTrace)
+    {
+        var bajarMicrosoftAspNetCore = claveEnTrace == "Logging:LogLevel:Microsoft.AspNetCore";
+        using var fabrica = new FabricaApi(nivelesDeConfiguracion: true);
+        using var configurada = claveEnTrace is null
+            ? fabrica
+            : fabrica.WithWebHostBuilder(web => web.UseSetting(claveEnTrace, "Trace"));
+        // Arranca la Api con esa configuración.
+        await configurada.CreateClient().GetAsync("/api/acceso/estado");
+        var registros = configurada.Services.GetRequiredService<ILoggerFactory>();
+
+        foreach (var categoria in new[] { "Microsoft.AspNetCore.Hosting.Diagnostics", "Microsoft.AspNetCore.Mvc.Infrastructure" })
+        {
+            var registro = registros.CreateLogger(categoria);
+            Assert.False(registro.IsEnabled(LogLevel.Information), $"{categoria} registra Information.");
+            Assert.True(registro.IsEnabled(LogLevel.Warning), $"{categoria} no registra Warning.");
+        }
+
+        // Control: el cambio de configuración llegó (otra categoría de ASP.NET Core sí baja).
+        Assert.Equal(
+            bajarMicrosoftAspNetCore,
+            registros.CreateLogger("Microsoft.AspNetCore.Routing").IsEnabled(LogLevel.Information));
+    }
+
     [Fact]
     public async Task Log_IngresarConErrorDelSistema_NoContieneLaContrasena()
     {

@@ -219,7 +219,11 @@ Recién con la contraseña definida:
 ## 8. Restricciones de operación
 
 - **Registro (log):** no subas la categoría `Microsoft.EntityFrameworkCore` a `Debug` ni a `Trace`: a ese nivel EF Core
-  registra la ruta completa de la base, que incluye el nombre de usuario de Windows. Dejala en `Warning`.
+  registra la ruta completa de la base, que incluye el nombre de usuario de Windows. Dejala en `Warning`. Tampoco bajes
+  `Microsoft.AspNetCore` de `Warning`: en `Information` registra la dirección de cada pedido con lo que se buscó en el
+  catálogo, y en `Trace` los datos recibidos. La Api fija un piso propio para esas categorías (FEAT-002b, D-28) que le
+  gana a la configuración general; no agregues reglas por proveedor (`Logging:<Proveedor>:LogLevel:...`), que sí lo
+  vencen.
 - **Nunca actives `EnableSensitiveDataLogging`** de EF Core: pone los valores de los parámetros y de las entidades
   (entre ellos, el hash de la contraseña) en el log y en los mensajes de excepción. **Tampoco `EnableDetailedErrors`**:
   por sí solo no muestra valores, pero agrega a los errores de lectura detalles del esquema (tablas, columnas,

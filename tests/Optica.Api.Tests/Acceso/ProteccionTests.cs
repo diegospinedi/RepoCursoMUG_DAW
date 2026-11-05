@@ -16,17 +16,7 @@ public sealed class ProteccionTests
         var cliente = fabrica.CrearClienteSinCookies();
 
         // Lo realmente registrado en la Api, no una lista escrita a mano.
-        var endpoints = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
-            .OfType<RouteEndpoint>()
-            .SelectMany(endpoint =>
-            {
-                var ruta = "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/');
-                var metodos = endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods
-                    ?? [HttpMethods.Get, HttpMethods.Post];
-                return metodos.Select(metodo => (Metodo: metodo, Ruta: ruta));
-            })
-            .Distinct()
-            .ToList();
+        var endpoints = EndpointsRegistrados(fabrica);
 
         // Si la enumeración no encontrara las rutas protegidas conocidas, la prueba no estaría probando nada.
         Assert.Contains((HttpMethods.Get, "/api/sesion"), endpoints);
@@ -57,6 +47,212 @@ public sealed class ProteccionTests
         }
 
         Assert.Contains("GET /api/articulos/1", pedidas);
+        Assert.Contains("GET /api/articulos", pedidas);
+        Assert.Contains("PUT /api/articulos/1", pedidas);
+        Assert.Contains("PUT /api/articulos/1/estado", pedidas);
+    }
+
+    /// <summary>Método y ruta de cada endpoint registrado en la Api.</summary>
+    private static List<(string Metodo, string Ruta)> EndpointsRegistrados(FabricaApi fabrica) =>
+        fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .SelectMany(endpoint =>
+            {
+                var ruta = "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/');
+                var metodos = endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods
+                    ?? [HttpMethods.Get, HttpMethods.Post, HttpMethods.Put];
+                return metodos.Select(metodo => (Metodo: metodo, Ruta: ruta));
+            })
+            .Distinct()
+            .ToList();
+
+    private const string RutaArticulos = "/api/articulos";
+
+    /// <summary>
+    /// Las tres rutas de FEAT-002b exigen sesión (R-01): están registradas, no figuran en <see cref="RutasAnonimas"/>
+    /// y, sin sesión, responden 401 sin cuerpo antes del 415 y del 413 (el Content-Type y el tamaño no se miran).
+    /// </summary>
+    [Fact]
+    public async Task RutasNuevas_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var (codigo, _) = await GrabarArticuloAsync(cliente, cookie);
+
+        var endpoints = EndpointsRegistrados(fabrica);
+        var nuevas = new[]
+        {
+            (HttpMethods.Get, "/api/articulos"),
+            (HttpMethods.Put, "/api/articulos/{codigo:long}"),
+            (HttpMethods.Put, "/api/articulos/{codigo:long}/estado"),
+        };
+        foreach (var (metodo, patron) in nuevas)
+        {
+            Assert.Contains((metodo, patron), endpoints);
+            Assert.False(RutasAnonimas.Contiene(metodo, patron), $"{metodo} {patron} no puede ser anónima.");
+        }
+
+        var datos = $"{RutaArticulos}/{codigo}";
+        var estado = $"{RutaArticulos}/{codigo}/estado";
+        var cuerpoDatos = CuerpoDatos(version: 0);
+        var pedidos = new List<(string Descripcion, Task<HttpResponseMessage> Pedido)>
+        {
+            ("GET listado", Http.GetAsync(cliente, $"{RutaArticulos}?texto=armaz&pagina=1")),
+            ("PUT datos", EnviarJsonAsync(cliente, HttpMethod.Put, datos, cuerpoDatos)),
+            ("PUT estado", EnviarJsonAsync(cliente, HttpMethod.Put, estado, "{\"activo\":false}")),
+            ("PUT datos texto plano", Http.EnviarAsync(
+                cliente, HttpMethod.Put, datos, new StringContent(cuerpoDatos, Encoding.UTF8, "text/plain"))),
+            ("PUT estado texto plano", Http.EnviarAsync(
+                cliente, HttpMethod.Put, estado, new StringContent("{\"activo\":false}", Encoding.UTF8, "text/plain"))),
+            ("PUT datos grande", EnviarJsonAsync(cliente, HttpMethod.Put, datos, CuerpoDatos(0, new string('a', 2000)))),
+            ("PUT estado grande", EnviarJsonAsync(cliente, HttpMethod.Put, estado, CuerpoEstado(false, new string('a', 200)))),
+        };
+
+        foreach (var (descripcion, pedido) in pedidos)
+        {
+            var respuesta = await pedido;
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.Unauthorized,
+                $"{descripcion} respondió {(int)respuesta.StatusCode} sin sesión; se esperaba 401.");
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        // Nada cambió: ni los datos ni el estado ni la versión.
+        var leido = await Http.JsonAsync(await Http.GetAsync(cliente, datos, cookie));
+        Assert.Equal("Armazón", leido.GetProperty("descripcion").GetString());
+        Assert.True(leido.GetProperty("activo").GetBoolean());
+        Assert.Equal(0, leido.GetProperty("version").GetInt64());
+    }
+
+    /// <summary>
+    /// Los dos PUT exigen <c>Content-Type: application/json</c> (D-11, R-02): texto plano, ningún tipo, o ningún tipo y
+    /// ningún cuerpo, 415 sin cuerpo, sin tocar el artículo. El 415 lo da <see cref="LimitesDelCuerpo"/>, no MVC: el de
+    /// MVC llevaría un ProblemDetails, y sin cuerpo MVC ni siquiera respondería 415.
+    /// </summary>
+    [Theory]
+    [InlineData("", "textoPlano")]
+    [InlineData("", "sinTipo")]
+    [InlineData("", "sinTipoNiCuerpo")]
+    [InlineData("/estado", "textoPlano")]
+    [InlineData("/estado", "sinTipo")]
+    [InlineData("/estado", "sinTipoNiCuerpo")]
+    public async Task Put_SinJson_415(string sufijo, string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var (codigo, version) = await GrabarArticuloAsync(cliente, cookie);
+        var ruta = $"{RutaArticulos}/{codigo}{sufijo}";
+        var cuerpo = sufijo.Length == 0 ? CuerpoDatos(version, descripcion: "Otra") : CuerpoEstado(false);
+
+        // ByteArrayContent no lleva Content-Type.
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(cuerpo, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(cuerpo)),
+            _ => new ByteArrayContent([]),
+        };
+        Assert.Equal(variante == "textoPlano", contenido.Headers.ContentType is not null);
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Put, ruta, contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        // El 415 lo da un middleware para todo PUT: sin este control, la fila pasaría aunque la acción no existiera.
+        AfirmarQueElEndpointExiste(fabrica, $"{RutaArticulos}/{{codigo:long}}{sufijo}", HttpMethods.Put);
+        await AfirmarSinCambiosAsync(cliente, cookie, codigo);
+    }
+
+    /// <summary>
+    /// El PUT de datos acepta hasta 1024 bytes y el de estado hasta 64 (D-11, R-05): un byte más, 413, con
+    /// <c>Content-Length</c> y sin él (en partes); en el límite exacto, el pedido llega a la acción y graba.
+    /// </summary>
+    [Theory]
+    [InlineData("", 1024, true)]
+    [InlineData("", 1024, false)]
+    [InlineData("/estado", 64, true)]
+    [InlineData("/estado", 64, false)]
+    public async Task Put_DemasiadoGrande_413(string sufijo, int limite, bool conLargo)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var (codigo, version) = await GrabarArticuloAsync(cliente, cookie);
+        var ruta = $"{RutaArticulos}/{codigo}{sufijo}";
+
+        var grande = CuerpoDeBytes(sufijo, version, limite + 1);
+        var rechazo = await EnviarConLargoAsync(cliente, ruta, grande, conLargo, cookie);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, rechazo.StatusCode);
+        await AfirmarSinCambiosAsync(cliente, cookie, codigo);
+
+        // Control del 413: el mismo cuerpo en el límite exacto se acepta.
+        var justo = CuerpoDeBytes(sufijo, version, limite);
+        var aceptado = await EnviarConLargoAsync(cliente, ruta, justo, conLargo, cookie);
+        Assert.Equal(HttpStatusCode.OK, aceptado.StatusCode);
+    }
+
+    /// <summary>Un cuerpo válido de exactamente <paramref name="bytes"/> bytes para la ruta, completado con relleno.</summary>
+    private static string CuerpoDeBytes(string sufijo, long version, int bytes)
+    {
+        Func<string, string> armar = sufijo.Length == 0
+            ? relleno => CuerpoDatos(version, relleno, descripcion: "Otra")
+            : relleno => CuerpoEstado(false, relleno);
+        var base_ = Encoding.UTF8.GetByteCount(armar(string.Empty));
+        Assert.True(bytes >= base_, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = armar(new string('a', bytes - base_));
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
+    /// <summary>El cuerpo del PUT de datos; con <paramref name="relleno"/> (aun vacío), una propiedad que se ignora.</summary>
+    private static string CuerpoDatos(long version, string? relleno = null, string descripcion = "Armazón") =>
+        "{\"codigoProveedor\":\"ABC-1\",\"descripcion\":\"" + descripcion
+        + "\",\"precioCosto\":1210,\"margenUtilidad\":60,\"version\":" + version
+        + (relleno is null ? string.Empty : ",\"relleno\":\"" + relleno + "\"") + "}";
+
+    /// <summary>El cuerpo del PUT de estado; con <paramref name="relleno"/> (aun vacío), una propiedad que se ignora.</summary>
+    private static string CuerpoEstado(bool activo, string? relleno = null) =>
+        "{\"activo\":" + (activo ? "true" : "false")
+        + (relleno is null ? string.Empty : ",\"r\":\"" + relleno + "\"") + "}";
+
+    private static Task<HttpResponseMessage> EnviarJsonAsync(
+        HttpClient cliente, HttpMethod metodo, string ruta, string json, string? cookie = null) =>
+        Http.EnviarAsync(cliente, metodo, ruta, new StringContent(json, Encoding.UTF8, "application/json"), cookie);
+
+    private static Task<HttpResponseMessage> EnviarConLargoAsync(
+        HttpClient cliente, string ruta, string cuerpo, bool conLargo, string cookie)
+    {
+        HttpContent contenido = conLargo
+            ? new StringContent(cuerpo, Encoding.UTF8, "application/json")
+            : new Http.ContenidoSinLargo(cuerpo, "application/json");
+        return Http.EnviarAsync(cliente, HttpMethod.Put, ruta, contenido, cookie);
+    }
+
+    /// <summary>Graba un artículo activo con costo 1210 y margen 50; devuelve su código y su versión.</summary>
+    private static async Task<(long Codigo, long Version)> GrabarArticuloAsync(HttpClient cliente, string cookie)
+    {
+        var respuesta = await Http.PostJsonAsync(
+            cliente,
+            RutaArticulos,
+            """{"codigoProveedor":"ABC-1","descripcion":"Armazón","precioCosto":1210,"margenUtilidad":50}""",
+            cookie);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        return (json.GetProperty("codigo").GetInt64(), json.GetProperty("version").GetInt64());
+    }
+
+    /// <summary>El artículo sigue como lo dejó <see cref="GrabarArticuloAsync"/>: mismos datos, activo y versión 0.</summary>
+    private static async Task AfirmarSinCambiosAsync(HttpClient cliente, string cookie, long codigo)
+    {
+        var respuesta = await Http.GetAsync(cliente, $"{RutaArticulos}/{codigo}", cookie);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal("Armazón", json.GetProperty("descripcion").GetString());
+        Assert.Equal(50m, json.GetProperty("margenUtilidad").GetDecimal());
+        Assert.True(json.GetProperty("activo").GetBoolean());
+        Assert.Equal(0, json.GetProperty("version").GetInt64());
     }
 
     /// <summary>Restricciones de ruta que el valor de ejemplo <c>1</c> cumple siempre.</summary>
@@ -258,17 +454,32 @@ public sealed class ProteccionTests
         EsCambiar(ruta) ? Http.CuerpoCambio(Http.Contrasena, contrasena) : Http.CuerpoContrasena(contrasena);
 
     /// <summary>
-    /// Hay una acción POST registrada en la ruta. Lo necesitan las pruebas cuya respuesta (415, 401) también se daría en
-    /// una ruta inexistente.
+    /// Hay una acción registrada en la ruta (el patrón, por ejemplo <c>/api/articulos/{codigo:long}</c>) para el método
+    /// indicado, POST si no se indica. Lo necesitan las pruebas cuya respuesta (415, 401) también se daría en una ruta
+    /// inexistente: el patrón solo no alcanza, porque la misma ruta puede tener un GET y no un PUT.
     /// </summary>
-    internal static void AfirmarQueElEndpointExiste(FabricaApi fabrica, string ruta)
+    internal static void AfirmarQueElEndpointExiste(FabricaApi fabrica, string ruta, string metodo = "POST")
     {
         var existe = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
             .Any(endpoint =>
                 "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/') == ruta
-                && endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(HttpMethods.Post) == true);
-        Assert.True(existe, $"No hay un endpoint POST {ruta}.");
+                && endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods
+                    .Contains(metodo, StringComparer.OrdinalIgnoreCase) == true);
+        Assert.True(existe, $"No hay un endpoint {metodo} {ruta}.");
+    }
+
+    [Fact]
+    public void AfirmarQueElEndpointExiste_DistingueElMetodo()
+    {
+        using var fabrica = new FabricaApi();
+
+        AfirmarQueElEndpointExiste(fabrica, RutaArticulos, HttpMethods.Post);
+        // GET /api/configuracion existe y no tiene PUT: con solo la ruta, la afirmación pasaría.
+        AfirmarQueElEndpointExiste(fabrica, "/api/configuracion", HttpMethods.Get);
+        var error = Assert.Throws<Xunit.Sdk.TrueException>(
+            () => AfirmarQueElEndpointExiste(fabrica, "/api/configuracion", HttpMethods.Put));
+        Assert.Contains("PUT /api/configuracion", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

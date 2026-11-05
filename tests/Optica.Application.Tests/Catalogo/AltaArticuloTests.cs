@@ -20,6 +20,21 @@ public class AltaArticuloTests
         decimal? costo = 1210m,
         decimal? margen = 50m) => new(codigo, descripcion, costo, margen);
 
+    /// <summary>
+    /// Alerta de datos: el <c>ToString()</c> de un record muestra todos sus valores, y cualquier log que reciba los datos
+    /// (un argumento registrado, una interpolación) mostraría el costo y el margen. No muestra ninguno.
+    /// </summary>
+    [Fact]
+    public void DatosArticulo_ToString_NoMuestraDatos()
+    {
+        var texto = new DatosArticulo("Zq7-codigo", "Zq7-descripcion", 7654.31m, 43.21m).ToString();
+
+        Assert.DoesNotContain("Zq7", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("7654", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("43", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("=", texto, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Alta_Valida_DevuelveCodigoYPrecio()
     {

@@ -6,8 +6,15 @@ using Optica.Domain.Configuracion;
 namespace Optica.Application.Catalogo;
 
 /// <summary>Los cuatro datos del artículo tal como llegan; la política los valida, una infracción por campo.</summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra ningún valor (<c>DatosArticulo { }</c>): el de un record mostraría el costo y
+/// el margen en cualquier log que lo reciba (R-06 de FEAT-002b).
+/// </remarks>
 public sealed record DatosArticulo(
-    string? CodigoProveedor, string? Descripcion, decimal? PrecioCosto, decimal? MargenUtilidad);
+    string? CodigoProveedor, string? Descripcion, decimal? PrecioCosto, decimal? MargenUtilidad)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
 
 /// <summary>
 /// Un artículo grabado: su código autonumérico, los textos recortados, los importes y el precio de venta ya
