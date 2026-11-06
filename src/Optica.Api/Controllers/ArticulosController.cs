@@ -118,7 +118,7 @@ public sealed class ArticulosController(
                 new ErrorValidacion(ValidacionArticulo.CampoPagina, ValidacionArticulo.AccionPaginaFueraDeRango));
         }
 
-        return ResponderBusqueda(await buscarArticulos.EjecutarAsync(texto, pagina, cancelacion));
+        return ResponderBusqueda(await buscarArticulos.EjecutarAsync(texto, pagina, cancelacion: cancelacion));
     }
 
     /// <summary>El artículo con ese código: 200, o 404 con ProblemDetails sin detalles (R-06).</summary>

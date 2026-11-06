@@ -107,4 +107,32 @@ public class BuscarArticulosTests
             ],
             resultado.Articulos);
     }
+
+    [Fact]
+    public async Task Buscar_SoloActivos_PasaElFiltro()
+    {
+        var activo = _articulos.Sembrar("AR-1", "Armazón de acetato", 1210m);
+        _articulos.Sembrar("AR-2", "armazon metálico", 100m, activo: false);
+
+        // AC-13: por texto, solo los activos, también en el total.
+        var porTexto = await CrearCasoDeUso().EjecutarAsync("armazón", null, soloActivos: true);
+
+        Assert.True(porTexto.EsValido);
+        Assert.Equal(("armazon", 1, 50, true), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal(1, porTexto.Total);
+        Assert.Equal(
+            [new ArticuloListado(activo.Codigo!.Value, "AR-1", "Armazón de acetato", 1815m, true)], porTexto.Articulos);
+
+        // AC-14: por código.
+        var porCodigo = await CrearCasoDeUso().EjecutarAsync(
+            activo.Codigo.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), null, soloActivos: true);
+
+        Assert.True(Assert.Single(porCodigo.Articulos).Activo);
+        Assert.True(_articulos.UltimaBusqueda!.Value.SoloActivos);
+
+        // Sin el parámetro, el listado del catálogo sigue con activos e inactivos.
+        var sinFiltro = await CrearCasoDeUso().EjecutarAsync("armazón", null);
+        Assert.False(_articulos.UltimaBusqueda!.Value.SoloActivos);
+        Assert.Equal(2, sinFiltro.Total);
+    }
 }

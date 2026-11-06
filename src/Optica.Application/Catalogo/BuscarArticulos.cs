@@ -70,7 +70,9 @@ public sealed class ResultadoBusqueda
 /// Busca artículos por texto, de a <see cref="TamanoPagina"/> por página ordenados por descripción (FR-04, D-01). Valida
 /// el texto y la página sin buscar si alguno es inválido; un texto vacío o ausente lista todo el catálogo (D-06), una
 /// página ausente vale 1 (D-07), y el texto se pliega con <see cref="PlegadoBusqueda"/> para ignorar mayúsculas y
-/// acentos (D-04). No registra el texto en el log (D-12).
+/// acentos (D-04). Con <c>soloActivos</c> verdadero lista solo los artículos activos, también en el total: es la búsqueda
+/// de las líneas del presupuesto (FR-09 y D-15 de FEAT-003a); falso, o ausente, lista activos e inactivos, como el listado
+/// del catálogo. No registra el texto en el log (D-12).
 /// </summary>
 /// <remarks>
 /// Resultados posibles: válido, con la página (vacía si es posterior a la última, con el total, D-07), o inválido, con
@@ -82,7 +84,7 @@ public sealed class BuscarArticulos(IArticuloRepository articulos)
     public const int TamanoPagina = 50;
 
     public async Task<ResultadoBusqueda> EjecutarAsync(
-        string? texto, int? pagina, CancellationToken cancelacion = default)
+        string? texto, int? pagina, bool soloActivos = false, CancellationToken cancelacion = default)
     {
         var errores = ValidacionArticulo.ValidarBusqueda(texto, pagina);
         if (errores.Count > 0)
@@ -94,7 +96,7 @@ public sealed class BuscarArticulos(IArticuloRepository articulos)
         var plegado = texto is null ? null : PlegadoBusqueda.Plegar(texto);
         var numero = pagina ?? 1;
         var encontrados = await articulos.BuscarAsync(
-            string.IsNullOrEmpty(plegado) ? null : plegado, numero, TamanoPagina, soloActivos: false, cancelacion);
+            string.IsNullOrEmpty(plegado) ? null : plegado, numero, TamanoPagina, soloActivos, cancelacion);
         return ResultadoBusqueda.Valido(encontrados, numero);
     }
 }
