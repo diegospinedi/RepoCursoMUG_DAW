@@ -6,8 +6,8 @@
 | Tier | FIX |
 | RCA | docs/ddw/specs/rca-FIX-001.md |
 | Date | 2026-11-06 |
-| Spec loops | 2 |
-| Loops since last human decision | 2 |
+| Spec loops | 3 |
+| Loops since last human decision | 0 |
 
 ## Problem
 Después del quinto intento fallido, el ingreso queda bloqueado 5 minutos (FR-01 de FEAT-001b). Si el reloj de la PC
@@ -20,6 +20,11 @@ FEAT-002c (423 seguido de 204).
 `transcurrido >= TimeSpan.Zero && transcurrido < Duracion`, con `transcurrido = ahora − ancla`. Con la hora actual
 antes del ancla, `transcurrido` es negativo y el resultado es `Libre`. Era una consecuencia aceptada de ADR-006 (R-02 de
 FEAT-001b) que contradice FR-01 cuando el retroceso ocurre solo. Análisis completo en la RCA.
+
+## Block 1 — Arreglo de la tolerancia ante el retroceso del reloj
+El fix-plan es un solo bloque: los pasos, las pruebas y el resto de las secciones de abajo forman parte de él. Este
+título se agregó en un lazo correctivo desde VERIFY (decisión del usuario del 2026-11-06), porque `validate_verify.py`
+(F-VER-02) busca secciones `## Block N`; el contenido del plan no cambió.
 
 ## Solution — steps
 1. `src/Optica.Domain/Acceso/PoliticaBloqueo.cs:38` — agregar `public static readonly TimeSpan ToleranciaRetroceso =
