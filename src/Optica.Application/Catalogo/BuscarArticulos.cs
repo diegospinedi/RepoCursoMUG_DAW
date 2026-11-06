@@ -94,7 +94,7 @@ public sealed class BuscarArticulos(IArticuloRepository articulos)
         var plegado = texto is null ? null : PlegadoBusqueda.Plegar(texto);
         var numero = pagina ?? 1;
         var encontrados = await articulos.BuscarAsync(
-            string.IsNullOrEmpty(plegado) ? null : plegado, numero, TamanoPagina, cancelacion);
+            string.IsNullOrEmpty(plegado) ? null : plegado, numero, TamanoPagina, soloActivos: false, cancelacion);
         return ResultadoBusqueda.Valido(encontrados, numero);
     }
 }

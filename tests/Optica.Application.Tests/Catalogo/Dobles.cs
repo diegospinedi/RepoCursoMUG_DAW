@@ -49,7 +49,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     public int Busquedas { get; private set; }
 
     /// <summary>Los argumentos de la última llamada a <see cref="BuscarAsync"/>; null si no hubo ninguna.</summary>
-    public (string? TextoPlegado, int Pagina, int Tamano)? UltimaBusqueda { get; private set; }
+    public (string? TextoPlegado, int Pagina, int Tamano, bool SoloActivos)? UltimaBusqueda { get; private set; }
 
     /// <summary>Si tiene valor, <see cref="ConfirmarAsync"/> lo lanza y no guarda nada.</summary>
     public Exception? ErrorAlConfirmar { get; set; }
@@ -180,14 +180,17 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     /// decimal, ordena por <see cref="PlegadoBusqueda.ClaveOrden"/> de la descripción y después por código, y pagina.
     /// </summary>
     public Task<PaginaArticulos> BuscarAsync(
-        string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default)
+        string? textoPlegado, int pagina, int tamano, bool soloActivos = false,
+        CancellationToken cancelacion = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(pagina, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(tamano, 1);
         Busquedas++;
-        UltimaBusqueda = (textoPlegado, pagina, tamano);
+        UltimaBusqueda = (textoPlegado, pagina, tamano, soloActivos);
 
+        // Como el repositorio real: con soloActivos, los inactivos no cuentan ni en la página ni en el total (D-15).
         var coincidentes = Guardados
+            .Where(articulo => !soloActivos || articulo.Activo)
             .Where(articulo => textoPlegado is null
                 || PlegadoBusqueda.Plegar(articulo.Descripcion).Contains(textoPlegado, StringComparison.Ordinal)
                 || PlegadoBusqueda.Plegar(articulo.CodigoProveedor).Contains(textoPlegado, StringComparison.Ordinal)

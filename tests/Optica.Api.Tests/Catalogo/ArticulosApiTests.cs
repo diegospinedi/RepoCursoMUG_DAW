@@ -1003,7 +1003,8 @@ public sealed class ArticulosApiTests
             throw Falla();
 
         public Task<PaginaArticulos> BuscarAsync(
-            string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default) => throw Falla();
+            string? textoPlegado, int pagina, int tamano, bool soloActivos = false,
+            CancellationToken cancelacion = default) => throw Falla();
 
         public Task<bool> ExisteClaveDeOtroAsync(string clave, long codigo, CancellationToken cancelacion = default) =>
             throw Falla();

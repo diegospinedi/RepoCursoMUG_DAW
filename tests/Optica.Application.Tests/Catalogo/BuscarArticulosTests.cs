@@ -33,7 +33,7 @@ public class BuscarArticulosTests
         var resultado = await CrearCasoDeUso().EjecutarAsync("  " + texto + " \t", null);
 
         Assert.True(resultado.EsValido);
-        Assert.Equal((texto, 1, 50), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal((texto, 1, 50, false), _articulos.UltimaBusqueda!.Value);
     }
 
     [Fact]
@@ -74,8 +74,8 @@ public class BuscarArticulosTests
 
         Assert.True(ausente.EsValido);
         Assert.Empty(ausente.Errores);
-        Assert.Equal(((string?)null, 1, 50), busquedaAusente);
-        Assert.Equal(((string?)null, 1, 50), _articulos.UltimaBusqueda);
+        Assert.Equal(((string?)null, 1, 50, false), busquedaAusente);
+        Assert.Equal(((string?)null, 1, 50, false), _articulos.UltimaBusqueda);
         Assert.Equal(1, ausente.Pagina);
         Assert.Equal(50, ausente.TamanoPagina);
         Assert.Equal(51, ausente.Total);
@@ -98,7 +98,7 @@ public class BuscarArticulosTests
         var resultado = await CrearCasoDeUso().EjecutarAsync("  ARMAZÓN ", null);
 
         Assert.True(resultado.EsValido);
-        Assert.Equal(("armazon", 1, 50), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal(("armazon", 1, 50, false), _articulos.UltimaBusqueda!.Value);
         Assert.Equal(2, resultado.Total);
         Assert.Equal(
             [
