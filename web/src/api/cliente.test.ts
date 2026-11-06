@@ -8,6 +8,9 @@ import {
   cambiarContrasena,
   cambiarEstadoArticulo,
   consultarArticulo,
+  consultarPresupuesto,
+  grabarPresupuesto,
+  MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
   MENSAJE_ARTICULO_CAMBIADO,
   MENSAJE_ARTICULO_INACTIVO,
   MENSAJE_ARTICULO_NO_ENCONTRADO,
@@ -751,5 +754,205 @@ describe('cliente de la Api: listado, modificación y cambio de estado de artíc
 
     expect(CAMPO_TEXTO).toBe('texto');
     expect(await buscarArticulos('', 1)).toEqual({ tipo: 'campo', campo: CAMPO_TEXTO, mensaje: 'Usá hasta 200 caracteres.' });
+  });
+
+  it('buscarArticulos_SoloActivos_ViajaEnLaUrlSoloSiEsVerdadero', async () => {
+    // D-15: el listado del catálogo sigue pidiendo sin el parámetro; la búsqueda de las líneas lo envía en true.
+    const servidor = servidorFalso({
+      'GET /api/articulos?pagina=1': json(200, PAGINA),
+      'GET /api/articulos?texto=armazon&pagina=1': json(200, PAGINA),
+      'GET /api/articulos?texto=armazon&pagina=2&soloActivos=true': json(200, { ...PAGINA, pagina: 2 }),
+      'GET /api/articulos?pagina=1&soloActivos=true': json(200, PAGINA),
+    });
+
+    expect(await buscarArticulos('', 1, false)).toEqual({ tipo: 'ok', datos: PAGINA });
+    expect(await buscarArticulos('armazon', 1)).toEqual({ tipo: 'ok', datos: PAGINA });
+    expect(await buscarArticulos('armazon', 2, true)).toEqual({ tipo: 'ok', datos: { ...PAGINA, pagina: 2 } });
+    expect(await buscarArticulos('', 1, true)).toEqual({ tipo: 'ok', datos: PAGINA });
+    expect(servidor.llamadas.map((l) => l.ruta)).toEqual([
+      '/api/articulos?pagina=1',
+      '/api/articulos?texto=armazon&pagina=1',
+      '/api/articulos?texto=armazon&pagina=2&soloActivos=true',
+      '/api/articulos?pagina=1&soloActivos=true',
+    ]);
+  });
+});
+
+describe('cliente de la Api: presupuestos', () => {
+  /** Datos ficticios (D-17). */
+  const CLIENTE = {
+    apellido: 'Pérez',
+    nombre: 'Ana',
+    dni: '23.456.789',
+    domicilio: 'Calle Falsa 123',
+    email: 'ana@mail.com',
+    telefono: '11 5555-0000',
+  };
+  const LINEA = {
+    codigoArticulo: 7,
+    descripcion: 'Armazón metálico',
+    precioUnitario: 1850,
+    cantidad: 1,
+    porcentajeDescuento: 0,
+    precioConDescuento: 1850,
+    precioFinal: 1850,
+  };
+  const GRABADO = {
+    numero: 155,
+    fecha: '2026-03-10',
+    estado: 'borrador',
+    cliente: { ...CLIENTE, dni: '23456789' },
+    lineas: [LINEA],
+  };
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const NO_ENCONTRADO = { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+
+  it('grabarPresupuesto_201_EnviaElClienteYSoloLosCodigos', async () => {
+    const servidor = servidorFalso({ 'POST /api/presupuestos': json(201, GRABADO) });
+
+    expect(await grabarPresupuesto(CLIENTE, [7, 7, 9])).toEqual({ tipo: 'ok', datos: GRABADO });
+    const [pedido] = servidor.pedidosA('POST', '/api/presupuestos');
+    // D-12: la línea lleva solo el código; nunca precio ni descripción (FR-11).
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({
+      cliente: CLIENTE,
+      lineas: [{ codigoArticulo: 7 }, { codigoArticulo: 7 }, { codigoArticulo: 9 }],
+    });
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarPresupuesto_201SinOpcionales_LosLeeComoNull', async () => {
+    const sinOpcionales = {
+      ...GRABADO,
+      estado: 'final',
+      cliente: { ...GRABADO.cliente, domicilio: null, email: null, telefono: null },
+    };
+    servidorFalso({ 'POST /api/presupuestos': json(201, sinOpcionales) });
+
+    expect(await grabarPresupuesto({ ...CLIENTE, domicilio: null, email: null, telefono: null }, [7])).toEqual({
+      tipo: 'ok',
+      datos: sinOpcionales,
+    });
+  });
+
+  it('grabarPresupuesto_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      'POST /api/presupuestos': json(400, {
+        errors: {
+          dni: ['Ingresá el DNI del cliente'],
+          'lineas[1]': ['El precio unitario no puede ser negativo'],
+        },
+      }),
+    });
+
+    expect(await grabarPresupuesto(CLIENTE, [7, 8])).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'dni', mensaje: 'Ingresá el DNI del cliente' },
+        { campo: 'lineas[1]', mensaje: 'El precio unitario no puede ser negativo' },
+      ],
+    });
+  });
+
+  it('grabarPresupuesto_413_MensajeDelCatalogo', async () => {
+    servidorFalso({ 'POST /api/presupuestos': vacia(413) });
+
+    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual({ tipo: 'general', mensaje: MENSAJE_ARTICULO_GRANDE });
+  });
+
+  it('grabarPresupuesto_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ 'POST /api/presupuestos': vacia(401) });
+
+    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('consultarPresupuesto_200_DevuelveElPresupuestoSinCamposAjenos', async () => {
+    const servidor = servidorFalso({
+      'GET /api/presupuestos/155': json(200, {
+        ...GRABADO,
+        otro: 1,
+        cliente: { ...GRABADO.cliente, otro: 2 },
+        lineas: [{ ...LINEA, otro: 3 }],
+      }),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: GRABADO });
+    const [pedido] = servidor.pedidosA('GET', '/api/presupuestos/155');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it('consultarPresupuesto_404_NoEncontrado', async () => {
+    servidorFalso({ 'GET /api/presupuestos/9': vacia(404) });
+
+    expect(MENSAJE_PRESUPUESTO_NO_ENCONTRADO).toBe('No se encontró el presupuesto.');
+    expect(await consultarPresupuesto(9)).toEqual(NO_ENCONTRADO);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+    'consultarPresupuesto_NumeroInvalido_%d_NoConsulta',
+    async (numero) => {
+      const servidor = servidorFalso({});
+
+      expect(await consultarPresupuesto(numero)).toEqual(NO_ENCONTRADO);
+      expect(servidor.llamadas).toEqual([]);
+    },
+  );
+
+  it('leerPresupuesto_EstadoDesconocido_RespuestaIlegible', async () => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, { ...GRABADO, estado: 'anulado' }),
+      'POST /api/presupuestos': json(201, { ...GRABADO, estado: 'Borrador' }),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual(ILEGIBLE);
+  });
+
+  it.each([
+    ['cuerpo que no es objeto', 'texto'],
+    ['número cero', { ...GRABADO, numero: 0 }],
+    ['número de texto', { ...GRABADO, numero: '155' }],
+    ['número no entero', { ...GRABADO, numero: 1.5 }],
+    ['fecha con otro formato', { ...GRABADO, fecha: '10/03/2026' }],
+    ['fecha con hora', { ...GRABADO, fecha: '2026-03-10T00:00:00' }],
+    ['fecha inexistente', { ...GRABADO, fecha: '2026-02-30' }],
+    ['fecha con mes 13', { ...GRABADO, fecha: '2026-13-01' }],
+    ['fecha ausente', { ...GRABADO, fecha: undefined }],
+    ['estado ausente', { ...GRABADO, estado: undefined }],
+    ['cliente ausente', { ...GRABADO, cliente: undefined }],
+    ['apellido ausente', { ...GRABADO, cliente: { ...GRABADO.cliente, apellido: undefined } }],
+    ['nombre que no es texto', { ...GRABADO, cliente: { ...GRABADO.cliente, nombre: 1 } }],
+    ['DNI nulo', { ...GRABADO, cliente: { ...GRABADO.cliente, dni: null } }],
+    ['domicilio ausente', { ...GRABADO, cliente: { ...GRABADO.cliente, domicilio: undefined } }],
+    ['email que no es texto', { ...GRABADO, cliente: { ...GRABADO.cliente, email: 1 } }],
+    ['teléfono ausente', { ...GRABADO, cliente: { ...GRABADO.cliente, telefono: undefined } }],
+    ['líneas que no son lista', { ...GRABADO, lineas: {} }],
+    ['línea que no es objeto', { ...GRABADO, lineas: [1] }],
+    ['código de artículo cero', { ...GRABADO, lineas: [{ ...LINEA, codigoArticulo: 0 }] }],
+    ['descripción ausente', { ...GRABADO, lineas: [{ ...LINEA, descripcion: undefined }] }],
+    ['precio unitario de texto', { ...GRABADO, lineas: [{ ...LINEA, precioUnitario: '1850' }] }],
+    ['precio unitario sobre el máximo seguro', { ...GRABADO, lineas: [{ ...LINEA, precioUnitario: 90071992547410 }] }],
+    ['cantidad no entera', { ...GRABADO, lineas: [{ ...LINEA, cantidad: 1.5 }] }],
+    ['descuento ausente', { ...GRABADO, lineas: [{ ...LINEA, porcentajeDescuento: undefined }] }],
+    ['precio con descuento bajo el mínimo seguro', { ...GRABADO, lineas: [{ ...LINEA, precioConDescuento: -90071992547410 }] }],
+    ['precio final nulo', { ...GRABADO, lineas: [{ ...LINEA, precioFinal: null }] }],
+  ])('leerPresupuesto_%s_RespuestaIlegible', async (_caso, cuerpo) => {
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('leerPresupuesto_ImportesEnElMaximoSeguro_LosLee', async () => {
+    const enElLimite = {
+      ...GRABADO,
+      numero: Number.MAX_SAFE_INTEGER,
+      lineas: [{ ...LINEA, precioUnitario: IMPORTE_MAXIMO_SEGURO, precioFinal: -IMPORTE_MAXIMO_SEGURO }],
+    };
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, enElLimite) });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: enElLimite });
   });
 });

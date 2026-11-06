@@ -534,16 +534,201 @@ export const consultarArticulo = (codigo: number): Promise<Resultado<ArticuloGra
 
 /**
  * Una página del catálogo (D-01, FR-04). El texto viaja en la query string (D-12) y se omite si está vacío (lista
- * todo, D-06); la pantalla ya lo recortó y validó. Las filas no traen costo ni margen.
+ * todo, D-06); la pantalla ya lo recortó y validó. Las filas no traen costo ni margen. Con `soloActivos` (la búsqueda
+ * de las líneas del presupuesto, FR-09, D-15) agrega `soloActivos=true`; en falso no lo envía, así el listado del
+ * catálogo sigue pidiendo la misma URL de siempre.
  */
-export const buscarArticulos = (texto: string, pagina: number): Promise<Resultado<PaginaArticulos>> => {
+export const buscarArticulos = (
+  texto: string,
+  pagina: number,
+  soloActivos = false,
+): Promise<Resultado<PaginaArticulos>> => {
   const parametros = new URLSearchParams();
   if (texto !== '') {
     parametros.set(CAMPO_TEXTO, texto);
   }
   parametros.set('pagina', String(pagina));
+  if (soloActivos) {
+    parametros.set(CAMPO_SOLO_ACTIVOS, 'true');
+  }
   return pedir({ metodo: 'GET', ruta: `/api/articulos?${parametros.toString()}` }, leerPagina);
 };
+
+/** Parámetro de `GET /api/articulos` que deja solo los artículos activos (D-15). */
+export const CAMPO_SOLO_ACTIVOS = 'soloActivos';
+
+/** D-24: número de ruta inválido o 404. */
+export const MENSAJE_PRESUPUESTO_NO_ENCONTRADO = 'No se encontró el presupuesto.';
+
+/** Campos de `errors` de `POST /api/presupuestos` (D-20): los seis del cliente y `lineas`; `lineas[i]` es la línea i. */
+export const CAMPO_APELLIDO = 'apellido';
+export const CAMPO_NOMBRE = 'nombre';
+export const CAMPO_DNI = 'dni';
+export const CAMPO_DOMICILIO = 'domicilio';
+export const CAMPO_EMAIL = 'email';
+export const CAMPO_TELEFONO = 'telefono';
+export const CAMPO_LINEAS = 'lineas';
+
+/**
+ * El cliente que se graba (y el que devuelve la Api). Datos personales (Ley 25.326, D-17): viajan solo en el cuerpo
+ * JSON, nunca en la URL, en el almacenamiento del navegador ni en la consola. Los opcionales vacíos van como `null`.
+ */
+export interface DatosCliente {
+  apellido: string;
+  nombre: string;
+  dni: string;
+  domicilio: string | null;
+  email: string | null;
+  telefono: string | null;
+}
+
+/** Los dos estados del presupuesto en el contrato de la Api (D-19, D-32). */
+export const ESTADOS_PRESUPUESTO = ['borrador', 'final'] as const;
+export type EstadoPresupuesto = (typeof ESTADOS_PRESUPUESTO)[number];
+
+/** Una línea grabada con las siete columnas de FR-13; los importes son números JSON (D-33). */
+export interface LineaPresupuesto {
+  codigoArticulo: number;
+  descripcion: string;
+  precioUnitario: number;
+  cantidad: number;
+  porcentajeDescuento: number;
+  precioConDescuento: number;
+  precioFinal: number;
+}
+
+/** Lo que devuelven `POST /api/presupuestos` (201) y `GET /api/presupuestos/{numero}` (200). */
+export interface PresupuestoGrabado {
+  numero: number;
+  /** `yyyy-MM-dd`, la fecha local del día en que se grabó (D-06). */
+  fecha: string;
+  estado: EstadoPresupuesto;
+  cliente: DatosCliente;
+  lineas: LineaPresupuesto[];
+}
+
+/** El resultado de grabar un presupuesto: como {@link ResultadoAlta}, un 400 trae todos los campos inválidos. */
+export type ResultadoAltaPresupuesto = Resultado<PresupuestoGrabado> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+const esTextoONulo = (valor: unknown): valor is string | null => valor === null || typeof valor === 'string';
+
+const esEstadoPresupuesto = (valor: unknown): valor is EstadoPresupuesto =>
+  ESTADOS_PRESUPUESTO.some((estado) => estado === valor);
+
+const FORMATO_FECHA = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Una fecha `yyyy-MM-dd` que existe en el calendario ("2026-02-30" no). Se compara en UTC: sin zona horaria. */
+function esFecha(valor: unknown): valor is string {
+  if (typeof valor !== 'string') {
+    return false;
+  }
+  const partes = FORMATO_FECHA.exec(valor);
+  if (partes === null) {
+    return false;
+  }
+  const [anio, mes, dia] = [Number(partes[1]), Number(partes[2]), Number(partes[3])];
+  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+  return fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia;
+}
+
+/** El cliente: solo los seis campos; un dato ausente o de otro tipo hace ilegible la respuesta. */
+const leerCliente: Lector<DatosCliente> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.apellido === 'string' &&
+  typeof cuerpo.nombre === 'string' &&
+  typeof cuerpo.dni === 'string' &&
+  esTextoONulo(cuerpo.domicilio) &&
+  esTextoONulo(cuerpo.email) &&
+  esTextoONulo(cuerpo.telefono)
+    ? {
+        apellido: cuerpo.apellido,
+        nombre: cuerpo.nombre,
+        dni: cuerpo.dni,
+        domicilio: cuerpo.domicilio,
+        email: cuerpo.email,
+        telefono: cuerpo.telefono,
+      }
+    : undefined;
+
+/** Una línea: las siete columnas, con los importes dentro de {@link IMPORTE_MAXIMO_SEGURO}. */
+const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  esEnteroEntre(cuerpo.codigoArticulo, 1) &&
+  typeof cuerpo.descripcion === 'string' &&
+  esImporte(cuerpo.precioUnitario) &&
+  typeof cuerpo.cantidad === 'number' &&
+  Number.isSafeInteger(cuerpo.cantidad) &&
+  esNumero(cuerpo.porcentajeDescuento) &&
+  esImporte(cuerpo.precioConDescuento) &&
+  esImporte(cuerpo.precioFinal)
+    ? {
+        codigoArticulo: cuerpo.codigoArticulo,
+        descripcion: cuerpo.descripcion,
+        precioUnitario: cuerpo.precioUnitario,
+        cantidad: cuerpo.cantidad,
+        porcentajeDescuento: cuerpo.porcentajeDescuento,
+        precioConDescuento: cuerpo.precioConDescuento,
+        precioFinal: cuerpo.precioFinal,
+      }
+    : undefined;
+
+/**
+ * Un presupuesto grabado: número entero positivo seguro, fecha `yyyy-MM-dd`, estado `borrador` o `final`, los datos
+ * del cliente y las líneas. Cualquier parte ilegible hace ilegible la respuesta entera: la pantalla no muestra
+ * importes ni datos falsos.
+ */
+const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    !esEnteroEntre(cuerpo.numero, 1) ||
+    !esFecha(cuerpo.fecha) ||
+    !esEstadoPresupuesto(cuerpo.estado) ||
+    !Array.isArray(cuerpo.lineas)
+  ) {
+    return undefined;
+  }
+  const cliente = leerCliente(cuerpo.cliente);
+  if (cliente === undefined) {
+    return undefined;
+  }
+  const lineas: LineaPresupuesto[] = [];
+  for (const elemento of cuerpo.lineas as unknown[]) {
+    const linea = leerLinea(elemento);
+    if (linea === undefined) {
+      return undefined;
+    }
+    lineas.push(linea);
+  }
+  return { numero: cuerpo.numero, fecha: cuerpo.fecha, estado: cuerpo.estado, cliente, lineas };
+};
+
+/**
+ * Graba un presupuesto nuevo en Borrador (FR-01, FR-08) con el cliente y, por cada línea en orden, solo el código del
+ * artículo (D-12): el servidor copia la descripción y el precio del catálogo, así el Precio Unitario no se puede
+ * modificar (FR-11). Un 400 devuelve TODOS los campos de `errors` (D-20) y un 413 es el mensaje general del catálogo.
+ */
+export const grabarPresupuesto = (cliente: DatosCliente, codigos: readonly number[]): Promise<ResultadoAltaPresupuesto> =>
+  grabarConCampos(
+    {
+      metodo: 'POST',
+      ruta: '/api/presupuestos',
+      cuerpo: { cliente, lineas: codigos.map((codigoArticulo) => ({ codigoArticulo })) },
+      mensaje413: MENSAJE_ARTICULO_GRANDE,
+    },
+    leerPresupuesto,
+  );
+
+/**
+ * Un presupuesto por su número. Un número que no es un entero positivo seguro no se consulta (no puede existir); ese
+ * caso y un 404 son el mensaje general {@link MENSAJE_PRESUPUESTO_NO_ENCONTRADO}.
+ */
+export const consultarPresupuesto = (numero: number): Promise<Resultado<PresupuestoGrabado>> =>
+  esEnteroEntre(numero, 1)
+    ? pedir(
+        { metodo: 'GET', ruta: `/api/presupuestos/${numero}`, mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO },
+        leerPresupuesto,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
 
 /**
  * Modifica los datos de un artículo con la versión que leyó la pantalla (D-08, D-17) y devuelve lo grabado, con el

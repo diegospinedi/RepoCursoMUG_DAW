@@ -112,6 +112,19 @@ describe('Inicio', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos/nuevo');
   });
 
+  it('Inicio_EnlaceNuevoPresupuesto', async () => {
+    // D-21.
+    servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Nuevo presupuesto' });
+    expect(enlace.getAttribute('href')).toBe('/presupuestos/nuevo');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Nuevo presupuesto' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/nuevo');
+  });
+
   it('Inicio_EnlaceArticulos', async () => {
     servidorFalso({
       ...conSesion,

@@ -10,6 +10,8 @@ import { DefinirContrasena } from './paginas/DefinirContrasena';
 import { EditarArticulo } from './paginas/EditarArticulo';
 import { Ingreso } from './paginas/Ingreso';
 import { NuevoArticulo } from './paginas/NuevoArticulo';
+import { NuevoPresupuesto } from './paginas/NuevoPresupuesto';
+import { Presupuesto } from './paginas/Presupuesto';
 import { Arranque } from './rutas/Arranque';
 
 /**
@@ -40,6 +42,9 @@ export function App() {
             {/* El alta antes que la edición: "nuevo" no es un código (react-router ya prefiere el segmento fijo). */}
             <Route path="/articulos/nuevo" element={<NuevoArticulo />} />
             <Route path="/articulos/:codigo" element={<EditarArticulo />} />
+            {/* Como en artículos: "nuevo" es el alta, no el presupuesto con ese número. */}
+            <Route path="/presupuestos/nuevo" element={<NuevoPresupuesto />} />
+            <Route path="/presupuestos/:numero" element={<Presupuesto />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

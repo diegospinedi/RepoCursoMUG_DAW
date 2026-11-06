@@ -39,6 +39,9 @@ describe('App', () => {
     ['/articulos/7', 'Editar artículo'],
     // La ruta del alta sigue siendo el alta, no la edición de un artículo con código "nuevo".
     ['/articulos/nuevo', 'Nuevo artículo'],
+    ['/presupuestos/nuevo', 'Nuevo presupuesto'],
+    // El alta tampoco es el presupuesto número "nuevo".
+    ['/presupuestos/155', 'Presupuesto'],
   ])('App_Ruta%s_MuestraSuPantalla', async (ruta, titulo) => {
     servidorFalso({ 'GET /api/sesion': vacia(204) });
 
@@ -253,6 +256,68 @@ const PANTALLAS: Pantalla[] = [
     titulo: 'Editar artículo',
     interactuar: async () => {
       expect(await screen.findByText('Este artículo está inactivo. Reactivalo para editarlo.')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos/nuevo',
+    descripcion: 'alta de presupuesto con una línea y errores junto a los campos',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/sesion': vacia(204),
+        'GET /api/articulos?texto=armazon&pagina=1&soloActivos=true': json(200, {
+          articulos: [
+            { codigo: 1, codigoProveedor: 'ABC-1', descripcion: 'Armazón metálico', precioVenta: 1850, activo: true },
+          ],
+          pagina: 1,
+          tamanoPagina: 50,
+          total: 1,
+        }),
+      }),
+    titulo: 'Nuevo presupuesto',
+    interactuar: async () => {
+      fireEvent.change(await screen.findByLabelText('Texto a buscar'), { target: { value: 'armazon' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Agregar 1 Armazón metálico' }));
+      fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ana@' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
+      expect(await screen.findByText('Ingresá el DNI del cliente')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos/:numero',
+    url: '/presupuestos/155',
+    descripcion: 'presupuesto grabado con la confirmación',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/presupuestos/155': json(200, {
+          numero: 155,
+          fecha: '2026-03-10',
+          estado: 'borrador',
+          cliente: {
+            apellido: 'Pérez',
+            nombre: 'Ana',
+            dni: '23456789',
+            domicilio: 'Calle Falsa 123',
+            email: 'ana@mail.com',
+            telefono: '11 5555-0000',
+          },
+          lineas: [
+            {
+              codigoArticulo: 1,
+              descripcion: 'Armazón metálico',
+              precioUnitario: 1850,
+              cantidad: 1,
+              porcentajeDescuento: 0,
+              precioConDescuento: 1850,
+              precioFinal: 1850,
+            },
+          ],
+        }),
+      }),
+    titulo: 'Presupuesto',
+    estadoNavegacion: { mensaje: 'Presupuesto N.º 155 grabado. Estado: Borrador.' },
+    interactuar: async () => {
+      expect(await screen.findByText('10/03/2026')).toBeTruthy();
     },
   },
 ];
