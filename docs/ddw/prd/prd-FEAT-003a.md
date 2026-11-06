@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-06 |
 | PRD padre | `docs/ddw/prd/prd-FEAT-003.md` (índice), derivado de `prd-DISC-001-04.md` |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de origen. Los AC
@@ -15,10 +15,11 @@
 > es el mismo criterio que FEAT-001 y FEAT-002. AC-18 y AC-19 son locales a esta parte y no tienen número
 > global: validan FR-14 y FR-15, que surgen de decisiones del usuario del 2026-11-06.
 
-> **Alcance (W-PRD-06).** Esta parte tiene 18 AC (17 globales y 1 local), por encima de 5 a 7. El
+> **Alcance (W-PRD-06).** Esta parte tiene 19 AC (17 globales y 2 locales), por encima de 5 a 7. El
 > usuario lo aprobó explícitamente el 2026-11-06 al elegir la división: el alta tiene que grabar un
 > presupuesto completo, con los datos del cliente y sus validaciones, la numeración, el estado inicial y
-> al menos una línea tomada del catálogo.
+> al menos una línea tomada del catálogo. (Corregido el 2026-11-06 a pedido del usuario: decía 18 AC con 1
+> local, escrito antes de sumar AC-19.)
 
 > **Numeración.** El usuario confirmó el 2026-11-06 que la numeración de los presupuestos empieza en 1
 > (FR-06), sin continuar la de los presupuestos hechos a mano.
