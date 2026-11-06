@@ -43,6 +43,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
 
 ### Security
+- [FIX-001] El bloqueo del ingreso por 5 intentos fallidos ya no se levanta cuando el reloj de la PC retrocede (por ejemplo, al sincronizarse sola): un retroceso de hasta 5 minutos mantiene el bloqueo, que puede extenderse hasta 10 minutos desde ese momento (ADR-014).
 - [FEAT-001b] `ConflictoAlConfirmarException` ya no admite una excepción interna, así que el hash de la contraseña que viaja en los `Entries` de EF Core no puede llegar al log por esa vía.
 - [FEAT-002b] El costo, el margen, la descripción y el texto buscado no llegan al log aunque se suba el nivel de registro: los datos de los pedidos no se imprimen y la Api fija en código el piso `Warning` para el registro de pedidos y de MVC.
 - [FEAT-002c] La alícuota, la condición fiscal y el tope de los pedidos y de la configuración vigente no se imprimen en el log, y las pruebas ya no escriben la ruta temporal, que puede incluir el nombre de usuario del sistema operativo.
