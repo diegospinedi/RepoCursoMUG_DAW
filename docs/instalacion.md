@@ -6,8 +6,11 @@ Seguí los pasos en orden: el paso 6 (definir la contraseña) se hace **antes** 
 Si se olvida la contraseña, el restablecimiento en la PC está en la sección 10.
 
 > **Bloqueo por intentos fallidos.** Desde FEAT-001b, después de 5 intentos de ingreso fallidos seguidos el ingreso
-> queda bloqueado 5 minutos, también si se reinicia la Api (riesgo R-03 del modelo de amenazas, ya mitigado). Antes de
-> cargar datos reales de clientes, revisá la sección 8.
+> queda bloqueado 5 minutos, también si se reinicia la Api (riesgo R-03 del modelo de amenazas, ya mitigado). Si la
+> hora de la PC retrocede durante el bloqueo o poco después de que termine (por ejemplo, al sincronizarse sola), el
+> bloqueo puede extenderse hasta 10 minutos desde ese momento (FIX-001); si no se puede esperar, la contraseña se
+> restablece desde la PC (sección 10).
+> Antes de cargar datos reales de clientes, revisá la sección 8.
 
 ## 1. Qué se instala y dónde
 

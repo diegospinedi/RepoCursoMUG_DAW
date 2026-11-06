@@ -64,7 +64,8 @@ public sealed class IngresarConContrasena(
         }
 
         // La hora se toma después de la consulta: un rechazo que otro pedido confirmó justo antes no queda posterior a
-        // ahora (si quedara, la política no lo tomaría como ancla y se perdería el bloqueo).
+        // ahora. La política tolera un ancla hasta 5 minutos en el futuro (ToleranciaRetroceso, FIX-001); este orden
+        // sostiene el bloqueo cuando la diferencia entre las dos horas es mayor.
         var rechazosLeidos = await eventos.ObtenerRechazosIngresoDesdeUltimoReinicioAsync(cancelacion);
         var ahora = reloj.GetUtcNow().UtcDateTime;
         if (PoliticaBloqueo.Evaluar(rechazosLeidos, ahora).EstaBloqueado)
@@ -83,7 +84,8 @@ public sealed class IngresarConContrasena(
         //   si otro pedido que leyó lo mismo confirmó antes de esta relectura y entre los dos se llegó al quinto;
         // - lo leído más el rechazo propio, con la hora original: bloquea al que confirma después aunque el otro haya
         //   dejado el quinto (el ancla) con una hora posterior a la suya, que para la primera evaluación queda en el
-        //   futuro si el reloj no avanzó.
+        //   futuro si el reloj no avanzó. Con la tolerancia de la política (5 minutos, FIX-001) la primera ya bloquea
+        //   esas anclas futuras; esta cubre las que quedan más de 5 minutos adelante.
         await RegistrarAsync(ResultadoEventoAcceso.Rechazo, ahora, IntentoIngreso.Rechazo, cancelacion);
         var confirmados = await eventos.ObtenerRechazosIngresoDesdeUltimoReinicioAsync(cancelacion);
         var ahoraNuevo = reloj.GetUtcNow().UtcDateTime;

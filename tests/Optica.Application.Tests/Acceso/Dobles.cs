@@ -171,7 +171,7 @@ internal sealed class RelojFijo(DateTimeOffset ahora) : TimeProvider
     public override DateTimeOffset GetUtcNow() => ahora;
 }
 
-/// <summary>Reloj en UTC que la prueba adelanta a mano.</summary>
+/// <summary>Reloj en UTC que la prueba mueve a mano: un lapso negativo lo atrasa, como una resincronización.</summary>
 internal sealed class RelojAjustable(DateTimeOffset inicio) : TimeProvider
 {
     private DateTimeOffset _ahora = inicio;
