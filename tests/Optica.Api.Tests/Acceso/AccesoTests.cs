@@ -353,6 +353,43 @@ public sealed class AccesoTests
     }
 
     [Fact]
+    public async Task Ingresar_RelojAtrasado_423ConContrasenaCorrecta()
+    {
+        // El FakeTimeProvider no retrocede: la Api ve su hora más un desfase que la prueba ajusta.
+        var reloj = new RelojConDesfase();
+        using var fabrica = new FabricaApi(servicios =>
+        {
+            servicios.RemoveAll<TimeProvider>();
+            servicios.AddSingleton<TimeProvider>(reloj);
+        });
+        reloj.Base = fabrica.Reloj;
+        var cliente = fabrica.CrearClienteSinCookies();
+        await Http.DefinirAsync(cliente);
+
+        for (var intento = 1; intento <= 4; intento++)
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await IngresarAsync(cliente, "otra-clave-mala")).StatusCode);
+            fabrica.Reloj.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        await AfirmarBloqueadoAsync(await IngresarAsync(cliente, "otra-clave-mala"));
+
+        // FIX-001: la hora de la PC retrocede 1 segundo (resincronización) y el bloqueo sigue, ni la correcta entra.
+        reloj.Desfase = TimeSpan.FromSeconds(-1);
+        var conLaCorrecta = await IngresarAsync(cliente, Http.Contrasena);
+
+        await AfirmarBloqueadoAsync(conLaCorrecta);
+        Assert.Null(Http.Cookie(conLaCorrecta));
+        var eventos = fabrica.Eventos();
+        Assert.Equal(5, eventos.Count(e => e is { Tipo: "ingreso", Resultado: "rechazo" }));
+        Assert.Equal(("ingreso", "bloqueado"), (eventos[^1].Tipo, eventos[^1].Resultado));
+        // El intento se evaluó con la hora atrasada: quedó antes del quinto rechazo (el ancla).
+        Assert.True(
+            eventos[^1].FechaHora < eventos[^2].FechaHora,
+            $"El bloqueado ({eventos[^1].FechaHora:O}) no quedó antes del quinto ({eventos[^2].FechaHora:O}).");
+    }
+
+    [Fact]
     public async Task Ingresar_Pasados5Minutos_AceptaLaCorrecta()
     {
         using var fabrica = new FabricaApi();
@@ -861,6 +898,32 @@ public sealed class AccesoTests
         }
 
         public void Liberar() => _liberado.Set();
+    }
+
+    /// <summary>
+    /// Reloj de la Api que delega en <see cref="Base"/> (el <c>FakeTimeProvider</c> de <see cref="FabricaApi"/>, única
+    /// fuente de la hora) y le suma <see cref="Desfase"/>: un desfase negativo atrasa la hora, como una resincronización,
+    /// cosa que el <c>FakeTimeProvider</c> no permite. Los temporizadores y las marcas monotónicas no se desfasan.
+    /// </summary>
+    private sealed class RelojConDesfase : TimeProvider
+    {
+        public TimeProvider? Base { get; set; }
+
+        public TimeSpan Desfase { get; set; }
+
+        private TimeProvider Origen =>
+            Base ?? throw new InvalidOperationException("Falta asignar el reloj base antes de usar la Api.");
+
+        public override DateTimeOffset GetUtcNow() => Origen.GetUtcNow() + Desfase;
+
+        public override TimeZoneInfo LocalTimeZone => Origen.LocalTimeZone;
+
+        public override long TimestampFrequency => Origen.TimestampFrequency;
+
+        public override long GetTimestamp() => Origen.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            Origen.CreateTimer(callback, state, dueTime, period);
     }
 
     /// <summary>

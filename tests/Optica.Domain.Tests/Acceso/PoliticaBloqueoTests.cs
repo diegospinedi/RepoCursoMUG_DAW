@@ -123,21 +123,86 @@ public class PoliticaBloqueoTests
     }
 
     [Fact]
-    public void PoliticaBloqueo_RelojAtrasado_SinBloqueoNiError()
+    public void PoliticaBloqueo_RelojAtrasado1Segundo_SigueBloqueado()
+    {
+        // FIX-001: la resincronización del reloj lo atrasa unos segundos después del quinto rechazo.
+        var rechazos = Serie(T0, 5, TimeSpan.FromSeconds(10));
+        var quinto = rechazos[4];
+
+        var estado = PoliticaBloqueo.Evaluar(rechazos, quinto.AddSeconds(-1));
+
+        Assert.True(estado.EstaBloqueado, "Un atraso de 1 segundo no debería levantar el bloqueo.");
+        Assert.Equal(quinto + PoliticaBloqueo.Duracion, estado.Hasta);
+    }
+
+    [Fact]
+    public void PoliticaBloqueo_RelojAtrasado5Minutos_BloqueadoHastaAnclaMas5()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(5), PoliticaBloqueo.ToleranciaRetroceso);
+
+        var rechazos = Serie(T0, 5, TimeSpan.FromSeconds(10));
+        var quinto = rechazos[4];
+
+        // En el límite exacto de la tolerancia sigue bloqueado, y el fin del bloqueo no se corre con la hora.
+        var estado = PoliticaBloqueo.Evaluar(rechazos, quinto - PoliticaBloqueo.ToleranciaRetroceso);
+
+        Assert.True(estado.EstaBloqueado, "Con la hora 5 minutos antes del ancla debería seguir bloqueado.");
+        Assert.Equal(quinto.AddMinutes(5), estado.Hasta);
+    }
+
+    [Fact]
+    public void PoliticaBloqueo_RelojAtrasadoMasDe5Minutos_LiberadoSinError()
     {
         var rechazos = Serie(T0, 5, TimeSpan.FromSeconds(10));
         var quinto = rechazos[4];
 
-        foreach (var ahora in new[] { quinto.AddTicks(-1), quinto.AddHours(-1), quinto.AddDays(-3) })
+        var horas = new[]
+        {
+            quinto - PoliticaBloqueo.ToleranciaRetroceso - TimeSpan.FromTicks(1),
+            quinto.AddMinutes(-5).AddSeconds(-1),
+            quinto.AddHours(-1),
+            quinto.AddDays(-3),
+        };
+        foreach (var ahora in horas)
         {
             EstadoBloqueo? estado = null;
             var error = Record.Exception(() => estado = PoliticaBloqueo.Evaluar(rechazos, ahora));
 
+            // Un atraso mayor a la tolerancia se trata como un cambio de hora deliberado: libre, no un error.
             Assert.Null(error);
             Assert.NotNull(estado);
             Assert.False(estado.EstaBloqueado, $"No debería bloquear con la hora en {ahora:O}.");
             Assert.Null(estado.Hasta);
         }
+    }
+
+    [Fact]
+    public void PoliticaBloqueo_SeisRechazosYRelojAtrasado_BloqueadoDesdeElQuinto()
+    {
+        // Como en la concurrencia: el sexto quedó registrado después del quinto, con una hora anterior.
+        var rechazos = Serie(T0, 4, TimeSpan.FromSeconds(10));
+        var quinto = rechazos[^1].AddSeconds(10);
+        rechazos = [.. rechazos, quinto, quinto.AddMilliseconds(-300)];
+
+        var estado = PoliticaBloqueo.Evaluar(rechazos, quinto.AddSeconds(-1));
+
+        Assert.True(estado.EstaBloqueado, "Con seis rechazos y la hora 1 segundo antes del quinto debería bloquear.");
+        Assert.Equal(quinto.AddMinutes(5), estado.Hasta);
+    }
+
+    [Fact]
+    public void PoliticaBloqueo_RelojQueAvanza_BloqueadoHasta5MinutosYLuegoLibre()
+    {
+        var rechazos = Serie(T0, 5, TimeSpan.FromSeconds(10));
+        var quinto = rechazos[4];
+
+        var antes = PoliticaBloqueo.Evaluar(rechazos, quinto.AddMinutes(4).AddSeconds(59));
+        Assert.True(antes.EstaBloqueado);
+        Assert.Equal(quinto.AddMinutes(5), antes.Hasta);
+
+        var aLos5 = PoliticaBloqueo.Evaluar(rechazos, quinto.AddMinutes(5));
+        Assert.False(aLos5.EstaBloqueado);
+        Assert.Null(aLos5.Hasta);
     }
 
     [Fact]
@@ -169,6 +234,9 @@ public class PoliticaBloqueoTests
         Assert.Throws<ArgumentException>(() => PoliticaBloqueo.Evaluar(rechazos, local));
         Assert.Throws<ArgumentException>(() => PoliticaBloqueo.Evaluar(rechazos, sinTipo));
         Assert.Throws<ArgumentException>(() => PoliticaBloqueo.Evaluar([.. rechazos[..4], sinTipo], T0));
+        // Dentro de la tolerancia ante el retroceso del reloj, una hora no UTC se sigue rechazando.
+        var atrasadaLocal = DateTime.SpecifyKind(rechazos[4].AddSeconds(-1), DateTimeKind.Local);
+        Assert.Throws<ArgumentException>(() => PoliticaBloqueo.Evaluar(rechazos, atrasadaLocal));
         Assert.Throws<ArgumentNullException>(() => PoliticaBloqueo.Evaluar(null!, T0));
         Assert.Throws<ArgumentNullException>(() => PoliticaBloqueo.RechazosDesdeUltimoReinicio(null!));
     }

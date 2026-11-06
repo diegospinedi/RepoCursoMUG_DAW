@@ -24,10 +24,13 @@ public sealed record EstadoBloqueo
 /// Bloqueo del ingreso por intentos fallidos (FR-01, FR-02, NFR-01, ADR-006). Se deriva del registro de eventos:
 /// cuentan los <c>ingreso/rechazo</c> posteriores al último evento de <see cref="EventosQueReinician"/>, en orden de
 /// registro. Con <c>k</c> rechazos y <c>n = k / 5</c> (entero), si <c>n ≥ 1</c> el ingreso queda bloqueado mientras
-/// <c>0 ≤ ahora − fecha(rechazo 5·n) &lt; 5 minutos</c>. El ancla es el rechazo que cruzó el múltiplo de 5, así una
-/// carrera concurrente que agrega un sexto no pierde el bloqueo. Si <c>ahora</c> es anterior al ancla (la hora de la
-/// PC se atrasó) no hay bloqueo: el siguiente múltiplo de 5 se ancla con la hora nueva. <c>ingreso/bloqueado</c> y
-/// <c>cambio_contrasena/rechazo</c> no cuentan ni reinician. Pura y sincrónica: no consulta la base.
+/// <c>−5 minutos ≤ ahora − fecha(rechazo 5·n) &lt; 5 minutos</c>, hasta <c>fecha(rechazo 5·n) + 5 minutos</c>. El ancla
+/// es el rechazo que cruzó el múltiplo de 5, así una carrera concurrente que agrega un sexto no pierde el bloqueo. Si
+/// <c>ahora</c> queda antes del ancla por hasta <see cref="ToleranciaRetroceso"/> (el reloj retrocedió al
+/// resincronizar), el bloqueo sigue con el mismo fin (FR-01 de FIX-001, ADR-014); si queda antes por más, se trata
+/// como un cambio de hora deliberado y no hay bloqueo: el siguiente múltiplo de 5 se ancla con la hora nueva (FR-02 de
+/// FIX-001). <c>ingreso/bloqueado</c> y <c>cambio_contrasena/rechazo</c> no cuentan ni reinician. Pura y sincrónica:
+/// no consulta la base.
 /// </summary>
 public static class PoliticaBloqueo
 {
@@ -36,6 +39,13 @@ public static class PoliticaBloqueo
 
     /// <summary>Cuánto dura el bloqueo desde el rechazo que lo ancla.</summary>
     public static readonly TimeSpan Duracion = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Cuánto puede quedar la hora actual antes del ancla sin que se levante el bloqueo (FR-01 y NFR-01 de FIX-001,
+    /// ADR-014): cubre el retroceso del reloj al resincronizar. Igual a <see cref="Duracion"/>, así un retroceso
+    /// alarga el bloqueo como máximo 10 minutos de reloj de pared desde ese momento.
+    /// </summary>
+    public static readonly TimeSpan ToleranciaRetroceso = TimeSpan.FromMinutes(5);
 
     /// <summary>El único evento que suma a la cuenta de rechazos.</summary>
     public static (TipoEventoAcceso Tipo, ResultadoEventoAcceso Resultado) EventoQueCuenta { get; } =
@@ -69,7 +79,7 @@ public static class PoliticaBloqueo
 
         var ancla = rechazos[(multiplos * RechazosParaBloquear) - 1];
         var transcurrido = ahora - ancla;
-        return transcurrido >= TimeSpan.Zero && transcurrido < Duracion
+        return transcurrido >= -ToleranciaRetroceso && transcurrido < Duracion
             ? EstadoBloqueo.BloqueadoHasta(ancla + Duracion)
             : EstadoBloqueo.Libre;
     }

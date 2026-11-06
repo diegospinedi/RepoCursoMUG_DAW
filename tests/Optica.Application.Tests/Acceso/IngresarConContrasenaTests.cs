@@ -158,6 +158,38 @@ public class IngresarConContrasenaTests
     }
 
     [Fact]
+    public async Task Ingresar_RelojAtrasadoTrasElBloqueo_ContrasenaCorrectaBloqueada()
+    {
+        DefinirCredencial("clave-correcta");
+        var reloj = new RelojAjustable();
+        var ingresar = new IngresarConContrasena(_almacen, _almacen, _hasher, _almacen, reloj);
+        for (var intento = 1; intento <= 5; intento++)
+        {
+            await ingresar.EjecutarAsync("clave-incorrecta");
+            reloj.Avanzar(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Equal(5, _hasher.Verificaciones);
+
+        // FIX-001: el reloj vuelve 1 segundo antes del quinto rechazo, como en una resincronización.
+        reloj.Avanzar(TimeSpan.FromSeconds(-2));
+        var resultado = await ingresar.EjecutarAsync("clave-correcta");
+
+        Assert.Equal(ResultadoIngreso.Bloqueado, resultado.Tipo);
+        Assert.Equal(5, _hasher.Verificaciones);
+        var evento = _almacen.Eventos[^1];
+        Assert.Equal(TipoEventoAcceso.Ingreso, evento.Tipo);
+        Assert.Equal(ResultadoEventoAcceso.Bloqueado, evento.Resultado);
+        Assert.Equal(reloj.GetUtcNow().UtcDateTime, evento.FechaHora);
+        // El intento se evaluó con la hora atrasada: quedó antes del quinto rechazo (el ancla).
+        var quintoRechazo = _almacen.Eventos[^2];
+        Assert.Equal(ResultadoEventoAcceso.Rechazo, quintoRechazo.Resultado);
+        Assert.True(
+            evento.FechaHora < quintoRechazo.FechaHora,
+            $"El bloqueado ({evento.FechaHora:O}) no quedó antes del quinto ({quintoRechazo.FechaHora:O}).");
+    }
+
+    [Fact]
     public async Task IngresarConContrasena_FueraDePoliticaDuranteBloqueo_Invalido400SinEvento()
     {
         DefinirCredencial("clave-correcta");
@@ -175,23 +207,33 @@ public class IngresarConContrasenaTests
         Assert.Equal(0, _hasher.Verificaciones);
     }
 
-    [Fact]
-    public async Task IngresarConContrasena_QuintoRechazoConfirmadoJustoAntesDeLaConsulta_Bloqueado()
+    /// <summary>
+    /// Desfases entre las horas de dos pedidos: 1 segundo (el caso realista) y uno mayor que
+    /// <see cref="PoliticaBloqueo.ToleranciaRetroceso"/>, donde un ancla en el futuro libera y solo las defensas del caso
+    /// de uso (orden consulta y hora, segunda evaluación) sostienen el bloqueo.
+    /// </summary>
+    public static TheoryData<TimeSpan> Desfases =>
+        new() { TimeSpan.FromSeconds(1), PoliticaBloqueo.ToleranciaRetroceso + TimeSpan.FromSeconds(1) };
+
+    [Theory]
+    [MemberData(nameof(Desfases))]
+    public async Task IngresarConContrasena_QuintoRechazoConfirmadoJustoAntesDeLaConsulta_Bloqueado(TimeSpan desfase)
     {
         DefinirCredencial("clave-correcta");
         RegistrarRechazosConfirmados(4);
         var reloj = new RelojAjustable();
         var ingresar = new IngresarConContrasena(_almacen, _almacen, _hasher, _almacen, reloj);
 
-        // Otro pedido confirma el quinto rechazo un segundo después de que este empezó, justo antes de la consulta.
+        // Otro pedido confirma el quinto rechazo un desfase después de que este empezó, justo antes de la consulta.
         _almacen.AlConsultarRechazos = () =>
         {
-            reloj.Avanzar(TimeSpan.FromSeconds(1));
+            reloj.Avanzar(desfase);
             _almacen.Eventos.Add(new EventoAcceso(
                 TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, reloj.GetUtcNow().UtcDateTime));
         };
 
-        // La hora del intento se toma después de la consulta: ese rechazo no queda en el futuro y el bloqueo vale.
+        // La hora del intento se toma después de la consulta: ese rechazo no queda en el futuro y el bloqueo vale. Con
+        // un desfase mayor que la tolerancia, tomar la hora antes de la consulta dejaría el ancla en el futuro y libre.
         var resultado = await ingresar.EjecutarAsync("clave-correcta");
 
         Assert.Equal(ResultadoIngreso.Bloqueado, resultado.Tipo);
@@ -200,8 +242,10 @@ public class IngresarConContrasenaTests
         Assert.Equal(reloj.GetUtcNow().UtcDateTime, _almacen.Eventos[^1].FechaHora);
     }
 
-    [Fact]
-    public async Task IngresarConContrasena_CarreraInversa_QuintoConfirmadoPorOtroConHoraPosterior_Bloqueado()
+    [Theory]
+    [MemberData(nameof(Desfases))]
+    public async Task IngresarConContrasena_CarreraInversa_QuintoConfirmadoPorOtroConHoraPosterior_Bloqueado(
+        TimeSpan desfase)
     {
         DefinirCredencial("clave-correcta");
         RegistrarRechazosConfirmados(4);
@@ -209,9 +253,10 @@ public class IngresarConContrasenaTests
 
         // Los dos pedidos leyeron cuatro rechazos y este tomó la hora antes que el otro. El otro confirma primero, con
         // una hora posterior: su rechazo es el quinto (el ancla) y queda en el futuro para este pedido. El reloj de
-        // este pedido no avanza, así que releer con la hora nueva no alcanza y el bloqueo depende de lo leído.
+        // este pedido no avanza; con un desfase mayor que la tolerancia, releer con la hora nueva no alcanza y el
+        // bloqueo depende de lo leído (la segunda evaluación).
         _almacen.AlConfirmar = () => _almacen.Eventos.Add(new EventoAcceso(
-            TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, ahora.AddSeconds(1)));
+            TipoEventoAcceso.Ingreso, ResultadoEventoAcceso.Rechazo, ahora + desfase));
 
         var resultado = await CrearCasoDeUso().EjecutarAsync("clave-incorrecta");
 
