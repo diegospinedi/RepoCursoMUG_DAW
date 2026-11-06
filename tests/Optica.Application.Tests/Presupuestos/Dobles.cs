@@ -33,12 +33,12 @@ internal sealed class PresupuestosEnMemoria : IPresupuestoRepository, IUnidadDeT
     public int Agregados { get; private set; }
 
     /// <summary>Guarda un presupuesto ya confirmado, como si existiera de antes, con datos ficticios.</summary>
-    public Presupuesto Sembrar(long numero)
+    public Presupuesto Sembrar(long numero, EstadoPresupuesto estado = EstadoPresupuesto.Borrador)
     {
         var presupuesto = new Presupuesto(
             numero,
             new DateOnly(2026, 1, 5),
-            EstadoPresupuesto.Borrador,
+            estado,
             new ClientePresupuesto("Gómez", "Luis", "30111222", null, null, null),
             [new LineaPresupuesto(1, "Lente orgánico", 100m, 1, 0m, 100m, 100m)]);
         Guardados.Add(presupuesto);

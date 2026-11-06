@@ -69,8 +69,9 @@ public sealed class ProteccionTests
     private const string RutaArticulos = "/api/articulos";
 
     /// <summary>
-    /// Las tres rutas de FEAT-002b exigen sesión (R-01): están registradas, no figuran en <see cref="RutasAnonimas"/>
-    /// y, sin sesión, responden 401 sin cuerpo antes del 415 y del 413 (el Content-Type y el tamaño no se miran).
+    /// Las tres rutas de FEAT-002b y las dos de presupuestos de FEAT-003a exigen sesión (R-01, D-17): están
+    /// registradas, no figuran en <see cref="RutasAnonimas"/> y, sin sesión, responden 401 sin cuerpo antes del 415 y del
+    /// 413 (el Content-Type y el tamaño no se miran).
     /// </summary>
     [Fact]
     public async Task RutasNuevas_SinSesion_401()
@@ -86,6 +87,9 @@ public sealed class ProteccionTests
             (HttpMethods.Get, "/api/articulos"),
             (HttpMethods.Put, "/api/articulos/{codigo:long}"),
             (HttpMethods.Put, "/api/articulos/{codigo:long}/estado"),
+            // FEAT-003a: el alta y la consulta del presupuesto llevan datos personales (D-17).
+            (HttpMethods.Post, RutaPresupuestos),
+            (HttpMethods.Get, RutaPresupuestos + "/{numero:long}"),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -107,6 +111,15 @@ public sealed class ProteccionTests
                 cliente, HttpMethod.Put, estado, new StringContent("{\"activo\":false}", Encoding.UTF8, "text/plain"))),
             ("PUT datos grande", EnviarJsonAsync(cliente, HttpMethod.Put, datos, CuerpoDatos(0, new string('a', 2000)))),
             ("PUT estado grande", EnviarJsonAsync(cliente, HttpMethod.Put, estado, CuerpoEstado(false, new string('a', 200)))),
+            ("POST presupuesto", EnviarJsonAsync(cliente, HttpMethod.Post, RutaPresupuestos, CuerpoPresupuesto(codigo))),
+            ("POST presupuesto texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                RutaPresupuestos,
+                new StringContent(CuerpoPresupuesto(codigo), Encoding.UTF8, "text/plain"))),
+            ("POST presupuesto grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, RutaPresupuestos, CuerpoPresupuesto(codigo, new string('a', 20_000)))),
+            ("GET presupuesto", Http.GetAsync(cliente, $"{RutaPresupuestos}/1")),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -124,6 +137,98 @@ public sealed class ProteccionTests
         Assert.Equal("Armazón", leido.GetProperty("descripcion").GetString());
         Assert.True(leido.GetProperty("activo").GetBoolean());
         Assert.Equal(0, leido.GetProperty("version").GetInt64());
+        // Ni se grabó un presupuesto: el GET con sesión responde el 404 de la acción.
+        await AfirmarSinPresupuestoAsync(cliente, cookie);
+    }
+
+    private const string RutaPresupuestos = "/api/presupuestos";
+
+    /// <summary>
+    /// <c>POST /api/presupuestos</c> exige <c>Content-Type: application/json</c> (R-02, D-16): texto plano, ningún tipo,
+    /// o ningún tipo y ningún cuerpo, 415 sin cuerpo y sin grabar el presupuesto.
+    /// </summary>
+    [Theory]
+    [InlineData("textoPlano")]
+    [InlineData("sinTipo")]
+    [InlineData("sinTipoNiCuerpo")]
+    public async Task Post_SinJson_415(string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var (codigo, _) = await GrabarArticuloAsync(cliente, cookie);
+        var cuerpo = CuerpoPresupuesto(codigo);
+
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(cuerpo, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(cuerpo)),
+            _ => new ByteArrayContent([]),
+        };
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaPresupuestos, contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        AfirmarQueElEndpointExiste(fabrica, RutaPresupuestos, HttpMethods.Post);
+        await AfirmarSinPresupuestoAsync(cliente, cookie);
+    }
+
+    /// <summary>
+    /// <c>POST /api/presupuestos</c> acepta hasta 16 KB (D-16): un byte más, 413, con <c>Content-Length</c> y sin él (en
+    /// partes), sin grabar; en el límite exacto, el pedido llega a la acción y graba.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Post_DemasiadoGrande_413(bool conLargo)
+    {
+        const int Limite = 16 * 1024;
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var (codigo, _) = await GrabarArticuloAsync(cliente, cookie);
+
+        var rechazo = await EnviarPresupuestoAsync(cliente, CuerpoPresupuestoDeBytes(codigo, Limite + 1), conLargo, cookie);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, rechazo.StatusCode);
+        await AfirmarSinPresupuestoAsync(cliente, cookie);
+
+        // Control del 413: el mismo cuerpo en el límite exacto se acepta.
+        var aceptado = await EnviarPresupuestoAsync(cliente, CuerpoPresupuestoDeBytes(codigo, Limite), conLargo, cookie);
+        Assert.Equal(HttpStatusCode.Created, aceptado.StatusCode);
+    }
+
+    /// <summary>
+    /// Un alta válida con datos ficticios y una línea; con <paramref name="relleno"/>, una propiedad que se ignora.
+    /// </summary>
+    private static string CuerpoPresupuesto(long codigo, string? relleno = null) =>
+        "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},\"lineas\":[{\"codigoArticulo\":"
+        + codigo + "}]" + (relleno is null ? string.Empty : ",\"relleno\":\"" + relleno + "\"") + "}";
+
+    private static string CuerpoPresupuestoDeBytes(long codigo, int bytes)
+    {
+        var base_ = Encoding.UTF8.GetByteCount(CuerpoPresupuesto(codigo, string.Empty));
+        Assert.True(bytes >= base_, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = CuerpoPresupuesto(codigo, new string('a', bytes - base_));
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
+    private static Task<HttpResponseMessage> EnviarPresupuestoAsync(
+        HttpClient cliente, string cuerpo, bool conLargo, string cookie)
+    {
+        HttpContent contenido = conLargo
+            ? new StringContent(cuerpo, Encoding.UTF8, "application/json")
+            : new Http.ContenidoSinLargo(cuerpo, "application/json");
+        return Http.EnviarAsync(cliente, HttpMethod.Post, RutaPresupuestos, contenido, cookie);
+    }
+
+    /// <summary>No hay presupuesto 1: el 404 de la acción (con ProblemDetails), no el de una ruta inexistente.</summary>
+    private static async Task AfirmarSinPresupuestoAsync(HttpClient cliente, string cookie)
+    {
+        var respuesta = await Http.GetAsync(cliente, $"{RutaPresupuestos}/1", cookie);
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
     }
 
     /// <summary>

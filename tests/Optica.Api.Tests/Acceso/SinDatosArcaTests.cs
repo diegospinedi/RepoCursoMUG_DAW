@@ -33,11 +33,22 @@ public sealed class SinDatosArcaTests
             cookie);
         Assert.Equal(System.Net.HttpStatusCode.Created, grabado.StatusCode);
         var codigoArticulo = (await Http.JsonAsync(grabado)).GetProperty("codigo").GetInt64();
+        // Un presupuesto grabado con ese artículo (FEAT-003a), para pedir su GET con un número que existe. Datos
+        // ficticios.
+        var presupuesto = await Http.PostJsonAsync(
+            cliente,
+            RutaPresupuestos,
+            "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},"
+            + "\"lineas\":[{\"codigoArticulo\":" + codigoArticulo + "}]}",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, presupuesto.StatusCode);
+        var numero = (await Http.JsonAsync(presupuesto)).GetProperty("numero").GetInt64();
         // Cada ruta con parámetros, con los valores con los que se la pide. Una ruta con parámetros que no esté acá
         // hace fallar la prueba: hay que agregarla, no excluirla.
         var valores = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [RutaArticulo] = $"{RutaArticulos}/{codigoArticulo}",
+            [RutaPresupuesto] = $"{RutaPresupuestos}/{numero}",
         };
 
         // Lo realmente registrado en la Api, no una lista escrita a mano: un GET nuevo entra solo en la revisión.
@@ -110,11 +121,15 @@ public sealed class SinDatosArcaTests
         Assert.Contains(RutaArticulo, conJson);
         // El listado de FEAT-002b, con el artículo grabado en su primera página.
         Assert.Contains(RutaArticulos, conJson);
+        // El presupuesto grabado de FEAT-003a.
+        Assert.Contains(RutaPresupuesto, conJson);
         Assert.Contains("/api/sesion", sinCuerpo);
     }
 
     private const string RutaArticulos = "/api/articulos";
     private const string RutaArticulo = "/api/articulos/{codigo:long}";
+    private const string RutaPresupuestos = "/api/presupuestos";
+    private const string RutaPresupuesto = "/api/presupuestos/{numero:long}";
 
     [Fact]
     public void ClavesArca_ComparaNombresEnterosSinDistinguirMayusculas()

@@ -333,7 +333,7 @@ public class AltaPresupuestoTests
         var resultado = await CrearCasoDeUso().EjecutarAsync(Datos());
 
         Assert.True(resultado.EsGrabado);
-        Assert.Equal(EstadoPresupuesto.Borrador, resultado.Presupuesto.Estado);
+        Assert.Equal("borrador", resultado.Presupuesto.Estado);
         Assert.Equal(EstadoPresupuesto.Borrador, Assert.Single(_unidad.Guardados).Estado);
     }
 
@@ -429,7 +429,7 @@ public class AltaPresupuestoTests
         object?[] registrados =
         [
             datos, datos.Cliente, cliente, new PresupuestoGrabado(1, new DateOnly(2026, 3, 10),
-                EstadoPresupuesto.Borrador, cliente, []),
+                PresupuestoGrabado.EstadoBorrador, cliente, []),
             grabado, grabado.Presupuesto, grabado.Presupuesto?.Cliente, invalido, leido, leido?.Cliente,
         ];
         foreach (var registrado in registrados)

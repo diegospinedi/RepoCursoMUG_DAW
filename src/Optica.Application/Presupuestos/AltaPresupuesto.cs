@@ -58,17 +58,38 @@ public sealed record LineaGrabada(
         linea.PrecioFinal);
 }
 
-/// <summary>Un presupuesto grabado: número, fecha local sin hora, estado, cliente y líneas en el orden cargado.</summary>
-/// <remarks>Lleva el cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17).</remarks>
+/// <summary>
+/// Un presupuesto grabado: número, fecha local sin hora, estado como texto (<see cref="EstadoBorrador"/> o
+/// <see cref="EstadoFinal"/>), cliente y líneas en el orden cargado.
+/// </summary>
+/// <remarks>
+/// Lleva el cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17). El estado es texto y no el enum del
+/// dominio, así la Api lo devuelve sin compilar contra <c>Optica.Domain</c>.
+/// </remarks>
 public sealed record PresupuestoGrabado(
-    long Numero, DateOnly Fecha, EstadoPresupuesto Estado, ClienteGrabado Cliente, IReadOnlyList<LineaGrabada> Lineas)
+    long Numero, DateOnly Fecha, string Estado, ClienteGrabado Cliente, IReadOnlyList<LineaGrabada> Lineas)
 {
+    /// <summary>El texto de <see cref="EstadoPresupuesto.Borrador"/> (D-19).</summary>
+    public const string EstadoBorrador = "borrador";
+
+    /// <summary>El texto de <see cref="EstadoPresupuesto.Final"/> (D-19).</summary>
+    public const string EstadoFinal = "final";
+
     private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+
+    /// <summary>El texto del estado.</summary>
+    /// <exception cref="InvalidOperationException">El estado no tiene texto asignado (cerrado por defecto).</exception>
+    public static string TextoDelEstado(EstadoPresupuesto estado) => estado switch
+    {
+        EstadoPresupuesto.Borrador => EstadoBorrador,
+        EstadoPresupuesto.Final => EstadoFinal,
+        _ => throw new InvalidOperationException("Estado de presupuesto sin texto asignado."),
+    };
 
     internal static PresupuestoGrabado Desde(Presupuesto presupuesto) => new(
         presupuesto.Numero,
         presupuesto.Fecha,
-        presupuesto.Estado,
+        TextoDelEstado(presupuesto.Estado),
         ClienteGrabado.Desde(presupuesto.Cliente),
         [.. presupuesto.Lineas.Select(LineaGrabada.Desde)]);
 }

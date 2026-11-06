@@ -417,6 +417,113 @@ public sealed class ArticulosApiTests
         Assert.DoesNotContain("System.", texto, StringComparison.Ordinal);
     }
 
+    // FEAT-003a: soloActivos, la búsqueda de las líneas del presupuesto (D-15).
+
+    /// <summary>
+    /// D-26: un <c>soloActivos</c> que no es booleano responde 400 en <c>soloActivos</c> con el texto fijo, sin repetir
+    /// el valor recibido; con una página también ilegible, los dos errores.
+    /// </summary>
+    [Theory]
+    [InlineData("Zq7marcado")]
+    [InlineData("1")]
+    [InlineData("si")]
+    public async Task Get_Listado_SoloActivosIlegible_400(string soloActivos)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var respuesta = await Http.GetAsync(cliente, $"{Ruta}?texto=armaz&soloActivos={soloActivos}", cookie);
+        var conPagina = await Http.GetAsync(
+            cliente, $"{Ruta}?texto=armaz&pagina=Zq7pagina&soloActivos={soloActivos}", cookie);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(
+            new Dictionary<string, string[]> { ["soloActivos"] = ["Indicá true o false."] },
+            await ErroresAsync(respuesta));
+        var texto = await respuesta.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Zq7marcado", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.", texto, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.BadRequest, conPagina.StatusCode);
+        Assert.Equal(
+            new Dictionary<string, string[]>
+            {
+                [ValidacionArticulo.CampoPagina] = ["Pedí una página entre 1 y 10.000."],
+                ["soloActivos"] = ["Indicá true o false."],
+            },
+            await ErroresAsync(conPagina));
+        Assert.DoesNotContain("Zq7", await conPagina.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AC-13: buscar "armazon" con <c>soloActivos=true</c> lista los activos con y sin tilde y ningún inactivo, también
+    /// en el total. Sin el parámetro, o con <c>false</c>, el listado del catálogo sigue con activos e inactivos.
+    /// </summary>
+    [Fact]
+    public async Task Get_Listado_SoloActivosArmazon_SinInactivos()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var metal = await GrabarArticuloAsync(cliente, cookie, "Armazón metal", "M-A");
+        var acetato = await GrabarArticuloAsync(cliente, cookie, "ARMAZON acetato", "A-A");
+        var inactivo = await GrabarArticuloAsync(cliente, cookie, "Armazón carey", "C-A");
+        await GrabarArticuloAsync(cliente, cookie, "Estuche rígido", "E-A");
+        var baja = await PutAsync(cliente, $"{Ruta}/{inactivo}/estado", CuerpoEstado(false), cookie);
+        Assert.Equal(HttpStatusCode.OK, baja.StatusCode);
+
+        var respuesta = await Http.GetAsync(cliente, $"{Ruta}?texto=armazon&soloActivos=true", cookie);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        var articulos = json.GetProperty("articulos").EnumerateArray().ToList();
+        Assert.Equal([acetato, metal], articulos.Select(a => a.GetProperty("codigo").GetInt64()).ToArray());
+        Assert.All(articulos, a => Assert.True(a.GetProperty("activo").GetBoolean()));
+
+        foreach (var consulta in new[] { "?texto=armazon", "?texto=armazon&soloActivos=false" })
+        {
+            var todos = await Http.JsonAsync(await Http.GetAsync(cliente, Ruta + consulta, cookie));
+            Assert.Equal(3, todos.GetProperty("total").GetInt32());
+            Assert.Contains(
+                todos.GetProperty("articulos").EnumerateArray(),
+                a => a.GetProperty("codigo").GetInt64() == inactivo && !a.GetProperty("activo").GetBoolean());
+        }
+    }
+
+    /// <summary>
+    /// AC-14: buscar con <c>soloActivos=true</c> el Código de un artículo activo lo lista; el de uno inactivo no lista
+    /// nada, aunque el listado del catálogo sí lo muestre.
+    /// </summary>
+    [Fact]
+    public async Task Get_Listado_SoloActivosPorCodigo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        // Descripciones y códigos en el proveedor sin dígitos: solo el Código coincide con el texto buscado.
+        var activo = await GrabarArticuloAsync(cliente, cookie, "Armazón metal", "M-A");
+        var inactivo = await GrabarArticuloAsync(cliente, cookie, "Estuche rígido", "E-A");
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(
+            cliente, $"{Ruta}/{inactivo}/estado", CuerpoEstado(false), cookie)).StatusCode);
+
+        var porActivo = await Http.JsonAsync(
+            await Http.GetAsync(cliente, $"{Ruta}?texto={activo}&soloActivos=true", cookie));
+        var porInactivo = await Http.JsonAsync(
+            await Http.GetAsync(cliente, $"{Ruta}?texto={inactivo}&soloActivos=true", cookie));
+        var catalogo = await Http.JsonAsync(await Http.GetAsync(cliente, $"{Ruta}?texto={inactivo}", cookie));
+
+        var encontrado = Assert.Single(porActivo.GetProperty("articulos").EnumerateArray());
+        Assert.Equal(activo, encontrado.GetProperty("codigo").GetInt64());
+        Assert.True(encontrado.GetProperty("activo").GetBoolean());
+        Assert.Empty(porInactivo.GetProperty("articulos").EnumerateArray());
+        Assert.Equal(0, porInactivo.GetProperty("total").GetInt32());
+        Assert.Equal(
+            inactivo,
+            Assert.Single(catalogo.GetProperty("articulos").EnumerateArray()).GetProperty("codigo").GetInt64());
+    }
+
     /// <summary>
     /// Un cuerpo ilegible en cualquiera de los dos PUT responde 400 con un solo error y la acción fija del alta, en el
     /// campo que el lector de JSON nombra (también <c>version</c> y <c>activo</c>), sin detalles internos ni lo enviado;

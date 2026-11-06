@@ -14,6 +14,7 @@ using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
 using Optica.Application.Marca;
+using Optica.Application.Presupuestos;
 using Optica.Infrastructure;
 using Optica.Infrastructure.Persistencia;
 
@@ -139,6 +140,11 @@ public partial class Program
         builder.Services.AddScoped<BuscarArticulos>();
         builder.Services.AddScoped<ModificarArticulo>();
         builder.Services.AddScoped<CambiarEstadoArticulo>();
+
+        // Presupuestos (FEAT-003a), con sesión: llevan datos personales del cliente (D-17). El alta lee los artículos, el
+        // último número y la fecha local del día dentro de su transacción de escritura (ADR-013, D-06, D-07).
+        builder.Services.AddScoped<AltaPresupuesto>();
+        builder.Services.AddScoped<ObtenerPresupuesto>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de
