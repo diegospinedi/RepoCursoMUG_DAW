@@ -87,6 +87,14 @@ internal sealed class AlmacenEnMemoria : ICredencialAccesoRepository, IRegistroE
         return Task.FromResult(PoliticaBloqueo.RechazosDesdeUltimoReinicio(Eventos));
     }
 
+    /// <summary>Los casos de uso de acceso no usan la operación en transacción: solo la ejecuta.</summary>
+    public Task<T> EjecutarEnTransaccionAsync<T>(
+        Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(operacion);
+        return operacion(cancelacion);
+    }
+
     public Task ConfirmarAsync(CancellationToken cancelacion = default)
     {
         Confirmaciones++;

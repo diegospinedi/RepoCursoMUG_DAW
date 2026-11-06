@@ -14,6 +14,9 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
 {
     private const string MensajeFilaInvalida = "El artículo guardado no es válido.";
 
+    private const string MensajeEntradaConOtrosCambios =
+        "El artículo a recalcular ya tiene otros cambios registrados en el contexto.";
+
     private const long ValorActivo = 1;
     private const long ValorInactivo = 0;
 
@@ -192,6 +195,115 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         fila.Activo = activo ? ValorActivo : ValorInactivo;
         fila.Version = checked(fila.Version + 1);
     }
+
+    /// <summary>Todas las filas, activas e inactivas, sin seguimiento y ordenadas por código (AC-03 de FEAT-002c).</summary>
+    /// <exception cref="InvalidOperationException">Alguna fila no cumple la política: estado corrupto.</exception>
+    public async Task<IReadOnlyList<Articulo>> ListarParaRecalculoAsync(CancellationToken cancelacion = default)
+    {
+        var filas = await contexto.Articulos.AsNoTracking().OrderBy(a => a.Id).ToListAsync(cancelacion);
+        return [.. filas.Select(AEntidad)];
+    }
+
+    /// <summary>
+    /// Deja la fila marcada como modificada en el contexto, con el patrón de <see cref="Actualizar"/>: reutiliza la
+    /// entrada que el contexto ya sigue o adjunta una. Solo se escriben el precio de venta y la versión, que pasa a
+    /// <see cref="Articulo.Version"/> + 1 (con <c>checked</c>). El <c>UPDATE</c> filtra por la versión y el estado del
+    /// artículo, los leídos: así un inactivo también se actualiza (AC-03), y si otra escritura confirmó en el medio afecta
+    /// 0 filas y la unidad de trabajo lo informa como conflicto de concurrencia (D-04 de FEAT-002c).
+    /// </summary>
+    /// <remarks>
+    /// Para no recorrer todo el contexto en cada llamada (D-29 de FEAT-002c): apaga temporalmente la detección automática
+    /// de cambios (<c>AutoDetectChangesEnabled</c>) y la deja como estaba al terminar, también si lanza; revisa solo la
+    /// entrada de este artículo; las demás entidades que sigue el contexto no se revisan acá, y las detecta
+    /// <c>SaveChanges</c> al confirmar la unidad de trabajo.
+    /// </remarks>
+    /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
+    /// <exception cref="OverflowException">La versión siguiente no entra en un <c>long</c>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// El contexto ya sigue la fila con otros cambios (otras columnas modificadas, o un estado que no es sin cambios ni
+    /// modificado): error de programación, porque el listado del recálculo no sigue entidades. El mensaje no lleva valores.
+    /// </exception>
+    public void RegistrarPrecioRecalculado(Articulo articulo)
+    {
+        ArgumentNullException.ThrowIfNull(articulo);
+        if (articulo.Codigo is not { } codigo)
+        {
+            throw new ArgumentException("El artículo recalculado no tiene código.", nameof(articulo));
+        }
+
+        // Antes de tocar el contexto, así una versión que no se puede incrementar no deja nada registrado.
+        var versionSiguiente = checked(articulo.Version + 1);
+        var activoLeido = articulo.Activo ? ValorActivo : ValorInactivo;
+
+        // Con la detección automática, cada acceso a Local recorre todo el contexto (DetectChanges): registrar 10.000
+        // precios uno por uno se volvía cuadrático (Block 5 de FEAT-002c). Se apaga solo durante el registro y se revisa
+        // únicamente la entrada de este artículo; SaveChanges detecta igual todo lo demás al confirmar.
+        var seguimiento = contexto.ChangeTracker;
+        var detectaba = seguimiento.AutoDetectChangesEnabled;
+        seguimiento.AutoDetectChangesEnabled = false;
+        try
+        {
+            Registrar(articulo, codigo, versionSiguiente, activoLeido);
+        }
+        finally
+        {
+            seguimiento.AutoDetectChangesEnabled = detectaba;
+        }
+    }
+
+    private void Registrar(Articulo articulo, long codigo, long versionSiguiente, long activoLeido)
+    {
+        var seguida = contexto.Articulos.Local.FindEntry(codigo);
+        seguida?.DetectChanges();
+        if (seguida is not null && !SoloPrecioYVersionModificados(seguida))
+        {
+            // El listado del recálculo no sigue entidades: llegar acá es un error de programación. Sin valores.
+            throw new InvalidOperationException(MensajeEntradaConOtrosCambios);
+        }
+
+        var entrada = seguida
+            ?? contexto.Articulos.Attach(new ArticuloFila
+            {
+                Id = codigo,
+                CodigoProveedor = articulo.CodigoProveedor,
+                CodigoProveedorClave = articulo.CodigoProveedorClave,
+                Descripcion = articulo.Descripcion,
+                PrecioCosto = articulo.PrecioCosto,
+                MargenUtilidad = articulo.MargenUtilidad,
+                PrecioVenta = articulo.PrecioVenta,
+                Activo = activoLeido,
+                Version = articulo.Version,
+            });
+
+        // Activo no se escribe: solo condiciona el UPDATE, con el valor leído como original.
+        var activo = entrada.Property(a => a.Activo);
+        activo.OriginalValue = activoLeido;
+        activo.CurrentValue = activoLeido;
+        activo.IsModified = false;
+
+        // El valor original es el leído, no el que tenga la entrada: el contexto podría seguir una versión vieja.
+        var version = entrada.Property(a => a.Version);
+        version.OriginalValue = articulo.Version;
+        version.CurrentValue = versionSiguiente;
+        version.IsModified = true;
+
+        Modificar(entrada.Property(a => a.PrecioVenta), articulo.PrecioVenta);
+    }
+
+    /// <summary>
+    /// Verdadero si la entrada seguida está sin cambios, o modificada solo en el precio de venta y la versión (otro
+    /// registro de recálculo sin confirmar): sobre ella, el <c>UPDATE</c> sigue escribiendo solo esas dos columnas (D-04).
+    /// </summary>
+    private static bool SoloPrecioYVersionModificados(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<ArticuloFila> entrada) =>
+        entrada.State switch
+        {
+            EntityState.Unchanged => true,
+            EntityState.Modified => entrada.Properties
+                .Where(propiedad => propiedad.IsModified)
+                .All(propiedad => propiedad.Metadata.Name is nameof(ArticuloFila.PrecioVenta) or nameof(ArticuloFila.Version)),
+            _ => false,
+        };
 
     private static void Modificar<T>(
         Microsoft.EntityFrameworkCore.ChangeTracking.PropertyEntry<ArticuloFila, T> propiedad, T valor)

@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- La misma siembra de 10.000 artículos que las pruebas de la Api (D-15), para el recálculo de FEAT-002c. -->
+    <Compile Include="..\Compartido\SiembraCatalogo.cs" Link="Compartido\SiembraCatalogo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

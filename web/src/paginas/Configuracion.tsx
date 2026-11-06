@@ -11,11 +11,24 @@ import {
   type CondicionFiscal,
   type ConfiguracionNegocio,
 } from '../api/cliente';
-import { mostrarDecimal } from '../configuracion/numeros';
+import { mostrarDecimal, mostrarEntero } from '../configuracion/numeros';
 import { validarConfiguracion, type ErroresConfiguracion, type TextosConfiguracion } from '../configuracion/reglas';
 
 export const MENSAJE_FALTA_TOPE = 'Falta cargar el tope de identificación del receptor.';
 export const MENSAJE_GRABADA = 'La configuración se grabó.';
+
+/**
+ * El mensaje después de grabar (D-06 y D-09 de FEAT-002c): empieza como el de FEAT-001c y sigue con cuántos artículos
+ * cambiaron de precio de venta, en singular o en plural, o con que ninguno cambió.
+ */
+function mensajeGrabada(preciosCambiados: number): string {
+  if (preciosCambiados === 0) {
+    return `${MENSAJE_GRABADA} Ningún precio de venta cambió.`;
+  }
+  // D-27: la cantidad lleva punto de miles.
+  const articulos = preciosCambiados === 1 ? '1 artículo' : `${mostrarEntero(preciosCambiados)} artículos`;
+  return `${MENSAJE_GRABADA} Cambió el precio de venta de ${articulos}.`;
+}
 
 /** El texto que ve la operadora para cada condición fiscal del contrato de la Api. */
 const ETIQUETAS_CONDICION: Record<CondicionFiscal, string> = {
@@ -93,7 +106,8 @@ function CampoNumero({ etiqueta, nombre, valor, error, alCambiar }: PropsNumero)
 /**
  * Parámetros de negocio (FR-01 a FR-05, FR-08). Consulta la configuración una sola vez al montarse; sin sesión va a
  * `/ingreso` reemplazando la entrada. Valida en el navegador con las reglas del dominio y no envía si hay errores; los
- * del servidor van junto al campo que indica la Api. Al grabar muestra lo que devolvió la Api (D-03). Los valores
+ * del servidor van junto al campo que indica la Api, incluido el del precio fuera de rango, junto al múltiplo (D-01 de
+ * FEAT-002c). Al grabar muestra lo que devolvió la Api (D-03) y cuántos precios de venta cambiaron (D-06). Los valores
  * viven solo en el estado de este componente; no hay consultas periódicas.
  */
 export function Configuracion() {
@@ -103,7 +117,8 @@ export function Configuracion() {
   const [faltaTope, setFaltaTope] = useState(false);
   const [errores, setErrores] = useState<ErroresConfiguracion>({});
   const [general, setGeneral] = useState<string | null>(null);
-  const [grabada, setGrabada] = useState(false);
+  /** Cuántos precios cambiaron en la última grabación; `null` si no hay una grabación que informar. */
+  const [preciosCambiados, setPreciosCambiados] = useState<number | null>(null);
   const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
@@ -142,7 +157,7 @@ export function Configuracion() {
       return;
     }
     setGeneral(null);
-    setGrabada(false);
+    setPreciosCambiados(null);
     const validacion = validarConfiguracion(textos);
     if (validacion.tipo === 'errores') {
       setErrores(validacion.errores);
@@ -157,7 +172,7 @@ export function Configuracion() {
       case 'ok':
         setTextos(textosDe(resultado.datos));
         setFaltaTope(resultado.datos.faltaTope);
-        setGrabada(true);
+        setPreciosCambiados(resultado.datos.preciosCambiados);
         break;
       case 'campos':
       case 'campo': {
@@ -248,9 +263,9 @@ export function Configuracion() {
               {general}
             </p>
           )}
-          {grabada && (
+          {preciosCambiados !== null && (
             <p className="mensaje-exito" role="status">
-              {MENSAJE_GRABADA}
+              {mensajeGrabada(preciosCambiados)}
             </p>
           )}
           <button type="submit" disabled={enviando}>

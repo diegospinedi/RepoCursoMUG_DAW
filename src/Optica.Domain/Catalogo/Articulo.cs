@@ -142,6 +142,34 @@ public sealed class Articulo
     public Articulo ConEstado(bool activo) =>
         new(Codigo, CodigoProveedor, Descripcion, PrecioCosto, MargenUtilidad, PrecioVenta, activo, Version);
 
+    /// <summary>
+    /// El precio de venta recalculado con la configuración vigente sobre el costo y el margen guardados, esté activo o
+    /// inactivo (FR-01 y AC-03 de FEAT-002c; ADR-010). Igual al guardado: <see cref="ResultadoRecalculo.SinCambio"/>.
+    /// Distinto: <see cref="ResultadoRecalculo.Cambiado"/> con una copia con el mismo código, datos, estado y versión, y
+    /// el precio nuevo; la versión la incrementa la persistencia (D-04). Fuera de rango:
+    /// <see cref="ResultadoRecalculo.FueraDeRango"/>. Nunca lanza por desborde.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="vigente"/> es null.</exception>
+    public ResultadoRecalculo ConPrecioRecalculado(ConfiguracionNegocio vigente)
+    {
+        ArgumentNullException.ThrowIfNull(vigente);
+
+        var calculo = CalculadoraPrecioVenta.Calcular(PrecioCosto, MargenUtilidad, vigente);
+        if (calculo.Precio is not { } precio)
+        {
+            return ResultadoRecalculo.FueraDeRango;
+        }
+
+        if (precio.PrecioVenta == PrecioVenta)
+        {
+            return ResultadoRecalculo.SinCambio;
+        }
+
+        return ResultadoRecalculo.Cambiado(new Articulo(
+            Codigo, CodigoProveedor, Descripcion, precioCosto: PrecioCosto, margenUtilidad: MargenUtilidad,
+            precioVenta: precio.PrecioVenta, activo: Activo, version: Version));
+    }
+
     private static bool TieneInfraccionDeCostoOMargen(List<InfraccionArticulo> infracciones) =>
         infracciones.Exists(infraccion => CampoDe(infraccion) is Campo.PrecioCosto or Campo.MargenUtilidad);
 

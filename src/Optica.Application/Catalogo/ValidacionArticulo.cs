@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using Optica.Application.Comun;
+using Optica.Application.Configuracion;
 using Optica.Domain.Catalogo;
 
 namespace Optica.Application.Catalogo;
@@ -113,6 +115,74 @@ public static class ValidacionArticulo
     /// <summary>El error de una versión faltante o fuera de 0 a <see cref="VersionMaxima"/> (D-17); null si es válida.</summary>
     public static ErrorValidacion? ValidarVersion(long? version) =>
         version is >= 0 and <= VersionMaxima ? null : new ErrorValidacion(CampoVersion, AccionVersionInvalida);
+
+    /// <summary>Cuántos códigos nombra, como máximo, el error de un recálculo fuera de rango (D-01 de FEAT-002c).</summary>
+    public const int CodigosMaximosFueraDeRango = 10;
+
+    /// <summary>
+    /// Lo que lleva detrás cada código inactivo nombrado en el error de un recálculo fuera de rango, como en el ejemplo de
+    /// D-08 (D-25 de FEAT-002c): "códigos 15, inactivo, 27 y 42, inactivo".
+    /// </summary>
+    public const string MarcaInactivoFueraDeRango = ", inactivo";
+
+    /// <summary>
+    /// Lo que el error de un recálculo fuera de rango agrega si alguno de los artículos es inactivo, aunque quede después
+    /// del décimo código y no se nombre (D-08 y D-26 de FEAT-002c).
+    /// </summary>
+    public const string AgregadoInactivoFueraDeRango = "un artículo inactivo hay que reactivarlo para editarlo";
+
+    /// <summary>
+    /// El error, junto al múltiplo, de un cambio de configuración que dejaría fuera de rango el precio de venta de
+    /// <paramref name="articulos"/> (D-01, D-08 y D-12 de FEAT-002c): el total, hasta
+    /// <see cref="CodigosMaximosFueraDeRango"/> códigos autonuméricos en orden y, si hay más, cuántos quedan sin
+    /// nombrar. Cada inactivo nombrado lleva <see cref="MarcaInactivoFueraDeRango"/> detrás (D-25) y, si alguno de los
+    /// artículos es inactivo, aunque no se nombre, el texto agrega <see cref="AgregadoInactivoFueraDeRango"/> (D-26).
+    /// Nunca el código en el proveedor, la descripción ni importes.
+    /// </summary>
+    /// <exception cref="ArgumentException">No hay artículos, o alguno no tiene código.</exception>
+    public static ErrorValidacion PrecioVentaRecalculadoFueraDeRango(IReadOnlyCollection<Articulo> articulos)
+    {
+        ArgumentNullException.ThrowIfNull(articulos);
+        if (articulos.Count == 0 || articulos.Any(articulo => articulo.Codigo is null))
+        {
+            throw new ArgumentException("El error necesita artículos grabados.", nameof(articulos));
+        }
+
+        var nombrados = articulos
+            .OrderBy(articulo => articulo.Codigo)
+            .Take(CodigosMaximosFueraDeRango)
+            .Select(articulo => articulo.Codigo!.Value.ToString(CultureInfo.InvariantCulture)
+                + (articulo.Activo ? string.Empty : MarcaInactivoFueraDeRango))
+            .ToList();
+        var restantes = articulos.Count - nombrados.Count;
+
+        var lista = restantes > 0
+            ? $"{string.Join(", ", nombrados)} y {Cantidad(restantes)} más"
+            : nombrados.Count == 1
+                ? nombrados[0]
+                : $"{string.Join(", ", nombrados.Take(nombrados.Count - 1))} y {nombrados[^1]}";
+        var cantidad = articulos.Count == 1 ? "1 artículo" : $"{Cantidad(articulos.Count)} artículos";
+        var codigos = articulos.Count == 1 ? "código" : "códigos";
+        var agregado = articulos.Any(articulo => !articulo.Activo) ? $"; {AgregadoInactivoFueraDeRango}" : string.Empty;
+
+        return new ErrorValidacion(
+            ValidacionConfiguracion.CampoMultiploRedondeo,
+            $"No se grabó el cambio: el precio de venta de {cantidad} sería demasiado grande ({codigos} {lista}). " +
+            $"Revisá esos artículos o el múltiplo{agregado}.");
+    }
+
+    /// <summary>
+    /// Formato de las cantidades de artículos: punto de miles ("1.250"; D-27 de FEAT-002c), sin depender de la cultura
+    /// del sistema. Los códigos autonuméricos no lo usan: son identificadores y van sin separador.
+    /// </summary>
+    private static readonly NumberFormatInfo FormatoCantidad = new()
+    {
+        NumberGroupSeparator = ".",
+        NumberGroupSizes = [3],
+        NegativeSign = "-",
+    };
+
+    private static string Cantidad(int cantidad) => cantidad.ToString("#,0", FormatoCantidad);
 
     /// <summary>El error de un estado faltante en el cambio de estado.</summary>
     public static ErrorValidacion ActivoFaltante { get; } = new(CampoActivo, AccionActivoFaltante);

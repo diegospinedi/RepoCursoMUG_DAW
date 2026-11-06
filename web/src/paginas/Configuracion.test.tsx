@@ -24,6 +24,8 @@ const ETIQUETA_MULTIPLO = 'Múltiplo de redondeo comercial ($)';
 const ETIQUETA_TOPE = 'Tope de identificación del receptor ($)';
 const AVISO_SIN_TOPE = 'Falta cargar el tope de identificación del receptor.';
 const GRABADA = 'La configuración se grabó.';
+/** D-06: el mensaje de grabación empieza como el de FEAT-001c y sigue con la cantidad de precios cambiados. */
+const GRABADA_SIN_CAMBIOS = 'La configuración se grabó. Ningún precio de venta cambió.';
 const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 const MENSAJE_CUERPO_GRANDE = 'Los valores enviados son demasiado largos. Revisalos y grabá de nuevo.';
 
@@ -34,6 +36,9 @@ const INICIAL = {
   topeIdentificacion: null,
   faltaTope: true,
 };
+
+/** La respuesta del POST: lo guardado más la cantidad de precios de venta que cambiaron (D-23). */
+const GRABADA_INICIAL = { ...INICIAL, preciosCambiados: 0 };
 
 /** Abre la pantalla y espera el formulario con los valores consultados. */
 async function abrir() {
@@ -58,9 +63,12 @@ function estados(): string[] {
     .map((elemento) => elemento.textContent ?? '');
 }
 
+/** Si la pantalla muestra algún mensaje de grabación, con cualquier cantidad de precios cambiados. */
+const hayMensajeDeGrabada = () => estados().some((texto) => texto.startsWith(GRABADA));
+
 /** Graba con un valor inválido en un campo y comprueba que el error queda junto a ese campo sin enviar. */
 async function rechazadoJuntoAlCampo(etiqueta: string, valor: string, mensaje: string) {
-  const servidor = servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, INICIAL) });
+  const servidor = servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
   await abrir();
 
   escribir(etiqueta, valor);
@@ -70,7 +78,7 @@ async function rechazadoJuntoAlCampo(etiqueta: string, valor: string, mensaje: s
   expect(campo(etiqueta).getAttribute('aria-invalid')).toBe('true');
   expect(servidor.pedidosA('POST', '/api/configuracion')).toHaveLength(0);
   expect(campo(etiqueta).value).toBe(valor);
-  expect(estados()).not.toContain(GRABADA);
+  expect(hayMensajeDeGrabada()).toBe(false);
 }
 
 describe('Configuracion', () => {
@@ -113,7 +121,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_GrabaTope_MuestraValorGuardado', async () => {
-    const guardada = { ...INICIAL, topeIdentificacion: 250000, faltaTope: false };
+    const guardada = { ...GRABADA_INICIAL, topeIdentificacion: 250000, faltaTope: false };
     const servidor = servidorFalso({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, guardada),
@@ -123,7 +131,7 @@ describe('Configuracion', () => {
     escribir(ETIQUETA_TOPE, '250000,00');
     grabar();
 
-    await waitFor(() => expect(estados()).toEqual([GRABADA]));
+    await waitFor(() => expect(estados()).toEqual([GRABADA_SIN_CAMBIOS]));
     // Muestra lo que devolvió la Api, no lo escrito; y el aviso ya no está.
     expect(campo(ETIQUETA_TOPE).value).toBe('250000');
     const [pedido] = servidor.pedidosA('POST', '/api/configuracion');
@@ -139,14 +147,14 @@ describe('Configuracion', () => {
   it('Configuracion_GrabaMonotributo_MuestraMonotributo', async () => {
     const servidor = servidorFalso({
       'GET /api/configuracion': json(200, INICIAL),
-      'POST /api/configuracion': json(200, { ...INICIAL, condicionFiscal: 'monotributo' }),
+      'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, condicionFiscal: 'monotributo' }),
     });
     await abrir();
 
     fireEvent.change(campo(ETIQUETA_CONDICION), { target: { value: 'monotributo' } });
     grabar();
 
-    await waitFor(() => expect(estados()).toContain(GRABADA));
+    await waitFor(() => expect(estados()).toContain(GRABADA_SIN_CAMBIOS));
     expect(campo(ETIQUETA_CONDICION).value).toBe('monotributo');
     expect(JSON.parse(String(servidor.pedidosA('POST', '/api/configuracion')[0]?.init?.body))).toHaveProperty(
       'condicionFiscal',
@@ -159,7 +167,7 @@ describe('Configuracion', () => {
   it('Configuracion_RespuestaDistintaDeLoEscrito_MuestraLoDevuelto', async () => {
     servidorFalso({
       'GET /api/configuracion': json(200, INICIAL),
-      'POST /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 10.5, multiploRedondeo: 10 }),
+      'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, alicuotaIva: 10.5, multiploRedondeo: 10 }),
     });
     await abrir();
 
@@ -196,7 +204,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_ErrorCorregido_SeQuitaAlGrabarDeNuevo', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, INICIAL) });
+    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
     await abrir();
     escribir(ETIQUETA_ALICUOTA, '101');
     grabar();
@@ -205,7 +213,7 @@ describe('Configuracion', () => {
     escribir(ETIQUETA_ALICUOTA, '21');
     grabar();
 
-    await waitFor(() => expect(estados()).toContain(GRABADA));
+    await waitFor(() => expect(estados()).toContain(GRABADA_SIN_CAMBIOS));
     expect(campo(ETIQUETA_ALICUOTA).getAttribute('aria-invalid')).toBe('false');
     expect(mensajeJuntoAlCampo(campo(ETIQUETA_ALICUOTA))).toBeNull();
   });
@@ -232,7 +240,7 @@ describe('Configuracion', () => {
     expect(campo(ETIQUETA_TOPE).getAttribute('aria-invalid')).toBe('true');
     expect(mensajeJuntoAlCampo(campo(ETIQUETA_ALICUOTA))).toBeNull();
     expect(campo(ETIQUETA_TOPE).value).toBe('1000');
-    expect(estados()).not.toContain(GRABADA);
+    expect(hayMensajeDeGrabada()).toBe(false);
   });
 
   it('Configuracion_Error400EnLaCondicion_JuntoAlSelector', async () => {
@@ -268,7 +276,7 @@ describe('Configuracion', () => {
       expect(mensajeJuntoAlCampo(campo(etiqueta))).toBeNull();
     }
     expect(campo(ETIQUETA_TOPE).value).toBe('300000');
-    expect(estados()).not.toContain(GRABADA);
+    expect(hayMensajeDeGrabada()).toBe(false);
   });
 
   it('Configuracion_SinSesion401_NavegaAlIngreso', async () => {
@@ -305,8 +313,99 @@ describe('Configuracion', () => {
     expect((await screen.findByText(mensaje)).getAttribute('role')).toBe('alert');
     expect(campo(ETIQUETA_ALICUOTA).value).toBe('10,5');
     expect(campo(ETIQUETA_TOPE).value).toBe('300000');
-    expect(estados()).not.toContain(GRABADA);
+    expect(hayMensajeDeGrabada()).toBe(false);
     expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+  });
+
+  // ---- FEAT-002c: cantidad de precios cambiados (D-06, D-09) y error de D-01 ----
+
+  it.each([
+    [0, 'La configuración se grabó. Ningún precio de venta cambió.'],
+    [1, 'La configuración se grabó. Cambió el precio de venta de 1 artículo.'],
+    [2, 'La configuración se grabó. Cambió el precio de venta de 2 artículos.'],
+    // D-27: punto de miles en la cantidad.
+    [10000, 'La configuración se grabó. Cambió el precio de venta de 10.000 artículos.'],
+  ])('Configuracion_Grabada_MuestraCantidad (%i)', async (preciosCambiados, mensaje) => {
+    servidorFalso({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, { ...INICIAL, multiploRedondeo: 50, preciosCambiados }),
+    });
+    await abrir();
+
+    escribir(ETIQUETA_MULTIPLO, '50');
+    grabar();
+
+    // Un solo mensaje, que empieza como el de FEAT-001c (las e2e existentes lo buscan así), junto al aviso del tope.
+    await waitFor(() => expect(estados()).toEqual([AVISO_SIN_TOPE, mensaje]));
+    expect(campo(ETIQUETA_MULTIPLO).value).toBe('50');
+  });
+
+  it.each([
+    ['ausente', undefined],
+    ['negativo', -1],
+    ['con decimales', 2.5],
+    ['de texto', '2'],
+  ])('Configuracion_PreciosCambiadosInvalido_RespuestaIlegible (%s)', async (_caso, preciosCambiados) => {
+    servidorFalso({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, { ...INICIAL, multiploRedondeo: 50, preciosCambiados }),
+    });
+    await abrir();
+
+    escribir(ETIQUETA_MULTIPLO, '50');
+    grabar();
+
+    // Respuesta ilegible: el mensaje general y lo escrito queda, sin mensaje de grabación.
+    expect((await screen.findByText(MENSAJE_SIN_CONEXION)).getAttribute('role')).toBe('alert');
+    expect(campo(ETIQUETA_MULTIPLO).value).toBe('50');
+    expect(hayMensajeDeGrabada()).toBe(false);
+  });
+
+  it('Configuracion_Error500_MensajeGeneral', async () => {
+    servidorFalso({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': [
+        json(200, { ...INICIAL, multiploRedondeo: 10, preciosCambiados: 3 }),
+        vacia(500),
+      ],
+    });
+    await abrir();
+    escribir(ETIQUETA_MULTIPLO, '10');
+    grabar();
+    await waitFor(() =>
+      expect(estados()).toContain('La configuración se grabó. Cambió el precio de venta de 3 artículos.'),
+    );
+
+    escribir(ETIQUETA_MULTIPLO, '50');
+    grabar();
+
+    // El mensaje general de FEAT-001c; la cantidad de la grabación anterior ya no se muestra y la configuración
+    // mostrada no cambia por la respuesta fallida.
+    expect((await screen.findByText(MENSAJE_SIN_CONEXION)).getAttribute('role')).toBe('alert');
+    expect(hayMensajeDeGrabada()).toBe(false);
+    expect(campo(ETIQUETA_MULTIPLO).value).toBe('50');
+    expect(campo(ETIQUETA_ALICUOTA).value).toBe('21');
+    expect(estados()).toEqual([AVISO_SIN_TOPE]);
+  });
+
+  it('Configuracion_PrecioFueraDeRango_ErrorJuntoAlMultiplo', async () => {
+    const error =
+      'No se grabó el cambio: el precio de venta de 2 artículos sería demasiado grande (códigos 15 y 42, inactivo). ' +
+      'Revisá esos artículos o el múltiplo; un artículo inactivo hay que reactivarlo para editarlo.';
+    servidorFalso({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(400, { status: 400, errors: { multiploRedondeo: [error] } }),
+    });
+    await abrir();
+
+    escribir(ETIQUETA_MULTIPLO, '50');
+    grabar();
+
+    // D-01: junto al múltiplo, como los demás errores del servidor.
+    await waitFor(() => expect(mensajeJuntoAlCampo(campo(ETIQUETA_MULTIPLO))).toBe(error));
+    expect(campo(ETIQUETA_MULTIPLO).getAttribute('aria-invalid')).toBe('true');
+    expect(campo(ETIQUETA_MULTIPLO).value).toBe('50');
+    expect(hayMensajeDeGrabada()).toBe(false);
   });
 
   it('Configuracion_ConsultaFallida_MensajeGeneralSinFormulario', async () => {

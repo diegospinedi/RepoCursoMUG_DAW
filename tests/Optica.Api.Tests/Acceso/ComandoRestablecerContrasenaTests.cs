@@ -623,6 +623,9 @@ public sealed class ComandoRestablecerContrasenaTests
         public Task<IReadOnlyList<DateTime>> ObtenerRechazosIngresoDesdeUltimoReinicioAsync(CancellationToken cancelacion = default) =>
             throw new NotSupportedException();
 
+        public Task<T> EjecutarEnTransaccionAsync<T>(
+            Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default) => operacion(cancelacion);
+
         public Task ConfirmarAsync(CancellationToken cancelacion = default)
         {
             HayCredencial &= !_eliminar;

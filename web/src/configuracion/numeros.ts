@@ -42,7 +42,7 @@ export function leerDecimal(texto: string): LecturaDecimal {
  */
 export function mostrarImporte(valor: number): string {
   const centavos = centavosDe(Math.abs(valor));
-  const conMiles = (centavos / 100n).toString().replace(/\B(?=(\d{3})+$)/g, '.');
+  const conMiles = mostrarEntero(centavos / 100n);
   const fraccion = (centavos % 100n).toString().padStart(2, '0');
   return `${valor < 0 && centavos > 0n ? '-' : ''}${conMiles},${fraccion}`;
 }
@@ -63,6 +63,14 @@ function centavosDe(valor: number): bigint {
   const relleno = decimales.padEnd(3, '0');
   const redondeo = Number(relleno[2]) >= 5 ? 1n : 0n;
   return BigInt(entera) * 100n + BigInt(relleno.slice(0, 2)) + redondeo;
+}
+
+/**
+ * Un entero con punto de miles ("10.000", "1.234.567"; D-27 de FEAT-002c), sin `Intl`, como la parte entera de
+ * {@link mostrarImporte}: no depende del idioma del navegador. Para cantidades, no para identificadores.
+ */
+export function mostrarEntero(valor: number | bigint): string {
+  return valor.toString().replace(/\B(?=(\d{3})+$)/g, '.');
 }
 
 /** El número con coma decimal ("0,01", "21"); sin valor, el texto vacío. */

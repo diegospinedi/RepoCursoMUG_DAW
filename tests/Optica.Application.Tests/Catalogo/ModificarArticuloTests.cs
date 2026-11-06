@@ -247,6 +247,68 @@ public class ModificarArticuloTests
         Assert.Equal(4, resultado.Articulo.Version);
     }
 
+    /// <summary>
+    /// D-05 y D-18 de FEAT-002c: la lectura del artículo, la de la configuración, la verificación de la clave, el registro
+    /// y la confirmación van dentro de una operación en transacción; la relectura del artículo grabado, después.
+    /// </summary>
+    [Fact]
+    public async Task Modificar_LeeYConfirmaDentroDeLaOperacion()
+    {
+        var articulo = SembrarArmazon(version: 3);
+        var configuracion = new ConfiguracionVariable { Unidad = _articulos };
+
+        var resultado = await new ModificarArticulo(_articulos, configuracion, _articulos).EjecutarAsync(
+            articulo.Codigo!.Value, Datos(margen: 60m), 3);
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(
+            [
+                ("ObtenerAsync", true),
+                (ConfiguracionVariable.AccesoConfiguracion, true),
+                ("ExisteClaveDeOtroAsync", true),
+                ("Actualizar", true),
+                ("ConfirmarAsync", true),
+                ("ObtenerAsync", false),
+            ],
+            _articulos.Accesos);
+        Assert.Equal(1, _articulos.Operaciones);
+        Assert.Equal(1, _articulos.OperacionesConfirmadas);
+    }
+
+    /// <summary>
+    /// D-18 de FEAT-002c: un conflicto de concurrencia atendido termina la operación normalmente (la transacción externa
+    /// confirma sin cambios) y la relectura del conflicto ocurre dentro de ella.
+    /// </summary>
+    [Fact]
+    public async Task Modificar_ConflictoAtendido_TerminaLaOperacionSinCambios()
+    {
+        var articulo = SembrarArmazon(version: 3);
+        _articulos.ErrorAlConfirmar = new ConflictoAlConfirmarException("Conflicto.", MotivoConflicto.Concurrencia);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(articulo.Codigo!.Value, Datos(margen: 60m), 3);
+
+        Assert.Equal(TipoResultadoEdicion.Cambiado, resultado.Tipo);
+        Assert.Equal(1, _articulos.Operaciones);
+        Assert.Equal(1, _articulos.OperacionesConfirmadas);
+        Assert.Equal(("ObtenerAsync", true), _articulos.Accesos[^1]);
+        Assert.Equal(3, _articulos.Guardado(articulo.Codigo.Value).Version);
+    }
+
+    /// <summary>Una falla que no es un conflicto revierte la operación y se propaga.</summary>
+    [Fact]
+    public async Task Modificar_OtraFallaAlConfirmar_RevierteYSePropaga()
+    {
+        var articulo = SembrarArmazon(version: 3);
+        _articulos.ErrorAlConfirmar = new InvalidOperationException("Falla de la base.");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CrearCasoDeUso().EjecutarAsync(articulo.Codigo!.Value, Datos(margen: 60m), 3));
+
+        Assert.Equal(1, _articulos.Operaciones);
+        Assert.Equal(0, _articulos.OperacionesConfirmadas);
+        Assert.Equal(1815m, _articulos.Guardado(articulo.Codigo!.Value).PrecioVenta);
+    }
+
     [Fact]
     public async Task Modificar_Costo1210A2420_Graba3630()
     {

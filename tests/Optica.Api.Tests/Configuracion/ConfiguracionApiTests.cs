@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Optica.Api.Controllers;
+using Optica.Application.Catalogo;
 using Optica.Application.Configuracion;
 using Optica.Infrastructure.Persistencia;
 
@@ -18,6 +20,9 @@ public sealed class ConfiguracionApiTests
 {
     private const string Ruta = "/api/configuracion";
     private const string AccionCuerpoIlegible = "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
+
+    /// <summary>Con margen 50 da 92.233.720.368.547.758, justo bajo el importe máximo; con múltiplo 50 lo supera.</summary>
+    private const decimal CostoAlBorde = 61_489_146_912_365_172m;
 
     [Fact]
     public async Task Get_ConSesion_DevuelveValoresIniciales()
@@ -41,9 +46,11 @@ public sealed class ConfiguracionApiTests
 
         var respuesta = await GrabarAsync(cliente, Cuerpo(21m, "responsable_inscripto", 0.01m, 250000m), cookie);
 
-        // La respuesta es lo leído después de grabar (D-03), con la misma forma que el GET.
+        // La respuesta es lo leído después de grabar (D-03), con la forma del GET más la cantidad (D-23 de FEAT-002c):
+        // solo cambió el tope, que no recalcula (D-07).
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        AfirmarConfiguracion(await Http.JsonAsync(respuesta), 21m, "responsable_inscripto", 0.01m, 250000m);
+        AfirmarConfiguracion(
+            await Http.JsonAsync(respuesta), 21m, "responsable_inscripto", 0.01m, 250000m, preciosCambiados: 0);
         var posterior = await Http.GetAsync(cliente, Ruta, cookie);
         AfirmarConfiguracion(await Http.JsonAsync(posterior), 21m, "responsable_inscripto", 0.01m, 250000m);
     }
@@ -58,7 +65,7 @@ public sealed class ConfiguracionApiTests
         var respuesta = await GrabarAsync(cliente, Cuerpo(10.5m, "monotributo", 10m, null), cookie);
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        AfirmarConfiguracion(await Http.JsonAsync(respuesta), 10.5m, "monotributo", 10m, null);
+        AfirmarConfiguracion(await Http.JsonAsync(respuesta), 10.5m, "monotributo", 10m, null, preciosCambiados: 0);
         var posterior = await Http.GetAsync(cliente, Ruta, cookie);
         AfirmarConfiguracion(await Http.JsonAsync(posterior), 10.5m, "monotributo", 10m, null);
     }
@@ -247,6 +254,142 @@ public sealed class ConfiguracionApiTests
         await AfirmarSinCambiosAsync(cliente, cookie);
     }
 
+    // ---- FEAT-002c: recálculo del catálogo (D-01, D-06, D-09, D-23) ----
+
+    [Fact]
+    public async Task Post_Multiplo50_200ConPreciosCambiados()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        // 1210 con margen 50 da 1815,00; 1000 con margen 50 da 1500,00, que ya es múltiplo de 50.
+        var cambia = await GrabarArticuloAsync(cliente, cookie, "ABC-1", 1210m);
+        var noCambia = await GrabarArticuloAsync(cliente, cookie, "ABC-2", 1000m);
+
+        var respuesta = await GrabarAsync(cliente, Cuerpo(21m, "responsable_inscripto", 50m, null), cookie);
+
+        // AC-02: la configuración vigente más la cantidad de precios que cambiaron (D-09, D-23).
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(
+            ["alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope", "preciosCambiados"],
+            json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
+        Assert.Equal(1, json.GetProperty("preciosCambiados").GetInt32());
+        Assert.Equal(50m, json.GetProperty("multiploRedondeo").GetDecimal());
+        await AfirmarArticuloAsync(cliente, cookie, cambia, 1850m, version: 1);
+        await AfirmarArticuloAsync(cliente, cookie, noCambia, 1500m, version: 0);
+    }
+
+    [Fact]
+    public async Task Get_Configuracion_SinCambiosEnElContrato()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        await GrabarArticuloAsync(cliente, cookie, "ABC-1", 1210m);
+        var grabacion = await GrabarAsync(cliente, Cuerpo(10.5m, "monotributo", 50m, 250000m), cookie);
+        var grabada = await Http.JsonAsync(grabacion);
+
+        var respuesta = await Http.GetAsync(cliente, Ruta, cookie);
+
+        // El GET responde lo mismo que antes de FEAT-002c: sin preciosCambiados, que es solo del POST (D-23).
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        AfirmarConfiguracion(json, 10.5m, "monotributo", 50m, 250000m);
+        Assert.Equal(HttpStatusCode.OK, grabacion.StatusCode);
+        Assert.True(grabada.TryGetProperty("preciosCambiados", out _));
+        var grabadaSinCantidad = grabada.EnumerateObject()
+            .Where(propiedad => propiedad.Name != "preciosCambiados")
+            .Select(propiedad => $"{propiedad.Name}={propiedad.Value.GetRawText()}");
+        Assert.Equal(
+            grabadaSinCantidad,
+            json.EnumerateObject().Select(propiedad => $"{propiedad.Name}={propiedad.Value.GetRawText()}"));
+    }
+
+    [Fact]
+    public async Task Post_RespuestaEsLaRelecturaYNoLoEnviado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        // Valores válidos con ceros a la derecha: lo enviado (21.0, 0.010) se escribe distinto de lo releído.
+        const string cuerpo =
+            "{\"alicuotaIva\":21.0,\"condicionFiscal\":\"monotributo\",\"multiploRedondeo\":0.010,\"topeIdentificacion\":null}";
+
+        var respuesta = await GrabarAsync(cliente, cuerpo, cookie);
+
+        // D-23: la respuesta se arma con la lectura posterior al commit, igual que el GET, no con lo enviado.
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var grabada = await Http.JsonAsync(respuesta);
+        var leida = await Http.JsonAsync(await Http.GetAsync(cliente, Ruta, cookie));
+        foreach (var clave in new[] { "alicuotaIva", "multiploRedondeo" })
+        {
+            Assert.Equal(leida.GetProperty(clave).GetRawText(), grabada.GetProperty(clave).GetRawText());
+        }
+
+        Assert.Equal("0.01", grabada.GetProperty("multiploRedondeo").GetRawText());
+    }
+
+    [Fact]
+    public async Task Post_PrecioFueraDeRango_400EnMultiplo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var normal = await GrabarArticuloAsync(cliente, cookie, "ABC-1", 1210m);
+        // Con margen 50 da justo bajo el importe máximo; con múltiplo 50 lo supera.
+        var alBorde = await GrabarArticuloAsync(cliente, cookie, "Zq7-proveedor", CostoAlBorde);
+
+        var respuesta = await GrabarAsync(cliente, Cuerpo(21m, "responsable_inscripto", 50m, null), cookie);
+
+        // AC-04 y D-01: 400 con el error en el múltiplo y el código autonumérico, sin el código en el proveedor (D-12).
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(
+            new Dictionary<string, string[]>
+            {
+                [ValidacionConfiguracion.CampoMultiploRedondeo] =
+                [
+                    $"No se grabó el cambio: el precio de venta de 1 artículo sería demasiado grande (código {alBorde}). " +
+                    "Revisá esos artículos o el múltiplo.",
+                ],
+            },
+            await ErroresAsync(respuesta));
+        Assert.DoesNotContain("Zq7", await respuesta.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        // Nada grabado: ni la configuración ni los precios (FR-02).
+        await AfirmarSinCambiosAsync(cliente, cookie);
+        await AfirmarArticuloAsync(cliente, cookie, normal, 1815m, version: 0);
+    }
+
+    /// <summary>
+    /// Alerta de datos (D-28 de FEAT-002b): el <c>ToString()</c> de un record muestra todos sus valores; la respuesta
+    /// de la grabación no muestra ninguno, por si llega a un log.
+    /// </summary>
+    [Fact]
+    public void ConfiguracionGrabada_ToString_NoMuestraDatos()
+    {
+        var texto = ConfiguracionGrabada.Desde(
+            new ConfiguracionVigente(17.35m, "monotributo", 43.21m, 765432.1m, false), 98765).ToString();
+
+        Assert.Equal("ConfiguracionGrabada { }", texto);
+    }
+
+    /// <summary>
+    /// Alerta de datos (D-28 de FEAT-002c): MVC registra en Trace los argumentos de la acción con su <c>ToString()</c>;
+    /// el cuerpo del POST no muestra la configuración comercial.
+    /// </summary>
+    [Fact]
+    public void SolicitudConfiguracion_ToString_NoMuestraDatos()
+    {
+        var texto = new SolicitudConfiguracion(17.35m, "Zq7-condicion", 43.21m, 765_432.1m).ToString();
+
+        Assert.Equal("SolicitudConfiguracion { }", texto);
+        Assert.DoesNotContain("17.35", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("Zq7", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("43.21", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("765432", texto, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Get_SinFila_Error500Generico()
     {
@@ -282,15 +425,20 @@ public sealed class ConfiguracionApiTests
     }
 
     /// <summary>
-    /// R-04: el registro de cada grabación (categoría <c>Optica.Application.Configuracion</c>, nivel Information) va al
-    /// Registro de eventos de Windows. El host de Windows deja el proveedor <c>EventLog</c> en Warning con un filtro
-    /// propio; appsettings.json tiene que subir esa categoría a Information sin cambiar ese valor por defecto para las
-    /// demás. La prueba aplica la sección <c>Logging</c> del archivo versionado con el mismo filtro del host sobre un
-    /// proveedor con el alias <c>EventLog</c>, porque el real solo existe en Windows.
+    /// R-04 de FEAT-001c y D-17 de FEAT-002c: el registro de cada grabación (categoría
+    /// <c>Optica.Application.Configuracion.Grabacion</c>, la constante del caso de uso, nivel Information) va al
+    /// Registro de eventos de Windows por la clave <c>Optica.Application.Configuracion</c>. El host de Windows deja el
+    /// proveedor <c>EventLog</c> en Warning con un filtro propio; appsettings.json tiene que subir esa clave a
+    /// Information sin cambiar ese valor por defecto para las demás. La prueba aplica la sección <c>Logging</c> del
+    /// archivo versionado con el mismo filtro del host sobre un proveedor con el alias <c>EventLog</c>, porque el real
+    /// solo existe en Windows.
     /// </summary>
     [Fact]
     public void Appsettings_GrabacionDeConfiguracion_VaAlRegistroDeEventos()
     {
+        // D-17: la categoría pedida es esta; si cambia de prefijo, dejaría de llegar al Registro de eventos.
+        Assert.Equal("Optica.Application.Configuracion.Grabacion", GrabarConfiguracionConRecalculo.CategoriaRegistro);
+
         var archivo = Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "appsettings.json");
         var configuracion = new ConfigurationBuilder().AddJsonFile(archivo, optional: false).Build();
         var registroDeEventos = new RegistroDeEventosSimulado();
@@ -305,7 +453,8 @@ public sealed class ConfiguracionApiTests
             .BuildServiceProvider())
         {
             var fabricaRegistros = servicios.GetRequiredService<ILoggerFactory>();
-            fabricaRegistros.CreateLogger<GrabarConfiguracionNegocio>().LogInformation("grabacion-de-configuracion");
+            fabricaRegistros.CreateLogger(GrabarConfiguracionConRecalculo.CategoriaRegistro)
+                .LogInformation("grabacion-de-configuracion");
             fabricaRegistros.CreateLogger("Optica.Prueba").LogInformation("otra-categoria-information");
             fabricaRegistros.CreateLogger("Optica.Prueba").LogWarning("otra-categoria-warning");
         }
@@ -325,6 +474,27 @@ public sealed class ConfiguracionApiTests
 
     private static Task<HttpResponseMessage> GrabarAsync(HttpClient cliente, string cuerpo, string? cookie) =>
         Http.PostJsonAsync(cliente, Ruta, cuerpo, cookie);
+
+    /// <summary>Graba por la Api un artículo activo con margen 50 y devuelve su código.</summary>
+    private static async Task<long> GrabarArticuloAsync(HttpClient cliente, string cookie, string codigoProveedor, decimal costo)
+    {
+        var cuerpo = JsonSerializer.Serialize(
+            new { codigoProveedor, descripcion = "Armazón", precioCosto = costo, margenUtilidad = 50m });
+        var respuesta = await Http.PostJsonAsync(cliente, "/api/articulos", cuerpo, cookie);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        return (await Http.JsonAsync(respuesta)).GetProperty("codigo").GetInt64();
+    }
+
+    /// <summary>El precio de venta y la versión que la Api tiene grabados para el artículo.</summary>
+    private static async Task AfirmarArticuloAsync(
+        HttpClient cliente, string cookie, long codigo, decimal precioVenta, long version)
+    {
+        var respuesta = await Http.GetAsync(cliente, $"/api/articulos/{codigo}", cookie);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(precioVenta, json.GetProperty("precioVenta").GetDecimal());
+        Assert.Equal(version, json.GetProperty("version").GetInt64());
+    }
 
     private static async Task<string> IngresarAsync(HttpClient cliente)
     {
@@ -355,12 +525,27 @@ public sealed class ConfiguracionApiTests
         AfirmarConfiguracion(await Http.JsonAsync(respuesta), 21m, "responsable_inscripto", 0.01m, null);
     }
 
+    /// <summary>
+    /// La configuración con la forma del GET; con <paramref name="preciosCambiados"/>, la del POST, que agrega esa clave
+    /// al final (D-23 de FEAT-002c).
+    /// </summary>
     private static void AfirmarConfiguracion(
-        JsonElement json, decimal alicuotaIva, string condicionFiscal, decimal multiploRedondeo, decimal? topeIdentificacion)
+        JsonElement json,
+        decimal alicuotaIva,
+        string condicionFiscal,
+        decimal multiploRedondeo,
+        decimal? topeIdentificacion,
+        int? preciosCambiados = null)
     {
+        string[] claves = ["alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope"];
         Assert.Equal(
-            ["alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope"],
+            preciosCambiados is null ? claves : [.. claves, "preciosCambiados"],
             json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
+        if (preciosCambiados is not null)
+        {
+            Assert.Equal(preciosCambiados.Value, json.GetProperty("preciosCambiados").GetInt32());
+        }
+
         Assert.Equal(alicuotaIva, json.GetProperty("alicuotaIva").GetDecimal());
         Assert.Equal(condicionFiscal, json.GetProperty("condicionFiscal").GetString());
         Assert.Equal(multiploRedondeo, json.GetProperty("multiploRedondeo").GetDecimal());

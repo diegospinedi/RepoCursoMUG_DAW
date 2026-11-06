@@ -31,6 +31,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Una edición hecha en otra pestaña no se pisa: la Api responde 409 y la pantalla pide volver a abrir el artículo.
   - `GET /api/articulos`, `PUT /api/articulos/{codigo}` y `PUT /api/articulos/{codigo}/estado`; columnas `Activo` y `Version` agregadas sin reconstruir la tabla (ADR-012).
   - Pruebas de punta a punta en Chrome y Edge.
+- [FEAT-002c] Recálculo del catálogo por configuración:
+  - Al grabar una configuración que cambia la alícuota, la condición fiscal o el múltiplo de redondeo, el sistema recalcula el Precio de Venta de todos los artículos, activos e inactivos. Si solo cambia el tope, no recalcula.
+  - La configuración y los precios recalculados se graban juntos o no se graba nada (ADR-013). Si algún precio queda fuera de rango, el cambio se rechaza junto al múltiplo con hasta 10 códigos y la marca ", inactivo".
+  - El alta y la edición de artículos leen la configuración dentro de la misma transacción, así nunca graban un precio con los parámetros viejos.
+  - La pantalla `/configuracion` informa cuántos precios cambiaron ("Cambió el precio de venta de 10.000 artículos."), y `POST /api/configuracion` devuelve `preciosCambiados`.
+  - Probado con 10.000 artículos: la búsqueda responde en menos de 1 s en el percentil 95 y el recálculo completo tarda alrededor de 1 s.
+  - Pruebas de punta a punta en Chrome y Edge.
 
 ### Fixed
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
@@ -38,4 +45,5 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 ### Security
 - [FEAT-001b] `ConflictoAlConfirmarException` ya no admite una excepción interna, así que el hash de la contraseña que viaja en los `Entries` de EF Core no puede llegar al log por esa vía.
 - [FEAT-002b] El costo, el margen, la descripción y el texto buscado no llegan al log aunque se suba el nivel de registro: los datos de los pedidos no se imprimen y la Api fija en código el piso `Warning` para el registro de pedidos y de MVC.
+- [FEAT-002c] La alícuota, la condición fiscal y el tope de los pedidos y de la configuración vigente no se imprimen en el log, y las pruebas ya no escriben la ruta temporal, que puede incluir el nombre de usuario del sistema operativo.
 - [FEAT-002b] El Edge de las pruebas de punta a punta solo resuelve `localhost`, así ya no transmite a Microsoft datos de la identidad del empleado ni de la organización.

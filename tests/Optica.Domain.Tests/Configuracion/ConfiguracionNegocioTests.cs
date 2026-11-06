@@ -54,5 +54,45 @@ public class ConfiguracionNegocioTests
         Assert.DoesNotContain("7", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CambiaParametrosDePrecio_AnteriorNulo_LanzaError()
+    {
+        var vigente = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+
+        var error = Assert.Throws<ArgumentNullException>(() => vigente.CambiaParametrosDePrecioRespectoDe(null!));
+
+        Assert.Equal("anterior", error.ParamName);
+        Assert.DoesNotContain("21", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CambiaParametrosDePrecio_SoloTope_Falso()
+    {
+        // D-07: el tope no interviene en el precio de venta; tampoco una configuración igual.
+        var anterior = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+
+        var soloTope = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 25_000m);
+        var igual = new ConfiguracionNegocio(21.00m, CondicionFiscal.ResponsableInscripto, 0.010m, null);
+
+        Assert.False(soloTope.CambiaParametrosDePrecioRespectoDe(anterior));
+        Assert.False(anterior.CambiaParametrosDePrecioRespectoDe(soloTope));
+        Assert.False(igual.CambiaParametrosDePrecioRespectoDe(anterior));
+    }
+
+    [Fact]
+    public void CambiaParametrosDePrecio_AlicuotaCondicionOMultiplo_Verdadero()
+    {
+        // D-07: la alícuota, la condición fiscal o el múltiplo disparan el recálculo, cada uno por separado.
+        var anterior = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 25_000m);
+
+        var alicuota = new ConfiguracionNegocio(10.5m, CondicionFiscal.ResponsableInscripto, 0.01m, 25_000m);
+        var condicion = new ConfiguracionNegocio(21m, CondicionFiscal.Monotributo, 0.01m, 25_000m);
+        var multiplo = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 50m, 25_000m);
+
+        Assert.True(alicuota.CambiaParametrosDePrecioRespectoDe(anterior));
+        Assert.True(condicion.CambiaParametrosDePrecioRespectoDe(anterior));
+        Assert.True(multiplo.CambiaParametrosDePrecioRespectoDe(anterior));
+    }
+
     private static decimal Leer(string texto) => decimal.Parse(texto, CultureInfo.InvariantCulture);
 }

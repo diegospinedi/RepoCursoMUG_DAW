@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- La siembra de 10.000 artículos, compartida con Optica.Infrastructure.Tests (D-15). -->
+    <Compile Include="..\Compartido\SiembraCatalogo.cs" Link="Compartido\SiembraCatalogo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

@@ -40,4 +40,19 @@ public interface IArticuloRepository
 
     /// <summary>Registra el cambio de estado del artículo (D-09); se guarda al confirmar la unidad de trabajo.</summary>
     void CambiarEstado(long codigo, bool activo);
+
+    /// <summary>
+    /// Todos los artículos del catálogo, activos e inactivos, para recalcular su precio de venta (FR-01 y AC-03 de
+    /// FEAT-002c). Cada uno con el estado y la versión leídos, que <see cref="RegistrarPrecioRecalculado"/> usa como tokens.
+    /// </summary>
+    Task<IReadOnlyList<Articulo>> ListarParaRecalculoAsync(CancellationToken cancelacion = default);
+
+    /// <summary>
+    /// Registra el precio de venta recalculado de <paramref name="articulo"/> (la copia de
+    /// <see cref="Articulo.ConPrecioRecalculado"/>): solo cambian el precio de venta y la versión, que se incrementa. El
+    /// estado y la versión del artículo son los leídos: si alguno cambió antes de confirmar, la unidad de trabajo lo
+    /// informa como conflicto de concurrencia (D-04 de FEAT-002c). Se guarda al confirmar la unidad de trabajo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
+    void RegistrarPrecioRecalculado(Articulo articulo);
 }
