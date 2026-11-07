@@ -358,7 +358,7 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.EndsWith("_CatalogoActivo", migraciones[^1], StringComparison.Ordinal);
+        Assert.EndsWith("_Presupuestos", migraciones[^1], StringComparison.Ordinal);
         var catalogo = Assert.Single(migraciones, m => m.EndsWith("_Catalogo", StringComparison.Ordinal));
 
         // Una base de FEAT-002a con artículos cargados.
@@ -960,6 +960,72 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
         // Sin texto, todo el catálogo.
         Assert.Equal(4, (await repositorio.BuscarAsync(null, 1, 50)).Total);
         Assert.Equal(0, (await repositorio.BuscarAsync(PlegadoBusqueda.Plegar("cristal"), 1, 50)).Total);
+    }
+
+    [Fact]
+    public async Task BuscarAsync_SoloActivosArmazon_ExcluyeInactivos()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var codigos = await Grabar(baseTemporal,
+            ("ABC-1", "Armazón metálico"),
+            ("ABC-2", "ARMAZON de acetato"),
+            ("ABC-3", "Armazón dado de baja"),
+            ("ABC-4", "Estuche rígido"));
+        var baja = baseTemporal.CrearContexto();
+        new ArticuloRepository(baja).CambiarEstado(codigos[2], activo: false);
+        await new UnidadDeTrabajoEf(baja).ConfirmarAsync();
+        var repositorio = new ArticuloRepository(baseTemporal.CrearContexto());
+        var armazon = PlegadoBusqueda.Plegar("armazon");
+
+        // AC-13: "armazon" lista los activos con o sin tilde y ningún inactivo, en la página y en el total (D-15).
+        var activos = await repositorio.BuscarAsync(armazon, 1, 50, soloActivos: true);
+        Assert.Equal(2, activos.Total);
+        Assert.Equal(["ARMAZON de acetato", "Armazón metálico"], activos.Articulos.Select(a => a.Descripcion));
+        Assert.All(activos.Articulos, a => Assert.True(a.Activo));
+
+        // La página cuenta solo los activos: la segunda de a 1 es el segundo activo.
+        var segunda = await repositorio.BuscarAsync(armazon, 2, 1, soloActivos: true);
+        Assert.Equal(["Armazón metálico"], segunda.Articulos.Select(a => a.Descripcion));
+        Assert.Equal(2, segunda.Total);
+
+        // Sin texto, todo el catálogo activo; sin soloActivos, el listado del catálogo sigue mostrando los inactivos.
+        Assert.Equal(3, (await repositorio.BuscarAsync(null, 1, 50, soloActivos: true)).Total);
+        var todos = await repositorio.BuscarAsync(armazon, 1, 50);
+        Assert.Equal(3, todos.Total);
+        Assert.Equal("Armazón dado de baja", todos.Articulos[0].Descripcion);
+    }
+
+    [Fact]
+    public async Task BuscarAsync_SoloActivosPorCodigo_ListaElArticulo()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var articulos = Enumerable.Range(0, 12)
+            .Select(i => ($"PROV-{(char)('A' + i)}", $"Artículo {(char)('a' + i)}"))
+            .ToArray();
+        var codigos = await Grabar(baseTemporal, articulos);
+        var inactivo = codigos[9];
+        var baja = baseTemporal.CrearContexto();
+        new ArticuloRepository(baja).CambiarEstado(inactivo, activo: false);
+        await new UnidadDeTrabajoEf(baja).ConfirmarAsync();
+        var repositorio = new ArticuloRepository(baseTemporal.CrearContexto());
+        static string Texto(long codigo) => codigo.ToString(CultureInfo.InvariantCulture);
+
+        // AC-14: el código de un artículo activo lo lista.
+        var activo = codigos[11];
+        var porCodigo = await repositorio.BuscarAsync(Texto(activo), 1, 50, soloActivos: true);
+        Assert.Equal([activo], porCodigo.Articulos.Select(a => a.Codigo!.Value));
+        Assert.Equal(1, porCodigo.Total);
+
+        // El código de uno inactivo no lo lista con soloActivos, y sí sin él.
+        var buscadoInactivo = await repositorio.BuscarAsync(Texto(inactivo), 1, 50, soloActivos: true);
+        Assert.DoesNotContain(inactivo, buscadoInactivo.Articulos.Select(a => a.Codigo!.Value));
+        Assert.Contains(inactivo, (await repositorio.BuscarAsync(Texto(inactivo), 1, 50)).Articulos.Select(a => a.Codigo!.Value));
+
+        // La coincidencia parcial por código tampoco trae al inactivo.
+        var conUno = codigos.Where(c => c != inactivo && Texto(c).Contains('1', StringComparison.Ordinal)).Order().ToList();
+        var parcial = await repositorio.BuscarAsync("1", 1, 50, soloActivos: true);
+        Assert.Equal(conUno, parcial.Articulos.Select(a => a.Codigo!.Value).Order());
+        Assert.Equal(conUno.Count, parcial.Total);
     }
 
     [Fact]

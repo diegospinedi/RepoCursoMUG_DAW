@@ -56,7 +56,8 @@ describe('Arranque', () => {
   it('Arranque_RutaDesconocida_VuelveAlArranque', async () => {
     servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: false }) });
 
-    renderizarApp('/presupuestos/123');
+    // Una ruta que la App no declara (/presupuestos/:numero sí existe desde FEAT-003a).
+    renderizarApp('/ruta-inexistente/123');
 
     expect(await screen.findByRole('heading', { name: 'Definí la contraseña de acceso' })).toBeTruthy();
   });

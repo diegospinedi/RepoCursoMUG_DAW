@@ -11,6 +11,7 @@ using Optica.Application.Marca;
 using Optica.Domain.Acceso;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
+using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Persistencia;
 using Optica.Infrastructure.Seguridad;
@@ -47,6 +48,10 @@ public static class ConfiguracionInfraestructura
 
         // Catálogo: comparte el contexto (y la unidad de trabajo) del alcance.
         servicios.AddScoped<IArticuloRepository, ArticuloRepository>();
+
+        // Presupuestos: comparte el contexto (y la unidad de trabajo) del alcance, así el alta lee el último número y
+        // graba dentro de la misma transacción (ADR-013, ADR-015).
+        servicios.AddScoped<IPresupuestoRepository, PresupuestoRepository>();
 
         // Marca: la instalada en Optica:Marca:Directorio o la de ejemplo copiada junto a los binarios. Singleton: se lee
         // una vez y queda en memoria hasta reiniciar la Api.

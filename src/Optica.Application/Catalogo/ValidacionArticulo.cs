@@ -58,6 +58,14 @@ public static class ValidacionArticulo
     public const string AccionVersionInvalida = "Volvé a abrir el artículo para editarlo.";
     public const string AccionActivoFaltante = "Indicá si el artículo queda activo o inactivo.";
 
+    // FEAT-003a: la búsqueda de las líneas del presupuesto (D-15).
+
+    /// <summary>El parámetro opcional de la búsqueda que lista solo los artículos activos (D-15).</summary>
+    public const string CampoSoloActivos = "soloActivos";
+
+    /// <summary>Un <c>soloActivos</c> que no es booleano (D-26); no repite el valor recibido.</summary>
+    public const string AccionSoloActivosInvalido = "Indicá true o false.";
+
     /// <summary>El rechazo de la modificación de un artículo inactivo (D-02).</summary>
     public const string DetalleInactivo = "Reactivá el artículo para editarlo.";
 

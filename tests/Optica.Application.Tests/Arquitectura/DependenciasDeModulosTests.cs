@@ -6,7 +6,7 @@ namespace Optica.Application.Tests.Arquitectura;
 
 /// <summary>
 /// Dependencias entre módulos que el compilador no impide (D-10 de FEAT-002a, D-16 de FEAT-002c): Catálogo depende de
-/// Configuración, nunca al revés.
+/// Configuración, nunca al revés; Presupuestos depende de Catálogo, nunca al revés (D-05 de FEAT-003a).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,6 +20,11 @@ namespace Optica.Application.Tests.Arquitectura;
 /// La detección de variables locales es confiable en Debug, que es como corre <c>dotnet test</c> por defecto: el
 /// compilador conserva cada variable declarada. En Release puede eliminar una variable local que no hace falta, y su
 /// tipo deja de verse en <see cref="MethodBody.LocalVariables"/>.
+/// </para>
+/// <para>
+/// Tampoco ve las constantes (<c>const</c>) de otro módulo: el compilador copia su valor en el código que las usa y el
+/// tipo que las declara no queda en ninguna firma ni variable. Que <c>Optica.Application.Presupuestos</c> no use las
+/// constantes de <c>Optica.Application.Catalogo</c> (D-08 de FEAT-003a) queda a la revisión de código.
 /// </para>
 /// </remarks>
 public class DependenciasDeModulosTests
@@ -53,6 +58,70 @@ public class DependenciasDeModulosTests
         Assert.Contains(typeof(ConfiguracionNegocio), revisados);
         Assert.Contains(revisados, tipo => tipo.DeclaringType is not null);
         Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
+    }
+
+    /// <summary>D-05 de FEAT-003a: Presupuestos depende de Catálogo, nunca al revés.</summary>
+    [Fact]
+    public void Catalogo_NoUsaTiposDePresupuestos()
+    {
+        var revisados = new[]
+            {
+                (Ensamblado: typeof(Optica.Application.Catalogo.AltaArticulo).Assembly,
+                    Espacio: "Optica.Application.Catalogo"),
+                (Ensamblado: typeof(Optica.Domain.Catalogo.Articulo).Assembly, Espacio: "Optica.Domain.Catalogo"),
+            }
+            .SelectMany(revisado => revisado.Ensamblado.GetTypes()
+                .Where(tipo => EstaEn(tipo.Namespace, revisado.Espacio)))
+            .ToList();
+
+        var usos = revisados
+            .SelectMany(tipo => TiposUsados(tipo).Select(usado => (Tipo: tipo, Usado: usado)))
+            .Where(uso => EsDePresupuestos(uso.Usado))
+            .Select(uso => $"{uso.Tipo.FullName} usa {uso.Usado.FullName ?? uso.Usado.Name}")
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // La revisión tiene que ver algo: los tipos que se conocen de cada módulo están entre los revisados.
+        Assert.Contains(typeof(Optica.Application.Catalogo.BuscarArticulos), revisados);
+        Assert.Contains(typeof(Optica.Domain.Catalogo.Articulo), revisados);
+        Assert.Contains(revisados, tipo => tipo.DeclaringType is not null);
+        Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
+    }
+
+    /// <summary>
+    /// D-08 de FEAT-003a: la aplicación de Presupuestos tiene sus propios textos y no usa tipos de la aplicación de
+    /// Catálogo. Sí puede usar el dominio de Catálogo (D-05): lee artículos con <c>IArticuloRepository</c>.
+    /// </summary>
+    [Fact]
+    public void AplicacionDePresupuestos_NoUsaTiposDeAplicacionDeCatalogo()
+    {
+        var revisados = typeof(Optica.Application.Presupuestos.AltaPresupuesto).Assembly.GetTypes()
+            .Where(tipo => EstaEn(tipo.Namespace, "Optica.Application.Presupuestos"))
+            .ToList();
+
+        var usos = revisados
+            .SelectMany(tipo => TiposUsados(tipo).Select(usado => (Tipo: tipo, Usado: usado)))
+            .Where(uso => EstaEn(uso.Usado.Namespace, "Optica.Application.Catalogo"))
+            .Select(uso => $"{uso.Tipo.FullName} usa {uso.Usado.FullName ?? uso.Usado.Name}")
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // La revisión tiene que ver algo: los tipos que se conocen del módulo están entre los revisados.
+        Assert.Contains(typeof(Optica.Application.Presupuestos.AltaPresupuesto), revisados);
+        Assert.Contains(typeof(Optica.Application.Presupuestos.ValidacionPresupuesto), revisados);
+        Assert.Contains(revisados, tipo => tipo.DeclaringType is not null);
+        Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
+    }
+
+    /// <summary>Prueba de la propia revisión: un tipo de Presupuestos sí usa tipos de Presupuestos.</summary>
+    [Fact]
+    public void TiposUsados_TipoDePresupuestos_DetectaElUso()
+    {
+        var usados = TiposUsados(typeof(Optica.Application.Presupuestos.AltaPresupuesto)).ToList();
+
+        Assert.Contains(usados, EsDePresupuestos);
     }
 
     /// <summary>Prueba de la propia revisión: un tipo de Catálogo sí usa tipos de Catálogo.</summary>
@@ -106,6 +175,12 @@ public class DependenciasDeModulosTests
     {
         var espacio = tipo.Namespace;
         return espacio is not null && espacio.Split('.').Contains("Catalogo", StringComparer.Ordinal);
+    }
+
+    private static bool EsDePresupuestos(Type tipo)
+    {
+        var espacio = tipo.Namespace;
+        return espacio is not null && espacio.Split('.').Contains("Presupuestos", StringComparer.Ordinal);
     }
 
     /// <summary>Los tipos que aparecen en la firma y en las variables locales de <paramref name="tipo"/>, desplegados.</summary>

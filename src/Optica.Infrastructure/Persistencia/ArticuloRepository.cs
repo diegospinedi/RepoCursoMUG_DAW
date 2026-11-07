@@ -78,7 +78,8 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
     /// Una página ordenada por <c>orden_articulo(Descripcion)</c> y después por código (D-01, D-15). Con texto, filtra
     /// con <c>instr</c> sobre la descripción y el código en el proveedor plegados con <c>plegar</c> y sobre el código como
     /// texto (D-05, D-06): sin <c>LIKE</c>, así <c>%</c> y <c>_</c> se buscan tal cual. El texto viaja como parámetro y
-    /// llega ya plegado (Block 3). <see cref="PaginaArticulos.Total"/> cuenta con el mismo filtro.
+    /// llega ya plegado (Block 3). Con <paramref name="soloActivos"/>, suma <c>Activo = 1</c> al filtro (D-15 de
+    /// FEAT-003a). <see cref="PaginaArticulos.Total"/> cuenta con el mismo filtro.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="pagina"/> es menor que 1, <paramref name="tamano"/> no es positivo, o el desplazamiento de la
@@ -86,7 +87,8 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
     /// </exception>
     /// <exception cref="InvalidOperationException">Alguna fila no cumple la política: estado corrupto.</exception>
     public async Task<PaginaArticulos> BuscarAsync(
-        string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default)
+        string? textoPlegado, int pagina, int tamano, bool soloActivos = false,
+        CancellationToken cancelacion = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(pagina, 1);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(tamano);
@@ -97,6 +99,12 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         }
 
         var filtradas = contexto.Articulos.AsNoTracking();
+        if (soloActivos)
+        {
+            // La búsqueda de las líneas del presupuesto (FR-09 y D-15 de FEAT-003a): vale para la página y el total.
+            filtradas = filtradas.Where(a => a.Activo == ValorActivo);
+        }
+
         if (textoPlegado is not null)
         {
             // EF Core traduce Contains sobre texto a instr(...) > 0 en SQLite, no a LIKE.

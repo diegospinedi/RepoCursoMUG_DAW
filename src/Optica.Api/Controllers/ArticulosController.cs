@@ -95,31 +95,55 @@ public sealed class ArticulosController(
     /// <summary>
     /// Una página del catálogo, de a 50 por descripción (D-01), filtrada por <paramref name="texto"/> sin distinguir
     /// mayúsculas ni acentos (FR-04). Una página ilegible (no entera o fuera de un entero) responde 400 con el texto fijo
-    /// de D-07 en <c>pagina</c>, sin el valor recibido; el texto y el rango los valida el caso de uso.
+    /// de D-07 en <c>pagina</c>, sin el valor recibido; el texto y el rango los valida el caso de uso. Con
+    /// <paramref name="soloActivos"/> verdadero lista solo los activos: es la búsqueda de las líneas del presupuesto
+    /// (D-15 de FEAT-003a); ausente vale falso. Uno que no es booleano responde 400 en <c>soloActivos</c> con el texto
+    /// fijo de D-26, sin el valor recibido.
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> Listar(
-        [FromQuery] string? texto, [FromQuery] int? pagina, CancellationToken cancelacion)
+        [FromQuery] string? texto, [FromQuery] int? pagina, [FromQuery] bool? soloActivos, CancellationToken cancelacion)
     {
         if (!ModelState.IsValid)
         {
-            // El único parámetro que el enlace puede no leer es la página: un texto siempre se lee. Un error en
-            // cualquier otra clave no se disfraza de error de página: lanza, y el manejador responde 500 genérico.
+            // Los únicos parámetros que el enlace puede no leer son la página y soloActivos: un texto siempre se lee. Un
+            // error en cualquier otra clave no se disfraza de error de esos dos: lanza, y el manejador responde 500
+            // genérico.
             var claves = ModelState
                 .Where(entrada => entrada.Value is { Errors.Count: > 0 })
                 .Select(entrada => entrada.Key)
                 .ToList();
-            if (!claves.All(clave => string.Equals(clave, ValidacionArticulo.CampoPagina, StringComparison.OrdinalIgnoreCase)))
+            var enPagina = claves.Any(clave => EsClave(clave, ValidacionArticulo.CampoPagina));
+            var enSoloActivos = claves.Any(clave => EsClave(clave, ValidacionArticulo.CampoSoloActivos));
+            if (claves.Count == 0
+                || !claves.All(clave =>
+                    EsClave(clave, ValidacionArticulo.CampoPagina) || EsClave(clave, ValidacionArticulo.CampoSoloActivos)))
             {
-                throw new InvalidOperationException("Error de enlace del listado de artículos fuera de la página.");
+                throw new InvalidOperationException(
+                    "Error de enlace del listado de artículos fuera de la página y de soloActivos.");
             }
 
-            return this.Invalido(
-                new ErrorValidacion(ValidacionArticulo.CampoPagina, ValidacionArticulo.AccionPaginaFueraDeRango));
+            var errores = new List<ErrorValidacion>();
+            if (enPagina)
+            {
+                errores.Add(new ErrorValidacion(ValidacionArticulo.CampoPagina, ValidacionArticulo.AccionPaginaFueraDeRango));
+            }
+
+            if (enSoloActivos)
+            {
+                errores.Add(
+                    new ErrorValidacion(ValidacionArticulo.CampoSoloActivos, ValidacionArticulo.AccionSoloActivosInvalido));
+            }
+
+            return this.Invalido([.. errores]);
         }
 
-        return ResponderBusqueda(await buscarArticulos.EjecutarAsync(texto, pagina, cancelacion));
+        return ResponderBusqueda(
+            await buscarArticulos.EjecutarAsync(texto, pagina, soloActivos ?? false, cancelacion: cancelacion));
     }
+
+    private static bool EsClave(string clave, string campo) =>
+        string.Equals(clave, campo, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>El artículo con ese código: 200, o 404 con ProblemDetails sin detalles (R-06).</summary>
     [HttpGet("{codigo:long}")]

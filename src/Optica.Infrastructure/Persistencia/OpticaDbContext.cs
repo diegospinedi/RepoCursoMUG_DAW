@@ -29,6 +29,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
     public DbSet<ArticuloFila> Articulos => Set<ArticuloFila>();
 
+    /// <summary>Los presupuestos; sus líneas se leen y se graban por la navegación <see cref="PresupuestoFila.Lineas"/>.</summary>
+    public DbSet<PresupuestoFila> Presupuestos => Set<PresupuestoFila>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<CredencialAccesoFila>(credencial =>
@@ -129,6 +132,82 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             articulo.Property(a => a.Version).IsRequired().IsConcurrencyToken();
         });
 
+        modelBuilder.Entity<PresupuestoFila>(presupuesto =>
+        {
+            // FEAT-003a. Tabla nueva, creada con CreateTable: no reconstruye ninguna existente (ADR-012, D-18). Los CHECK
+            // son la segunda barrera detrás de PoliticaCliente (D-08, D-09) y de la numeración (D-07). Sin DEFAULT: el
+            // repositorio asigna todas las columnas. Lleva datos personales (Ley 25.326, D-17, D-23).
+            presupuesto.ToTable("Presupuesto", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_Presupuesto_Numero", "\"Numero\" >= 1");
+                tabla.HasCheckConstraint(
+                    "CK_Presupuesto_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+                tabla.HasCheckConstraint("CK_Presupuesto_Estado", "\"Estado\" IN ('borrador', 'final')");
+                tabla.HasCheckConstraint("CK_Presupuesto_Apellido", "length(\"Apellido\") BETWEEN 1 AND 100");
+                tabla.HasCheckConstraint("CK_Presupuesto_Nombre", "length(\"Nombre\") BETWEEN 1 AND 100");
+                tabla.HasCheckConstraint(
+                    "CK_Presupuesto_Dni", "length(\"Dni\") BETWEEN 7 AND 8 AND \"Dni\" NOT GLOB '*[^0-9]*'");
+                tabla.HasCheckConstraint("CK_Presupuesto_Domicilio", "length(\"Domicilio\") <= 200");
+                tabla.HasCheckConstraint("CK_Presupuesto_Email", "length(\"Email\") <= 254");
+                tabla.HasCheckConstraint("CK_Presupuesto_Telefono", "length(\"Telefono\") <= 30");
+            });
+            presupuesto.HasKey(p => p.Numero);
+
+            // INTEGER PRIMARY KEY sin AUTOINCREMENT: el número lo calcula el alta dentro de la transacción (ADR-015), y
+            // la clave primaria rechaza uno repetido.
+            presupuesto.Property(p => p.Numero).ValueGeneratedNever();
+
+            // DateOnly: EF Core lo guarda como TEXT yyyy-MM-dd (D-06).
+            presupuesto.Property(p => p.Fecha).IsRequired();
+            presupuesto.Property(p => p.Estado).IsRequired();
+            presupuesto.Property(p => p.Apellido).IsRequired();
+            presupuesto.Property(p => p.Nombre).IsRequired();
+            presupuesto.Property(p => p.Dni).IsRequired();
+
+            presupuesto.HasMany(p => p.Lineas)
+                .WithOne()
+                .HasForeignKey(l => l.PresupuestoNumero)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LineaPresupuestoFila>(linea =>
+        {
+            // Importes y descuento en centésimos (ADR-008), con los CHECK detrás de LineaPresupuesto.
+            linea.ToTable("LineaPresupuesto", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_LineaPresupuesto_Orden", "\"Orden\" >= 1");
+                tabla.HasCheckConstraint(
+                    "CK_LineaPresupuesto_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
+                tabla.HasCheckConstraint(
+                    "CK_LineaPresupuesto_PrecioUnitarioCentavos", "\"PrecioUnitarioCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_LineaPresupuesto_PrecioConDescuentoCentavos", "\"PrecioConDescuentoCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_LineaPresupuesto_PrecioFinalCentavos", "\"PrecioFinalCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_LineaPresupuesto_Cantidad", "\"Cantidad\" >= 1");
+                tabla.HasCheckConstraint(
+                    "CK_LineaPresupuesto_DescuentoCentesimos", "\"DescuentoCentesimos\" BETWEEN 0 AND 10000");
+            });
+            linea.HasKey(l => new { l.PresupuestoNumero, l.Orden });
+            linea.Property(l => l.Orden).ValueGeneratedNever();
+            linea.Property(l => l.Descripcion).IsRequired();
+            linea.Property(l => l.PrecioUnitario)
+                .HasColumnName("PrecioUnitarioCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.PrecioConDescuento)
+                .HasColumnName("PrecioConDescuentoCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.PrecioFinal)
+                .HasColumnName("PrecioFinalCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.Cantidad).IsRequired();
+            linea.Property(l => l.PorcentajeDescuento)
+                .HasColumnName("DescuentoCentesimos").IsRequired().HasConversion(Centesimos);
+
+            // La línea apunta al artículo del catálogo (D-13); un artículo con líneas no se puede borrar. Catálogo no
+            // conoce a Presupuestos: la relación vive solo de este lado (D-05).
+            linea.HasOne<ArticuloFila>()
+                .WithMany()
+                .HasForeignKey(l => l.CodigoArticulo)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // Las funciones de la búsqueda de artículos, registradas en cada conexión por FabricaConexion (ADR-011).
         modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.Plegar))!)
             .HasName(FuncionesSqlite.NombrePlegar);
@@ -224,6 +303,73 @@ public sealed class ArticuloFila
 
     /// <summary>La versión para la concurrencia optimista, desde 0; cada escritura la incrementa (D-08).</summary>
     public long Version { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>Presupuesto</c> (FEAT-003a): el número, la fecha, el estado y el cliente. Lleva datos personales
+/// (Ley 25.326): no sobrescribe <see cref="object.ToString"/> ni se registra en el log (D-17).
+/// </summary>
+public sealed class PresupuestoFila
+{
+    /// <summary>El número del presupuesto, desde 1; es la clave primaria y no lo genera la base (ADR-015).</summary>
+    public long Numero { get; set; }
+
+    /// <summary>La fecha local sin hora; columna TEXT <c>yyyy-MM-dd</c> (D-06).</summary>
+    public DateOnly Fecha { get; set; }
+
+    /// <summary><c>borrador</c> o <c>final</c> (D-19).</summary>
+    public string Estado { get; set; } = string.Empty;
+
+    public string Apellido { get; set; } = string.Empty;
+
+    public string Nombre { get; set; } = string.Empty;
+
+    /// <summary>7 u 8 dígitos, sin puntos, como texto (D-09).</summary>
+    public string Dni { get; set; } = string.Empty;
+
+    public string? Domicilio { get; set; }
+
+    public string? Email { get; set; }
+
+    public string? Telefono { get; set; }
+
+    /// <summary>Las líneas, con <see cref="LineaPresupuestoFila.Orden"/> desde 1.</summary>
+    public List<LineaPresupuestoFila> Lineas { get; set; } = [];
+}
+
+/// <summary>
+/// Fila de la tabla <c>LineaPresupuesto</c>: una línea del presupuesto, en su orden de carga. Los importes y el descuento
+/// se ven como <c>decimal</c> y se guardan en centésimos enteros (ADR-008).
+/// </summary>
+public sealed class LineaPresupuestoFila
+{
+    public long PresupuestoNumero { get; set; }
+
+    /// <summary>La posición de la línea en el presupuesto, desde 1.</summary>
+    public long Orden { get; set; }
+
+    /// <summary>El código autonumérico del artículo del catálogo (D-13).</summary>
+    public long CodigoArticulo { get; set; }
+
+    public string Descripcion { get; set; } = string.Empty;
+
+    /// <summary>Importe; columna <c>PrecioUnitarioCentavos</c>.</summary>
+    public decimal PrecioUnitario { get; set; }
+
+    /// <summary>Importe; columna <c>PrecioConDescuentoCentavos</c>.</summary>
+    public decimal PrecioConDescuento { get; set; }
+
+    /// <summary>Importe; columna <c>PrecioFinalCentavos</c>.</summary>
+    public decimal PrecioFinal { get; set; }
+
+    /// <summary>
+    /// Desde 1. Es <c>long</c> y no <c>int</c> a propósito: así el repositorio reconoce como estado corrupto una fila con
+    /// una cantidad que no entra en el dominio, en lugar de fallar al leerla.
+    /// </summary>
+    public long Cantidad { get; set; }
+
+    /// <summary>Porcentaje; columna <c>DescuentoCentesimos</c>.</summary>
+    public decimal PorcentajeDescuento { get; set; }
 }
 
 /// <summary>

@@ -25,9 +25,12 @@ public interface IArticuloRepository
     /// Una página de artículos ordenados por descripción (D-01, D-15). Con <paramref name="textoPlegado"/> null
     /// devuelve todos; si no, los que lo contienen en la descripción, en el código en el proveedor (los dos plegados con
     /// <see cref="PlegadoBusqueda.Plegar"/>) o en el código (FR-04, ADR-011). <paramref name="pagina"/> empieza en 1.
+    /// Con <paramref name="soloActivos"/> verdadero, solo los artículos activos, también en el total (FR-09 y D-15 de
+    /// FEAT-003a); falso lista activos e inactivos, como el listado del catálogo.
     /// </summary>
     Task<PaginaArticulos> BuscarAsync(
-        string? textoPlegado, int pagina, int tamano, CancellationToken cancelacion = default);
+        string? textoPlegado, int pagina, int tamano, bool soloActivos = false,
+        CancellationToken cancelacion = default);
 
     /// <summary>Verdadero si un artículo distinto del de <paramref name="codigo"/> tiene esa clave normalizada (ADR-009).</summary>
     Task<bool> ExisteClaveDeOtroAsync(string clave, long codigo, CancellationToken cancelacion = default);

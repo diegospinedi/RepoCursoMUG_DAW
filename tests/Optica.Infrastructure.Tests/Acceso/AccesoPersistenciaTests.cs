@@ -386,7 +386,7 @@ public class AccesoPersistenciaTests
         Assert.Equal(
             [
                 "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
-                "CatalogoActivo",
+                "CatalogoActivo", "Presupuestos",
             ],
             migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
@@ -410,23 +410,33 @@ public class AccesoPersistenciaTests
         Assert.Empty(Filas(cadena, "SELECT Id FROM Articulo"));
         AfirmarIndiceClaveArticulo(cadena);
 
-        // Revertir hasta Inicial elimina el índice, la tabla de configuración y la del catálogo: los datos de los
-        // eventos y el índice de FechaHora quedan.
+        // Las tablas de presupuestos existen, vacías.
+        Assert.Contains("Presupuesto", Tablas(cadena));
+        Assert.Contains("LineaPresupuesto", Tablas(cadena));
+        Assert.Empty(Filas(cadena, "SELECT Numero FROM Presupuesto"));
+
+        // Revertir hasta Inicial elimina el índice, la tabla de configuración, la del catálogo y las de presupuestos: los
+        // datos de los eventos y el índice de FechaHora quedan.
         migrador.Migrate(migraciones[0]);
         Assert.DoesNotContain("IX_EventoAcceso_Tipo_Resultado", Indices(cadena));
         Assert.Contains("IX_EventoAcceso_FechaHora", Indices(cadena));
         Assert.DoesNotContain("ConfiguracionNegocio", Tablas(cadena));
         Assert.DoesNotContain("Articulo", Tablas(cadena));
+        Assert.DoesNotContain("Presupuesto", Tablas(cadena));
+        Assert.DoesNotContain("LineaPresupuesto", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM EventoAcceso"));
         Assert.Equal([migraciones[0]], contexto.Database.GetAppliedMigrations());
 
-        // Y volver a aplicarlas recrea el índice, la tabla de configuración con su fila inicial y la del catálogo.
+        // Y volver a aplicarlas recrea el índice, la tabla de configuración con su fila inicial, la del catálogo y las de
+        // presupuestos.
         migrador.Migrate();
         AfirmarIndiceTipoResultado(cadena);
         Assert.Contains("ConfiguracionNegocio", Tablas(cadena));
         Assert.Single(Filas(cadena, "SELECT Id FROM ConfiguracionNegocio"));
         Assert.Contains("Articulo", Tablas(cadena));
         AfirmarIndiceClaveArticulo(cadena);
+        Assert.Contains("Presupuesto", Tablas(cadena));
+        Assert.Contains("LineaPresupuesto", Tablas(cadena));
         Assert.Empty(contexto.Database.GetPendingMigrations());
     }
 

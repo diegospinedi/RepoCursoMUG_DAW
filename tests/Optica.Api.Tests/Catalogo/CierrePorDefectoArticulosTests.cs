@@ -118,7 +118,8 @@ public sealed class CierrePorDefectoArticulosTests
         var controller = Crear();
         controller.ModelState.AddModelError(ValidacionArticulo.CampoPagina, "no se pudo leer");
 
-        var respuesta = Assert.IsType<ObjectResult>(await controller.Listar("armaz", null, CancellationToken.None));
+        var respuesta = Assert.IsType<ObjectResult>(
+            await controller.Listar("armaz", null, null, cancelacion: CancellationToken.None));
 
         Assert.Equal(StatusCodes.Status400BadRequest, respuesta.StatusCode);
         var problema = Assert.IsType<ValidationProblemDetails>(respuesta.Value);
@@ -128,8 +129,34 @@ public sealed class CierrePorDefectoArticulosTests
     }
 
     /// <summary>
-    /// H1: un error de enlace en otra clave no se disfraza de error de página: lanza, y el manejador responde el 500
-    /// genérico. El caso de uso no se usa (es null): lanzar antes es la única salida posible.
+    /// D-26 de FEAT-003a: un error de enlace en <c>soloActivos</c> es un 400 en ese campo con su texto fijo, sin llegar
+    /// al caso de uso; con la página también ilegible, los dos errores.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Listar_ErrorDeEnlaceEnSoloActivos_400EnSoloActivos(bool tambienPagina)
+    {
+        var controller = Crear();
+        controller.ModelState.AddModelError(ValidacionArticulo.CampoSoloActivos, "no se pudo leer");
+        if (tambienPagina)
+        {
+            controller.ModelState.AddModelError(ValidacionArticulo.CampoPagina, "no se pudo leer");
+        }
+
+        var respuesta = Assert.IsType<ObjectResult>(
+            await controller.Listar("armaz", null, null, cancelacion: CancellationToken.None));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, respuesta.StatusCode);
+        var problema = Assert.IsType<ValidationProblemDetails>(respuesta.Value);
+        Assert.Equal(
+            [ValidacionArticulo.AccionSoloActivosInvalido], problema.Errors[ValidacionArticulo.CampoSoloActivos]);
+        Assert.Equal(tambienPagina ? 2 : 1, problema.Errors.Count);
+    }
+
+    /// <summary>
+    /// H1: un error de enlace en otra clave no se disfraza de error de página ni de <c>soloActivos</c>: lanza, y el
+    /// manejador responde el 500 genérico. El caso de uso no se usa (es null): lanzar antes es la única salida posible.
     /// </summary>
     [Theory]
     [InlineData("texto")]
@@ -141,18 +168,36 @@ public sealed class CierrePorDefectoArticulosTests
         controller.ModelState.AddModelError(clave, "no se pudo leer");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => controller.Listar("armaz", null, CancellationToken.None));
+            () => controller.Listar("armaz", null, null, cancelacion: CancellationToken.None));
     }
 
+    /// <summary>
+    /// Un ModelState inválido sin ninguna clave con error (una entrada sin validar) no se disfraza de error de página ni
+    /// de <c>soloActivos</c>: lanza, y el manejador responde el 500 genérico.
+    /// </summary>
     [Fact]
-    public async Task Listar_ErrorEnPaginaYEnOtraClave_Lanza()
+    public async Task Listar_ModelStateInvalidoSinClaves_Lanza()
     {
         var controller = Crear();
-        controller.ModelState.AddModelError(ValidacionArticulo.CampoPagina, "no se pudo leer");
+        controller.ModelState.SetModelValue("pagina", rawValue: null, attemptedValue: null);
+        Assert.False(controller.ModelState.IsValid);
+        Assert.DoesNotContain(controller.ModelState, entrada => entrada.Value is { Errors.Count: > 0 });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.Listar("armaz", null, null, cancelacion: CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("pagina")]
+    [InlineData("soloActivos")]
+    public async Task Listar_ErrorEnPaginaYEnOtraClave_Lanza(string clave)
+    {
+        var controller = Crear();
+        controller.ModelState.AddModelError(clave, "no se pudo leer");
         controller.ModelState.AddModelError("texto", "no se pudo leer");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => controller.Listar("armaz", null, CancellationToken.None));
+            () => controller.Listar("armaz", null, null, cancelacion: CancellationToken.None));
     }
 
     /// <summary>H3: las guardas de <see cref="RespuestasValidacion.ConflictoArticulo"/>.</summary>

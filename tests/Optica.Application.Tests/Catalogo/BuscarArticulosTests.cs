@@ -33,7 +33,7 @@ public class BuscarArticulosTests
         var resultado = await CrearCasoDeUso().EjecutarAsync("  " + texto + " \t", null);
 
         Assert.True(resultado.EsValido);
-        Assert.Equal((texto, 1, 50), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal((texto, 1, 50, false), _articulos.UltimaBusqueda!.Value);
     }
 
     [Fact]
@@ -74,8 +74,8 @@ public class BuscarArticulosTests
 
         Assert.True(ausente.EsValido);
         Assert.Empty(ausente.Errores);
-        Assert.Equal(((string?)null, 1, 50), busquedaAusente);
-        Assert.Equal(((string?)null, 1, 50), _articulos.UltimaBusqueda);
+        Assert.Equal(((string?)null, 1, 50, false), busquedaAusente);
+        Assert.Equal(((string?)null, 1, 50, false), _articulos.UltimaBusqueda);
         Assert.Equal(1, ausente.Pagina);
         Assert.Equal(50, ausente.TamanoPagina);
         Assert.Equal(51, ausente.Total);
@@ -98,7 +98,7 @@ public class BuscarArticulosTests
         var resultado = await CrearCasoDeUso().EjecutarAsync("  ARMAZÓN ", null);
 
         Assert.True(resultado.EsValido);
-        Assert.Equal(("armazon", 1, 50), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal(("armazon", 1, 50, false), _articulos.UltimaBusqueda!.Value);
         Assert.Equal(2, resultado.Total);
         Assert.Equal(
             [
@@ -106,5 +106,33 @@ public class BuscarArticulosTests
                 new ArticuloListado(sinTilde.Codigo!.Value, "AR-2", "armazon metálico", 150m, false),
             ],
             resultado.Articulos);
+    }
+
+    [Fact]
+    public async Task Buscar_SoloActivos_PasaElFiltro()
+    {
+        var activo = _articulos.Sembrar("AR-1", "Armazón de acetato", 1210m);
+        _articulos.Sembrar("AR-2", "armazon metálico", 100m, activo: false);
+
+        // AC-13: por texto, solo los activos, también en el total.
+        var porTexto = await CrearCasoDeUso().EjecutarAsync("armazón", null, soloActivos: true);
+
+        Assert.True(porTexto.EsValido);
+        Assert.Equal(("armazon", 1, 50, true), _articulos.UltimaBusqueda!.Value);
+        Assert.Equal(1, porTexto.Total);
+        Assert.Equal(
+            [new ArticuloListado(activo.Codigo!.Value, "AR-1", "Armazón de acetato", 1815m, true)], porTexto.Articulos);
+
+        // AC-14: por código.
+        var porCodigo = await CrearCasoDeUso().EjecutarAsync(
+            activo.Codigo.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), null, soloActivos: true);
+
+        Assert.True(Assert.Single(porCodigo.Articulos).Activo);
+        Assert.True(_articulos.UltimaBusqueda!.Value.SoloActivos);
+
+        // Sin el parámetro, el listado del catálogo sigue con activos e inactivos.
+        var sinFiltro = await CrearCasoDeUso().EjecutarAsync("armazón", null);
+        Assert.False(_articulos.UltimaBusqueda!.Value.SoloActivos);
+        Assert.Equal(2, sinFiltro.Total);
     }
 }

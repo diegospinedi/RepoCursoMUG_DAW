@@ -14,6 +14,7 @@ using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
 using Optica.Application.Marca;
+using Optica.Application.Presupuestos;
 using Optica.Infrastructure;
 using Optica.Infrastructure.Persistencia;
 
@@ -54,6 +55,10 @@ var app = builder.Build();
 // las migraciones pendientes. Si el directorio de datos no se puede crear o escribir, registra el error con la ruta y
 // la clave Optica:Datos:Directorio, y la Api no arranca.
 app.Services.InicializarBaseDeDatos();
+
+// Cache-Control: no-store en toda respuesta de /api, también en las de error: va primero para cubrir el 500 genérico,
+// los rechazos de autorización, de LimitesDelCuerpo y del limitador (D-37, R-08). La SPA conserva su no-cache.
+app.Use(SinCacheApi.AplicarAsync);
 
 app.UseExceptionHandler();
 if (!app.Environment.IsDevelopment())
@@ -139,6 +144,11 @@ public partial class Program
         builder.Services.AddScoped<BuscarArticulos>();
         builder.Services.AddScoped<ModificarArticulo>();
         builder.Services.AddScoped<CambiarEstadoArticulo>();
+
+        // Presupuestos (FEAT-003a), con sesión: llevan datos personales del cliente (D-17). El alta lee los artículos, el
+        // último número y la fecha local del día dentro de su transacción de escritura (ADR-013, D-06, D-07).
+        builder.Services.AddScoped<AltaPresupuesto>();
+        builder.Services.AddScoped<ObtenerPresupuesto>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de
