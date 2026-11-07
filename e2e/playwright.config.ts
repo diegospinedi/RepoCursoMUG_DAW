@@ -26,25 +26,26 @@ if (!Number.isInteger(puertoBase) || puertoBase < 1024 || puertoBase > 65000) {
   throw new Error('OPTICA_E2E_PUERTO tiene que ser un número de puerto entre 1024 y 65000.');
 }
 
+/**
+ * La suite solo habla con localhost (FR-10 de FEAT-005, D-05): en todos los navegadores cualquier otro nombre no se
+ * resuelve, así un pedido a un servicio externo falla en el acto y no sale de la máquina ningún dato de la prueba ni
+ * de la cuenta del equipo. En Edge además es lo que evita las esperas: con un perfil nuevo inicia sesión solo
+ * (implicit sign-in) y consulta servicios de Microsoft (graph.microsoft.com, substrate.office.com, edge.microsoft.com)
+ * con la cuenta del equipo; mientras tanto el proceso del navegador deja de atender pedidos por 2 a 10 s y la pantalla
+ * queda en "Cargando…" (W-VER-03 de FEAT-001a y FEAT-001b, D-30 de FEAT-002b). Chrome y el Chromium del diagnóstico
+ * reciben la misma regla: ningún navegador de la suite queda afuera (lo verifica `E2E_NavegadorSinRegla_Rechazado` en
+ * ci.test.mjs). Se agrega a los argumentos de Playwright sin reemplazarlos (a diferencia de --disable-features). Las
+ * IP literales no pasan por la resolución de nombres: esas las rechaza la revisión de texto de `hostsExternos`
+ * (ci.mjs).
+ */
+const sinRedExterna = { args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] };
+
 const navegadores: Project[] = [
-  { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
-  {
-    name: 'msedge',
-    use: {
-      ...devices['Desktop Edge'],
-      channel: 'msedge',
-      // Con un perfil nuevo, Edge inicia sesión solo (implicit sign-in) y consulta servicios de Microsoft
-      // (graph.microsoft.com, substrate.office.com, edge.microsoft.com) con la cuenta del equipo; mientras tanto el
-      // proceso del navegador deja de atender pedidos por 2 a 10 s y la pantalla queda en "Cargando…" (W-VER-03 de
-      // FEAT-001a y FEAT-001b, D-30 de FEAT-002b). La suite solo habla con localhost: cualquier otro nombre no se
-      // resuelve, así esos pedidos fallan en el acto y no sale ningún dato de la cuenta. Se agrega a los argumentos de
-      // Playwright sin reemplazarlos (a diferencia de --disable-features).
-      launchOptions: { args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] },
-    },
-  },
+  { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome', launchOptions: sinRedExterna } },
+  { name: 'msedge', use: { ...devices['Desktop Edge'], channel: 'msedge', launchOptions: sinRedExterna } },
 ];
 if (process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM === '1') {
-  navegadores.push({ name: 'chromium', use: { ...devices['Desktop Chrome'] } });
+  navegadores.push({ name: 'chromium', use: { ...devices['Desktop Chrome'], launchOptions: sinRedExterna } });
 }
 
 /**

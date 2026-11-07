@@ -31,6 +31,26 @@ const comandosDelProyecto = () => {
   assert.ok(Array.isArray(ci.COMANDOS_DEL_PROYECTO), 'ci.mjs no exporta COMANDOS_DEL_PROYECTO.');
   return ci.COMANDOS_DEL_PROYECTO;
 };
+const hostsExternos = (texto) => {
+  assert.equal(typeof ci.hostsExternos, 'function', 'ci.mjs no exporta hostsExternos.');
+  return ci.hostsExternos(texto);
+};
+const proyectosSinRegla = (proyectos) => {
+  assert.equal(typeof ci.proyectosSinRegla, 'function', 'ci.mjs no exporta proyectosSinRegla.');
+  return ci.proyectosSinRegla(proyectos);
+};
+const prefijosDeNavegador = (proyectos) => {
+  assert.equal(typeof ci.prefijosDeNavegador, 'function', 'ci.mjs no exporta prefijosDeNavegador.');
+  return ci.prefijosDeNavegador(proyectos);
+};
+const navegadoresFaltantes = (proyectos, esperados) => {
+  assert.equal(typeof ci.navegadoresFaltantes, 'function', 'ci.mjs no exporta navegadoresFaltantes.');
+  return ci.navegadoresFaltantes(proyectos, esperados);
+};
+const reglaSinRedExterna = () => {
+  assert.equal(typeof ci.REGLA_SIN_RED_EXTERNA, 'string', 'ci.mjs no exporta REGLA_SIN_RED_EXTERNA.');
+  return ci.REGLA_SIN_RED_EXTERNA;
+};
 
 /**
  * Rutas versionadas, separadas por `/` en cualquier sistema operativo. Incluye las nuevas todavía sin agregar al
@@ -180,6 +200,19 @@ describe('bloqueo de dependencias de NuGet', () => {
       ),
       'modo-bloqueado',
       'RestoreLockedMode solo en un comentario tiene que rechazarse',
+    );
+    // Un comentario que se arma al quitar otro de adentro, o uno sin cerrar, también esconde la propiedad.
+    const grupoCI =
+      `<PropertyGroup Condition="'$(CI)' == 'true'">` + '<RestoreLockedMode>true</RestoreLockedMode></PropertyGroup>';
+    rechazado(
+      soloLockedMode.replace('</Project>', `  <!<!---->-- ${grupoCI} -->\n</Project>`),
+      'modo-bloqueado',
+      'RestoreLockedMode en un comentario armado al quitar otro tiene que rechazarse',
+    );
+    rechazado(
+      soloLockedMode.replace('</Project>', `  <!-- ${grupoCI}\n</Project>`),
+      'modo-bloqueado',
+      'RestoreLockedMode en un comentario sin cerrar tiene que rechazarse',
     );
 
     // La condición con otros espacios, puesta en el elemento, o con el atributo entre comillas simples, vale igual.
@@ -713,5 +746,191 @@ describe('workflow de integración continua', () => {
   test('CI_WorkflowVacio_Rechazado', () => {
     assert.deepEqual(reglasDe(''), ['vacio'], 'Un texto vacío se rechaza solo por vacío.');
     assert.deepEqual(reglasDe('  \n\t\n '), ['vacio'], 'Un texto con solo espacios se rechaza solo por vacío.');
+  });
+});
+
+/** Archivos de prueba que revisa FR-10: los de .NET, los de la web y los de la suite de punta a punta. */
+const ARCHIVOS_DE_PRUEBA = [
+  /^tests\/.+\.cs$/,
+  /^web\/src\/.+\.test\.tsx?$/,
+  /^web\/src\/pruebas\//,
+  /^web\/vite\.config\.ts$/,
+  /^web\/lint\.test\.mjs$/,
+  /^e2e\/tests\//,
+  /^e2e\/[^/]+\.mjs$/,
+  /^e2e\/playwright\.config\.ts$/,
+];
+
+const esArchivoDePrueba = (ruta) => ARCHIVOS_DE_PRUEBA.some((patron) => patron.test(ruta));
+
+/** Cada host externo como `archivo: host`, así el rechazo nombra los dos. */
+const hostsExternosPorArchivo = (rutas, leer) =>
+  rutas.flatMap((ruta) => hostsExternos(leer(ruta)).map((host) => `${ruta}: ${host}`));
+
+/** Una URL armada por partes: escrita entera en este archivo, la prueba la encontraría en sí mismo. */
+const url = (esquema, resto) => `${esquema}://${resto}`;
+
+/** Los navegadores que cuentan para NFR-03: la suite sin la variable del diagnóstico. */
+const NAVEGADORES_DE_LA_SUITE = ['chrome', 'msedge'];
+
+describe('pruebas sin servicios externos', () => {
+  test('Pruebas_SinHostsExternos', () => {
+    const rutas = archivosVersionados().filter(esArchivoDePrueba);
+    for (const esperada of [
+      'e2e/playwright.config.ts',
+      'e2e/ci.test.mjs',
+      'e2e/servidor.mjs',
+      'e2e/tests/acceso.spec.ts',
+      'web/vite.config.ts',
+      'web/lint.test.mjs',
+      'web/src/configuracionVite.test.ts',
+      'web/src/pruebas/servidorFalso.tsx',
+      'tests/Optica.Api.Tests/FabricaApi.cs',
+    ]) {
+      assert.ok(rutas.includes(esperada), `La revisión no recorre ${esperada}.`);
+    }
+
+    const leer = (ruta) => readFileSync(join(REPOSITORIO, ruta), 'utf8');
+    assert.deepEqual(hostsExternosPorArchivo(rutas, leer), [], 'Hay archivos de prueba con URL a hosts externos.');
+
+    // Si un archivo tuviera una, el rechazo nombra el archivo y el host.
+    const falsos = {
+      'web/src/uno.test.ts': `fetch('${url('https', 'servicios1.afip.gov.ar/wsfev1')}')`,
+      'e2e/tests/dos.spec.ts': `await page.goto('${url('http', 'localhost:5543')}/')`,
+    };
+    assert.deepEqual(hostsExternosPorArchivo(Object.keys(falsos), (ruta) => falsos[ruta]), [
+      'web/src/uno.test.ts: servicios1.afip.gov.ar',
+    ]);
+  });
+
+  test('Pruebas_HostExterno_Rechazado', () => {
+    assert.deepEqual(hostsExternos(''), [], 'Un texto vacío no tiene hosts.');
+
+    const externos = [
+      url('https', 'servicios1.afip.gov.ar/wsfev1/service.asmx'),
+      url('http', '1.2.3.4:8080/x'),
+      url('https', 'localhost.evil.com/'),
+    ];
+    assert.deepEqual(hostsExternos(externos.join('\n')), ['servicios1.afip.gov.ar', '1.2.3.4', 'localhost.evil.com']);
+
+    const locales = [
+      url('https', 'localhost:5543/api/acceso/estado'),
+      url('https', '[::1]:5001'),
+      url('https', '192.168.1.20:5001'),
+      url('https', 'api.optica.example'),
+      url('http', 'www.w3.org/2000/svg'),
+      url('http', '127.0.0.1:5001'),
+      url('https', '10.0.0.7'),
+      url('https', '172.16.0.1'),
+      url('https', '172.31.255.254'),
+      url('https', 'example.com'),
+      url('https', 'localhost.example.com'),
+    ];
+    assert.deepEqual(hostsExternos(locales.join(' ')), [], 'Los hosts locales y reservados no son externos.');
+
+    // Fuera de los rangos privados, nombres que solo se parecen a uno permitido, y un IPv6 que no es ::1.
+    for (const resto of [
+      '172.15.0.1',
+      '172.32.0.1',
+      '127.0.0.2',
+      '10.evil.com',
+      'w3.org',
+      'notexample.com',
+      'example.com.evil.net',
+      'optica.example.evil.net',
+      '[::2]:5001',
+    ]) {
+      assert.equal(hostsExternos(`"${url('https', resto)}"`).length, 1, `${resto} tiene que ser externo.`);
+    }
+
+    // IPv4 que el parser de URL no lee como privadas: con cero inicial es octal (010 es 8) y un octeto pasa de 255.
+    for (const resto of ['010.0.0.1/', '10.0.0.999', '192.168.01.20', '0172.16.0.1', '10.1', '0x0a.0.0.1']) {
+      assert.deepEqual(hostsExternos(url('https', resto)), [resto.replace('/', '')], `${resto} tiene que ser externo.`);
+    }
+
+    // El usuario y la contraseña de la URL no son el host: el parser toma lo que sigue al último `@`.
+    assert.deepEqual(hostsExternos(url('https', 'localhost:5001@evil.com/')), ['evil.com']);
+    assert.deepEqual(hostsExternos(url('https', 'localhost@localhost@evil.com/')), ['evil.com']);
+    assert.deepEqual(hostsExternos(url('https', 'a@b@evil.com')), ['evil.com']);
+    // Un `@` en la ruta no es parte del usuario.
+    assert.deepEqual(hostsExternos(url('https', 'localhost/a@evil.com')), []);
+
+    // Un host con caracteres que no son ASCII (un punto ideográfico, letras de ancho completo) se informa tal cual.
+    assert.deepEqual(hostsExternos(url('https', 'localhost。evil.com/')), ['localhost。evil.com']);
+    assert.deepEqual(hostsExternos(url('https', 'Ｌｏｃａｌｈｏｓｔ')), [
+      'ｌｏｃａｌｈｏｓｔ',
+    ]);
+
+    // De www.w3.org solo valen los espacios de nombres y la DTD de SVG 1.1 (que LogoMarca.cs rechaza sin pedirla).
+    for (const ruta of ['/2000/svg', '/1999/xhtml', '/1999/xlink', '/Graphics/SVG/1.1/DTD/svg11.dtd']) {
+      assert.deepEqual(hostsExternos(`"${url('http', `www.w3.org${ruta}`)}"`), [], `www.w3.org${ruta} vale.`);
+    }
+    const otrasDeW3 = ['www.w3.org', 'www.w3.org/', 'www.w3.org/TR/xml', 'www.w3.org/2000/svg/otra', 'www.w3.org?x'];
+    for (const resto of otrasDeW3) {
+      assert.deepEqual(hostsExternos(`'${url('https', resto)}'`), ['www.w3.org'], `${resto} tiene que ser externo.`);
+    }
+
+    // En minúsculas y sin repetir, aunque el esquema esté en mayúsculas.
+    assert.deepEqual(
+      hostsExternos(`${url('HTTPS', 'Servicios1.AFIP.gov.ar')} ${url('https', 'servicios1.afip.gov.ar/x')}`),
+      ['servicios1.afip.gov.ar'],
+    );
+
+    // Una URL armada en tiempo de ejecución no tiene host escrito: la revisión es de texto.
+    assert.deepEqual(hostsExternos("const base = 'https://' + host;"), []);
+    assert.deepEqual(hostsExternos('`https://${host}/api`'), []);
+  });
+
+  test('E2E_NavegadorSinRegla_Rechazado', async () => {
+    const configuracion = new URL('./playwright.config.ts', import.meta.url);
+    const importar = async (variante) => {
+      configuracion.search = `?variante=${variante}`;
+      return (await import(configuracion.href)).default.projects;
+    };
+
+    const variableOriginal = process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM;
+    let normal;
+    let diagnostico;
+    try {
+      delete process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM;
+      normal = await importar('normal');
+      process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM = '1';
+      diagnostico = await importar('diagnostico');
+    } finally {
+      if (variableOriginal === undefined) delete process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM;
+      else process.env.OPTICA_E2E_DIAGNOSTICO_CHROMIUM = variableOriginal;
+    }
+
+    assert.ok(normal.length > 0, 'La configuración no tiene proyectos.');
+    assert.deepEqual(proyectosSinRegla(normal), [], 'Hay proyectos sin la regla de resolución de nombres.');
+    assert.deepEqual(proyectosSinRegla(diagnostico), [], 'Hay proyectos del diagnóstico sin la regla.');
+    assert.deepEqual([...prefijosDeNavegador(normal)].sort(), ['chrome', 'msedge']);
+    assert.deepEqual([...prefijosDeNavegador(diagnostico)].sort(), ['chrome', 'chromium', 'msedge']);
+
+    assert.deepEqual(navegadoresFaltantes(normal, NAVEGADORES_DE_LA_SUITE), []);
+    assert.deepEqual(navegadoresFaltantes(diagnostico, NAVEGADORES_DE_LA_SUITE), []);
+
+    // Una lista con un proyecto sin la regla (sin args, sin launchOptions o con otra regla) lo nombra.
+    const conRegla = (name) => ({ name, use: { launchOptions: { args: ['--otro', reglaSinRedExterna()] } } });
+    assert.deepEqual(
+      proyectosSinRegla([
+        conRegla('chrome-acceso'),
+        { name: 'msedge-acceso', use: {} },
+        { name: 'chromium-acceso', use: { launchOptions: {} } },
+        { name: 'chrome-articulos', use: { launchOptions: { args: ['--host-resolver-rules=MAP * 127.0.0.1'] } } },
+        conRegla('msedge-articulos'),
+      ]),
+      ['msedge-acceso', 'chromium-acceso', 'chrome-articulos'],
+    );
+
+    // Sin proyectos msedge la lista queda rechazada nombrando el navegador que falta, aunque todos tengan la regla.
+    const soloChrome = [conRegla('chrome-acceso'), conRegla('chrome-articulos')];
+    assert.deepEqual(proyectosSinRegla(soloChrome), []);
+    assert.deepEqual(navegadoresFaltantes(soloChrome, NAVEGADORES_DE_LA_SUITE), ['msedge']);
+    assert.deepEqual(navegadoresFaltantes([], NAVEGADORES_DE_LA_SUITE), ['chrome', 'msedge']);
+    // Un nombre que solo empieza igual (`msedgex-…`) no es un proyecto msedge.
+    assert.deepEqual(navegadoresFaltantes([...soloChrome, conRegla('msedgex-acceso')], NAVEGADORES_DE_LA_SUITE), [
+      'msedge',
+    ]);
   });
 });

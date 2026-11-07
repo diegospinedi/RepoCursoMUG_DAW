@@ -28,6 +28,26 @@ function condicion(atributos) {
   return coincidencia ? (coincidencia[1] ?? coincidencia[2]) : null;
 }
 
+/**
+ * El texto sin comentarios XML: copia solo lo que está fuera de cada `<!--` … `-->`, y un `<!--` sin cierre descarta
+ * hasta el final. Repite hasta que no quede ningún `<!--`, porque quitar un comentario puede juntar las partes de otro
+ * (`<!<!---->-- … -->` deja `<!-- … -->`). Cada vuelta acorta el texto, así que termina.
+ */
+function quitarComentarios(texto) {
+  let resultado = texto;
+  while (resultado.includes('<!--')) {
+    let fuera = '';
+    let desde = 0;
+    for (let inicio = resultado.indexOf('<!--'); inicio !== -1; inicio = resultado.indexOf('<!--', desde)) {
+      fuera += resultado.slice(desde, inicio);
+      const fin = resultado.indexOf('-->', inicio + 4);
+      desde = fin === -1 ? resultado.length : fin + 3;
+    }
+    resultado = fuera + resultado.slice(desde);
+  }
+  return resultado;
+}
+
 /** Elementos dentro de los cuales un PropertyGroup no es una asignación global de la evaluación. */
 const NO_GLOBALES = new Set(['Target', 'Choose']);
 
@@ -37,7 +57,7 @@ const NO_GLOBALES = new Set(['Target', 'Choose']);
  * Se descartan los comentarios XML: una propiedad nombrada en un comentario no cuenta.
  */
 function asignaciones(texto) {
-  const sinComentarios = texto.replace(/<!--[\s\S]*?-->/g, '');
+  const sinComentarios = quitarComentarios(texto);
   const encontradas = [];
   /** @type {{ nombre: string, atributos: string, fin: number }[]} */
   const pila = [];
@@ -552,4 +572,96 @@ export function revisarWorkflow(texto) {
   }
 
   return problemas;
+}
+
+/**
+ * Una URL `http` o `https`: la autoridad (usuario, contraseña, host y puerto) hasta `/`, `?`, `#`, un espacio, una
+ * comilla, `<`, `>` o `\` (que el parser de URL lee como `/`), y la ruta que sigue.
+ */
+const URL_ESCRITA = /\bhttps?:\/\/([^\s/?#'"`<>\\]*)([^\s?#'"`<>\\]*)/gi;
+
+/**
+ * El host al comienzo de la autoridad sin usuario: una IPv6 entre corchetes, o caracteres de nombre ASCII y cualquier
+ * carácter no ASCII (`localhost。evil.com` o letras de ancho completo se informan tal cual, no se dan por locales).
+ * Una URL armada en tiempo de ejecución (`'https://' + host`, `https://${host}`, `$"https://{host}"`) no tiene host
+ * escrito y no coincide: la revisión es de texto.
+ */
+const HOST = /^(?:\[[^\]]*\]|(?:[a-z0-9._~%-]|[^\x00-\x7f])+)/iu;
+
+/** Un octeto decimal de 0 a 255 sin ceros iniciales: con un cero inicial el parser de URL lo lee en octal. */
+const OCTETO = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
+const IPV4 = new RegExp(`^${OCTETO}\\.${OCTETO}\\.${OCTETO}\\.${OCTETO}$`);
+
+/**
+ * Rutas de www.w3.org que se escriben sin pedirse: los espacios de nombres de SVG, XHTML y XLink, y la DTD de SVG 1.1,
+ * que aparece en las pruebas de LogoMarca.cs como un SVG a rechazar (lo lee con `DtdProcessing.Prohibit` y sin
+ * `XmlResolver`, así que la rechaza sin descargarla).
+ */
+const RUTAS_W3 = new Set(['/2000/svg', '/1999/xhtml', '/1999/xlink', '/Graphics/SVG/1.1/DTD/svg11.dtd']);
+
+/** Hosts que una prueba puede escribir: la propia máquina, la red privada y los dominios reservados para ejemplos. */
+function esHostPermitido(host, ruta) {
+  if (['localhost', '127.0.0.1', '::1'].includes(host)) return true;
+  if (host === 'www.w3.org') return RUTAS_W3.has(ruta);
+  const ipv4 = IPV4.exec(host);
+  if (ipv4) {
+    const [primero, segundo] = [Number(ipv4[1]), Number(ipv4[2])];
+    const rango172 = primero === 172 && segundo >= 16 && segundo <= 31;
+    return primero === 10 || (primero === 192 && segundo === 168) || rango172;
+  }
+  return host.endsWith('.example') || host === 'example.com' || host.endsWith('.example.com');
+}
+
+/**
+ * Hosts externos nombrados en URL del texto (FR-10). Permitidos: `localhost`, `127.0.0.1` y `::1` (sin corchetes),
+ * las IPv4 `10.*`, `192.168.*` y `172.16.*` a `172.31.*` (en decimal, sin ceros iniciales), los terminados en
+ * `.example`, `example.com` y sus subdominios, y `www.w3.org` solo con las rutas de `RUTAS_W3`. Cualquier otra IP o
+ * nombre es externo. El host es lo que sigue al último `@` de la autoridad, como lo lee el parser de URL.
+ * @param {string} texto contenido de un archivo.
+ * @returns {string[]} hosts externos en minúsculas, sin repetir, en el orden en que aparecen.
+ */
+export function hostsExternos(texto) {
+  const externos = new Set();
+  for (const [, autoridad, ruta] of (texto ?? '').matchAll(URL_ESCRITA)) {
+    const escrito = HOST.exec(autoridad.slice(autoridad.lastIndexOf('@') + 1));
+    if (escrito === null) continue;
+    const host = escrito[0].toLowerCase().replace(/^\[(.*)\]$/, '$1');
+    if (!esHostPermitido(host, ruta)) externos.add(host);
+  }
+  return [...externos];
+}
+
+/** La regla que reciben los navegadores de playwright.config.ts: solo se resuelve `localhost`. */
+export const REGLA_SIN_RED_EXTERNA = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost';
+
+/**
+ * Proyectos de Playwright cuyo navegador puede resolver otros nombres que `localhost`.
+ * @param {{ name: string, use?: { launchOptions?: { args?: string[] } } }[]} proyectos los de la configuración
+ *   evaluada.
+ * @returns {string[]} los nombres de los que no tienen la regla en `use.launchOptions.args`, en el orden recibido.
+ */
+export function proyectosSinRegla(proyectos) {
+  return proyectos
+    .filter((proyecto) => !(proyecto.use?.launchOptions?.args ?? []).includes(REGLA_SIN_RED_EXTERNA))
+    .map((proyecto) => proyecto.name);
+}
+
+/**
+ * Navegadores de la configuración: el prefijo de cada nombre de proyecto (`chrome` en `chrome-acceso`).
+ * @param {{ name: string }[]} proyectos
+ * @returns {Set<string>}
+ */
+export function prefijosDeNavegador(proyectos) {
+  return new Set(proyectos.map((proyecto) => proyecto.name.split('-')[0]));
+}
+
+/**
+ * Navegadores esperados que no tienen ningún proyecto en la configuración (por ejemplo, una suite sin `msedge-*`).
+ * @param {{ name: string }[]} proyectos
+ * @param {string[]} esperados prefijos que la suite tiene que tener.
+ * @returns {string[]} los esperados sin proyecto, en el orden recibido.
+ */
+export function navegadoresFaltantes(proyectos, esperados) {
+  const prefijos = prefijosDeNavegador(proyectos);
+  return esperados.filter((navegador) => !prefijos.has(navegador));
 }

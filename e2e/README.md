@@ -73,11 +73,19 @@ La lista de archivos sale de `tests/`: un `*.spec.ts` nuevo tiene sus proyectos 
 unidas por guiones (por ejemplo, `presupuestos-borrador.spec.ts`); si no, `playwright.config.ts` falla con un error
 que nombra el archivo, en lugar de dejarlo sin correr.
 
-**Edge sin red externa.** Con un perfil nuevo, Edge inicia sesión solo con la cuenta del equipo y consulta servicios
-de Microsoft (Graph, Office, Bing); mientras lo hace, el navegador deja de atender pedidos por varios segundos y las
-pruebas fallaban de forma intermitente en "Cargando…" (W-VER-03 de FEAT-001a y FEAT-001b). Los proyectos `msedge-*`
-arrancan con `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost`: solo se resuelve `localhost`, así esos pedidos
-fallan en el acto y no sale ningún dato de la cuenta (FEAT-002b, D-30). No subas `expect.timeout` para taparlo.
+**Navegadores sin red externa.** Todos los proyectos de la suite (`chrome-*`, `msedge-*` y los `chromium-*` del
+diagnóstico) arrancan con `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost`: solo se resuelve `localhost`,
+así un pedido a cualquier otro nombre falla en el acto y no sale de la máquina ningún dato de la prueba ni de la cuenta
+del equipo (FEAT-005, FR-10 y D-05). En Edge empezó como arreglo (FEAT-002b, D-30): con un perfil nuevo, Edge inicia
+sesión solo con la cuenta del equipo y consulta servicios de Microsoft (Graph, Office, Bing); mientras lo hace, el
+navegador deja de atender pedidos por varios segundos y las pruebas fallaban de forma intermitente en "Cargando…"
+(W-VER-03 de FEAT-001a y FEAT-001b). No subas `expect.timeout` para taparlo. `npm run test:unidad` verifica que cada
+proyecto de `playwright.config.ts` tenga la regla y que ningún archivo de prueba versionado (de .NET, de la web o de
+esta suite) escriba una URL a un host externo; los permitidos son `localhost`, `127.0.0.1`, `::1`, las direcciones
+privadas en decimal (`10.*`, `192.168.*`, `172.16.*` a `172.31.*`), los dominios `.example` y `example.com`, y
+`www.w3.org` solo con los espacios de nombres de SVG, XHTML y XLink y la DTD de SVG 1.1 (que las pruebas de la marca
+usan como un SVG a rechazar, sin descargarla). Las IP literales no pasan por la regla de resolución: por eso la
+revisión de texto también las rechaza.
 
 Si una Api termina o no responde al arrancar, o si `OPTICA_E2E_INSTANCIAS` tiene un nombre mal formado o repetido o un
 puerto fuera de 1 a 65535, `servidor.mjs` termina con código 1 y Playwright no corre ninguna prueba.
