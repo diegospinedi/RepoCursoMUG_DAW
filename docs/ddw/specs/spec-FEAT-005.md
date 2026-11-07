@@ -6,8 +6,8 @@
 | PRD | docs/ddw/prd/prd-FEAT-005.md |
 | Tier | FEATURE |
 | Date | 2026-11-07 |
-| Spec loops | 3 |
-| Loops since last human decision | 1 |
+| Spec loops | 4 |
+| Loops since last human decision | 0 |
 
 ## Summary
 Un workflow de GitHub Actions (`.github/workflows/ci.yml`) corre en cada pull request, en un solo job sobre
@@ -18,14 +18,17 @@ con tiempo máximo de 45 minutos y cancelando la corrida anterior del mismo pull
 bloqueo de NuGet, que la corrida exige en modo bloqueado (decisión del usuario, D-04). Las reglas del workflow, del
 bloqueo de NuGet y de los hosts de las pruebas se fijan con pruebas `node:test` sobre funciones de `e2e/ci.mjs`, que
 corren dentro de `npm run test:unidad` (decisión del usuario, D-07), y los tres navegadores de Playwright reciben la
-regla de resolución de nombres que hoy solo tiene Edge. Decisiones: `docs/ddw/specs/decisions-FEAT-005.md`.
+regla de resolución de nombres que hoy solo tiene Edge. El job usa una carpeta del usuario (`HOME`) fuera del código,
+porque en GitHub Actions el checkout queda dentro del perfil y las pruebas que verifican que los logs no lleven la
+carpeta del usuario la encontraban (Block 4, decisión del usuario D-20, lazo correctivo desde CODE tras la primera
+corrida del PR #11). Decisiones: `docs/ddw/specs/decisions-FEAT-005.md`.
 
 ## Coverage: PRD → blocks
 | Requirement | Covered by |
 |---|---|
 | FR-01 | Block 2 |
 | FR-02 | Block 1, Block 2 |
-| FR-03 | Block 2 |
+| FR-03 | Block 2, Block 4 |
 | FR-04 | Block 2 |
 | FR-05 | Block 2 |
 | FR-06 | Block 2 |
@@ -39,7 +42,8 @@ regla de resolución de nombres que hoy solo tiene Edge. Decisiones: `docs/ddw/s
 ## Dependencies between blocks
 Block 1 crea `e2e/ci.mjs`, `e2e/ci.test.mjs` y el script de `test:unidad`; Block 2 y Block 3 agregan funciones y
 pruebas a esos archivos. Block 2 necesita los archivos de bloqueo del Block 1 (la corrida restaura en modo bloqueado).
-Orden: Block 1, Block 2, Block 3.
+Block 4 modifica el `ci.yml` del Block 2 y agrega una regla a `revisarWorkflow`. Orden: Block 1, Block 2, Block 3,
+Block 4.
 
 ## Block 1 — Bloqueo de dependencias de .NET
 
@@ -248,6 +252,52 @@ terminar), porque la caché de módulos ESM devolvería la primera evaluación.
 **Completion criterion**
 `npm run test:unidad` pasa con las 3 pruebas de este bloque y `npm run test:harness` pasa en Chrome y Edge con la regla
 en los dos navegadores (104/104).
+
+## Block 4 — Carpeta del usuario fuera del código en la CI
+
+**Files**
+- `.github/workflows/ci.yml` (modified) — el `env` del job suma `HOME: /tmp/perfil-ci`, y un paso nuevo, el primero
+  del job, crea esa carpeta (`mkdir -p "$HOME"`) antes del checkout.
+- `e2e/ci.mjs` (modified) — `revisarWorkflow` suma la regla `perfil`.
+- `e2e/ci.test.mjs` (modified) — pruebas del bloque; `WORKFLOW_VALIDO` sigue igual al `ci.yml` real.
+
+**Logic**
+Implementa FR-03 en el entorno de GitHub Actions (D-20). El checkout queda en `/home/runner/work/<repo>`, dentro del
+perfil `/home/runner`; el log de arranque de ASP.NET ("Content root path") y los stack traces de la compilación Debug
+llevan esa ruta, y 9 pruebas que verifican que los logs y errores no contengan la carpeta del usuario
+(`Environment.SpecialFolder.UserProfile`, que en Linux sale de `HOME`) fallan. Con `HOME` en `/tmp/perfil-ci` el perfil
+queda fuera del código, que es la condición que esas pruebas suponen. El valor es fijo y no una expresión: el contexto
+`runner` no está disponible en el `env` de un job. El paso que crea la carpeta va antes del checkout, porque
+`actions/checkout` escribe la configuración global de git en `$HOME`. La caché de NuGet y la de npm pasan a esa
+carpeta; se crean en cada corrida y se descartan con el runner. La regla `perfil` de `revisarWorkflow`: el `env` del job
+(indentación de las claves del job) tiene `HOME:` con un valor (sin comillas) que empieza con `/tmp/`, sin `${{` y sin
+`..`; un `HOME` en el `env` de un paso no cuenta. La posible fuga de "Content root path" en producción queda para un FIX
+aparte (D-20).
+
+**Input validation**
+- Regla `perfil` sobre el texto del workflow: valor de `HOME` como string; vacío, relativo, con `${{`, con `..` o fuera de
+  `/tmp/` → problema `perfil`.
+
+**Error handling**
+- Un workflow sin `HOME` en el `env` del job — `revisarWorkflow` lo rechaza con la regla `perfil`.
+- Un `HOME` dentro de `/home/`, relativo, con una expresión `${{ … }}` o con `..` — rechazado con la regla `perfil`.
+- La carpeta no se puede crear o una prueba de rutas del usuario sigue fallando en la corrida — el paso falla con su
+  nombre y el pull request queda en rojo (FR-07).
+
+**Required tests**
+- [ ] `CI_WorkflowActual_SinProblemas` — sigue pasando con el `ci.yml` que tiene `HOME`; validates AC-03, AC-11
+- [ ] `CI_SinPerfilFueraDelCodigo_Rechazado` — un workflow sin `HOME` en el `env` del job, o con `HOME` solo en el `env`
+      de un paso, queda rechazado por `perfil`; validates AC-03
+- [ ] `CI_PerfilInvalido_Rechazado` — `HOME: /home/runner`, `HOME: perfil`, `HOME: ${{ github.workspace }}/p` y
+      `HOME: /tmp/../home/runner` quedan rechazados por `perfil`; `HOME: /tmp/perfil-ci` y `HOME: "/tmp/x"` no; validates
+      AC-03
+- [ ] `CI_PasoDeLaCorridaConError_Rechazado` — manual en el pull request: la corrida con el `ci.yml` de este bloque pasa
+      "Pruebas de .NET" (1415/1415) y, si una prueba fallara, el paso falla con su nombre; se anota en el informe de
+      pruebas; validates AC-07, AC-11
+
+**Completion criterion**
+`npm run test:unidad` pasa con las pruebas de este bloque y la corrida del workflow en el pull request de FEAT-005 pasa
+el paso "Pruebas de .NET".
 
 ## Final verification
 `validate_spec.py --tier FEATURE` pasa sobre este documento; en local pasan `dotnet test Optica.sln` (también con

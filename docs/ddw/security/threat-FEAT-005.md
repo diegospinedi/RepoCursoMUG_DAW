@@ -10,8 +10,8 @@
 ## Components
 | Component | Source in the spec |
 |---|---|
-| `.github/workflows/ci.yml` | Block 2 |
-| `e2e/ci.mjs` | Block 1, Block 2, Block 3 |
+| `.github/workflows/ci.yml` | Block 2, Block 4 |
+| `e2e/ci.mjs` | Block 1, Block 2, Block 3, Block 4 |
 | `e2e/playwright.config.ts` | Block 3 |
 | `Directory.Build.props` | Block 1 |
 
@@ -38,7 +38,11 @@
 - **Information Disclosure:** los registros de la corrida son visibles para quien ve el repositorio; las pruebas
   usan datos ficticios (DNI y emails de prueba) y la corrida no publica bases, respaldos ni artefactos: la regla
   `acciones` rechaza `upload-artifact` y `cache` (R-04). El `GITHUB_TOKEN` queda con `contents: read` (FR-09) y el
-  checkout no lo guarda en `.git/config` (`persist-credentials: false`, regla `credenciales`).
+  checkout no lo guarda en `.git/config` (`persist-credentials: false`, regla `credenciales`). En GitHub el checkout
+  queda dentro del perfil `/home/runner`; el job usa `HOME: /tmp/perfil-ci` (Block 4, regla `perfil`) para que las
+  pruebas que verifican que logs y errores no lleven la carpeta del usuario sigan corriendo de verdad y no se
+  relajen (R-07). La carpeta se crea en cada corrida, guarda solo las cachés de NuGet y npm y la configuración de git
+  del checkout, y se descarta con el runner.
 - **Denial of Service:** una corrida colgada o muchos pushes seguidos consumen minutos del runner; `timeout-minutes:
   45` y `concurrency` con `cancel-in-progress` los acotan (NFR-01, NFR-02) (R-03).
 - **Elevation of Privilege:** código de un pull request malicioso corre con `sudo` en el runner efímero (necesario
@@ -47,9 +51,12 @@
 
 ### `e2e/ci.mjs`
 - **Spoofing:** no maneja identidades; lee archivos del propio repositorio.
-- **Tampering:** solo lee texto (`ci.yml`, `AGENTS.md`, archivos de prueba) y no escribe nada; un workflow alterado
-  para debilitarlo (permiso de escritura, secretos, acción sin SHA) queda rechazado por `revisarWorkflow` en la
-  propia corrida.
+- **Tampering:** solo lee texto (`ci.yml`, `AGENTS.md`, archivos de prueba) y no escribe nada. Un workflow
+  debilitado por error de quien mantiene el repositorio (permiso de escritura, secretos, acción sin SHA, `HOME`
+  dentro del código) queda rechazado por `revisarWorkflow` en la propia corrida. No protege contra un pull request
+  malicioso: con `pull_request` GitHub usa el workflow del propio pull request, y un fork puede editar `ci.yml` y
+  `e2e/ci.mjs` a la vez; frente a eso la protección es la de R-06 (sin secretos, token de solo lectura, runner
+  efímero) y la configuración del repositorio pendiente de decisión del usuario (D-19) (R-08).
 - **Repudiation:** cada problema nombra la regla y el archivo; queda en la salida de `npm run test:unidad`.
 - **Information Disclosure:** no lee secretos ni datos de clientes; solo informa nombres de reglas, archivos y hosts.
 - **Denial of Service:** recorre una cantidad acotada de archivos del repositorio con expresiones sin retroceso
@@ -94,6 +101,17 @@
 | R-04 | Datos personales en los registros públicos de la corrida | I | L | M | Las pruebas usan solo datos ficticios; la regla `acciones` impide subir artefactos o cachés con bases o resultados; la Api de e2e corre con el log de EF Core en Warning (sin SQL con valores) |
 | R-05 | Una prueba habla con ARCA u otro servicio externo | S | L | H | Regla de resolución en los tres navegadores (D-05) y la prueba `Pruebas_SinHostsExternos`, que también rechaza IP literales, sobre los archivos de prueba |
 | R-06 | Un pull request de un fork intenta leer secretos o escribir en el repositorio | E | M | H | Disparador `pull_request` sin secretos, `permissions: contents: read`, checkout sin credenciales guardadas; reglas `disparador-inseguro`, `secretos`, `credenciales` y `permisos` |
+| R-07 | Las pruebas que verifican que logs y errores no lleven la carpeta del usuario fallan en GitHub (el checkout está dentro de `/home/runner`) y la tentación es relajarlas | I | H | M | `HOME: /tmp/perfil-ci` en el job (Block 4, D-20) y la regla `perfil`, que rechaza un `HOME` ausente, relativo, fuera de `/tmp/`, con `${{` o con `..` |
+| R-08 | Un fork edita `ci.yml` y `e2e/ci.mjs` para que `revisarWorkflow` apruebe un workflow inseguro | T | M | M | Las reglas no son la defensa frente a un fork: lo acotan los controles de R-06 (sin secretos, token de solo lectura, runner descartable); la aprobación de workflows de colaboradores externos, la protección de `master` y `CODEOWNERS` quedan a decisión del usuario (D-19) |
+| R-09 | En producción, la línea "Content root path" de `Microsoft.Hosting.Lifetime` lleva el nombre del usuario de Windows si la aplicación se instala dentro de su perfil | I | M | M | accepted, see below |
+
+## Accepted risks
+### R-09
+- **Accepted by:** el usuario dueño del repositorio, al elegir la opción 1 de D-20 (2026-11-07)
+- **Justification:** es un comportamiento de la aplicación ya existente, ajeno al alcance de FEAT-005 (la CI); la
+  corrida no lo empeora y las pruebas que lo detectan siguen activas. Se corrige en un FIX aparte.
+- **Review conditions:** se revisa al abrir ese FIX, y antes de instalar la aplicación en la PC de la óptica si el FIX
+  todavía no se hizo.
 
 ## Supply chain
 Dependencias nuevas de la corrida: `actions/checkout` v7.0.1, `actions/setup-dotnet` v6.1.0 y `actions/setup-node`
