@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { consultarMarca, type Marca } from '../api/cliente';
+import { ContextoMarca } from './contextoMarca';
 
 const COLOR = /^#[0-9A-Fa-f]{6}$/;
-
-const ContextoMarca = createContext<Marca | null>(null);
 
 /**
  * Pide la marca una sola vez y fija `--color-primario` y `--color-fondo` en la raíz del documento (por CSSOM, que la
@@ -34,9 +33,4 @@ export function MarcaProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return <ContextoMarca.Provider value={marca}>{children}</ContextoMarca.Provider>;
-}
-
-/** La marca recibida, o `null` mientras se carga o si no se pudo obtener. */
-export function useMarca(): Marca | null {
-  return useContext(ContextoMarca);
 }

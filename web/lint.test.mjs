@@ -103,14 +103,10 @@ const HOOK_EN_CONDICION = [
 ].join('\n');
 
 describe('oxlint en la web', () => {
-  test(
-    'Lint_CodigoActual_SinProblemas',
-    { todo: 'Block 2 de FEAT-004 corrige los 7 problemas actuales' },
-    async () => {
-      const { codigo, salida } = await correrLint(WEB);
-      assert.equal(codigo, 0, `oxlint informó problemas en web/src:\n${salida}`);
-    },
-  );
+  test('Lint_CodigoActual_SinProblemas', async () => {
+    const { codigo, salida } = await correrLint(WEB);
+    assert.equal(codigo, 0, `oxlint informó problemas en web/src:\n${salida}`);
+  });
 
   test('Lint_RevisaAplicacionYPruebas', async () => {
     const carpeta = carpetaConArchivos({
