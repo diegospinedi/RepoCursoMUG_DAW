@@ -45,6 +45,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Pantalla `/presupuestos/{numero}` con el presupuesto grabado en solo lectura y el mensaje "Presupuesto N.º {n} grabado. Estado: Borrador.".
   - `POST /api/presupuestos` (recibe solo los códigos de artículo, nunca precios), `GET /api/presupuestos/{numero}` y el parámetro `soloActivos` en `GET /api/articulos`; tablas `Presupuesto` y `LineaPresupuesto` con la migración `Presupuestos`.
   - Pruebas de punta a punta de los 19 criterios en Chrome y Edge.
+- [FEAT-004] Análisis estático de la web con oxlint 1.92.0 (en lugar de ESLint, que con typescript-eslint no soporta TypeScript 7):
+  - `npm run lint` en `web/` revisa la aplicación y sus pruebas con las reglas equivalentes a la plantilla de Vite (corrección, hooks de React, exportaciones para recarga en caliente y reglas de TypeScript), sin admitir avisos (`--max-warnings 0`) e ignorando `dist/` y `coverage/`.
+  - `npm run test:lint` con 8 pruebas que fijan la configuración; el comando quedó declarado en la sección "Stack" de `AGENTS.md`.
+  - Los 7 problemas que marcaba en el código actual se corrigieron sin desactivar reglas y sin cambiar el comportamiento (las 602 pruebas de la web siguen igual).
 
 ### Fixed
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
