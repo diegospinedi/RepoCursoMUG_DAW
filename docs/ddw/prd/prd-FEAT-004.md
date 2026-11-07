@@ -1,11 +1,11 @@
-# PRD FEAT-004: Configurar ESLint en la web
+# PRD FEAT-004: Configurar un linter en la web (oxlint)
 
 | Campo | Valor |
 |-------|-------|
 | Ticket | FEAT-004 |
 | Tracker | ninguno |
 | Fecha | 2026-11-07 |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 ## Context and Problem
@@ -13,7 +13,10 @@ La interfaz web del proyecto no tiene un analizador estático de código: hoy so
 chequeo de tipos de la compilación y con las pruebas. Errores comunes de un componente (dependencias
 faltantes en un efecto, variables sin uso, reglas de los hooks que no se respetan) no los detecta
 nada antes de llegar a revisión. El usuario pidió el 2026-11-07 configurar ESLint en la web con las
-reglas de la plantilla de React + TypeScript de Vite.
+reglas de la plantilla de React + TypeScript de Vite. Al planificar se comprobó que no es posible hoy:
+la web usa TypeScript 7 y el complemento que ESLint necesita para leer TypeScript solo lo soporta hasta
+la versión 6.0. El usuario decidió el mismo día usar oxlint, un linter compatible con las reglas de
+ESLint (recomendadas, de TypeScript y de los hooks de React) que no depende del TypeScript del proyecto.
 
 ## Goals
 - Que cualquier persona del equipo pueda analizar el código de la web con un solo comando.
@@ -23,9 +26,10 @@ reglas de la plantilla de React + TypeScript de Vite.
 ## Functional Requirements
 - FR-01: El proyecto web debe ofrecer un comando de análisis estático que revise todo el código
   fuente de la web, incluidas sus pruebas. [pedido del usuario]
-- FR-02: El análisis debe aplicar el conjunto de reglas recomendado para JavaScript, el recomendado
-  para TypeScript y las reglas de los hooks de React y de recarga de componentes que trae la plantilla
-  de React + TypeScript de Vite. [decisión del usuario del 2026-11-07]
+- FR-02: El análisis debe aplicar las reglas de corrección recomendadas para JavaScript y TypeScript
+  y las reglas de los hooks de React, equivalentes a las de la plantilla de React + TypeScript de Vite,
+  con oxlint. [decisiones del usuario del 2026-11-07: reglas de la plantilla de Vite; oxlint en lugar
+  de ESLint por la incompatibilidad con TypeScript 7]
 - FR-03: El comando debe terminar con éxito cuando no encuentra problemas y con error cuando encuentra
   al menos uno, indicando archivo, línea y regla de cada problema.
 - FR-04: El código actual de la web debe quedar sin problemas reportados por el análisis, sin cambiar
@@ -64,6 +68,9 @@ reglas de la plantilla de React + TypeScript de Vite.
 - Análisis estático de las pruebas de punta a punta (`e2e/`) y del código .NET.
 - Reglas de formato automático del código (por ejemplo, un formateador) y su aplicación masiva.
 - Reglas con información de tipos más estrictas que las de la plantilla (descartadas por el usuario).
+- ESLint, mientras su complemento de TypeScript no soporte TypeScript 7 (reemplazado por oxlint por
+  decisión del usuario).
+- Cambiar la versión de TypeScript de la web.
 - Integración continua, ganchos de commit y configuración de editores.
 - Cambios de comportamiento de la aplicación web.
 
