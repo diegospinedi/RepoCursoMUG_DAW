@@ -19,6 +19,18 @@ const revisarPropsNuGet = (texto) => {
   assert.equal(typeof ci.revisarPropsNuGet, 'function', 'ci.mjs no exporta revisarPropsNuGet.');
   return ci.revisarPropsNuGet(texto);
 };
+const revisarWorkflow = (texto) => {
+  assert.equal(typeof ci.revisarWorkflow, 'function', 'ci.mjs no exporta revisarWorkflow.');
+  return ci.revisarWorkflow(texto);
+};
+const seccionStack = (texto) => {
+  assert.equal(typeof ci.seccionStack, 'function', 'ci.mjs no exporta seccionStack.');
+  return ci.seccionStack(texto);
+};
+const comandosDelProyecto = () => {
+  assert.ok(Array.isArray(ci.COMANDOS_DEL_PROYECTO), 'ci.mjs no exporta COMANDOS_DEL_PROYECTO.');
+  return ci.COMANDOS_DEL_PROYECTO;
+};
 
 /**
  * Rutas versionadas, separadas por `/` en cualquier sistema operativo. Incluye las nuevas todavía sin agregar al
@@ -182,5 +194,524 @@ describe('bloqueo de dependencias de NuGet', () => {
       PROPS_COMPLETO.replace(`Condition="'$(CI)' == 'true'"`, `Condition='"$(CI)" == "true"'`),
       'La condición de CI con el atributo entre comillas simples tiene que aceptarse.',
     );
+  });
+});
+
+const SHA_CHECKOUT = '3d3c42e5aac5ba805825da76410c181273ba90b1';
+const SHA_OTRO = '0123456789abcdef0123456789abcdef01234567';
+
+/** Un workflow que cumple todas las reglas; cada prueba lo cambia en un solo punto. */
+const WORKFLOW_VALIDO = `name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-\${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verificacion:
+    name: Verificación
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@${SHA_CHECKOUT} # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Instalar .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Instalar Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Dependencias de la web
+        working-directory: web
+        run: npm ci
+      - name: Dependencias de e2e
+        working-directory: e2e
+        run: npm ci
+      - name: Compilar .NET
+        run: dotnet build Optica.sln
+      - name: Pruebas de .NET
+        run: dotnet test Optica.sln
+      - name: Lint de la web
+        working-directory: web
+        run: npm run lint
+      - name: Prueba del lint
+        working-directory: web
+        run: npm run test:lint
+      - name: Pruebas de la web con cobertura
+        working-directory: web
+        run: npm run test:coverage
+      - name: Compilar la web
+        working-directory: web
+        run: npm run build
+      - name: Pruebas de unidad de e2e
+        working-directory: e2e
+        run: npm run test:unidad
+      - name: Dependencias de sistema de Chrome y Edge
+        working-directory: e2e
+        run: npx --no-install playwright install-deps chrome msedge
+      - name: Versiones de los navegadores
+        run: |
+          google-chrome --version
+          microsoft-edge --version
+      - name: Certificado de desarrollo HTTPS
+        run: dotnet dev-certs https
+      - name: Pruebas de punta a punta (Chrome y Edge)
+        working-directory: e2e
+        run: npm run test:harness
+`;
+
+/** Reemplaza un fragmento que tiene que estar: un reemplazo que no encuentra nada dejaría la prueba sin probar. */
+const cambiar = (texto, buscado, nuevo) => {
+  assert.ok(texto.includes(buscado), `El workflow de referencia no tiene ${JSON.stringify(buscado)}.`);
+  return texto.replace(buscado, nuevo);
+};
+
+const reglasDe = (texto) => revisarWorkflow(texto).map((p) => p.regla);
+
+/** El de referencia no tiene problemas y la variante sí, por la regla indicada. */
+const workflowRechazado = (texto, regla, mensaje) => {
+  assert.deepEqual(revisarWorkflow(WORKFLOW_VALIDO), [], 'El workflow de referencia no debería tener problemas.');
+  assert.notEqual(texto, WORKFLOW_VALIDO, `${mensaje}: la variante es igual a la referencia.`);
+  const problemas = revisarWorkflow(texto);
+  assert.ok(
+    problemas.some((p) => p.regla === regla && typeof p.detalle === 'string' && p.detalle !== ''),
+    `${mensaje}: se esperaba la regla ${regla} y hubo ${JSON.stringify(problemas)}`,
+  );
+};
+
+const workflowAceptado = (texto, mensaje) => assert.deepEqual(revisarWorkflow(texto), [], mensaje);
+
+describe('workflow de integración continua', () => {
+  test('CI_WorkflowActual_SinProblemas', () => {
+    const texto = readFileSync(join(REPOSITORIO, '.github', 'workflows', 'ci.yml'), 'utf8');
+    assert.deepEqual(revisarWorkflow(texto), [], 'El .github/workflows/ci.yml real tiene problemas.');
+    // Los saltos de línea de Windows (un clon con autocrlf) no cambian el resultado.
+    assert.deepEqual(revisarWorkflow(texto.replace(/\r?\n/g, '\r\n')), [], 'Con CRLF el ci.yml real tiene problemas.');
+
+    // La referencia de las pruebas es el ci.yml real sin sus líneas de comentario: si uno cambia, el otro también.
+    const sinLineasDeComentario = texto
+      .split(/\r?\n/)
+      .filter((linea) => !/^\s*#/.test(linea))
+      .join('\n');
+    assert.equal(WORKFLOW_VALIDO, sinLineasDeComentario, 'WORKFLOW_VALIDO no coincide con el ci.yml real.');
+  });
+
+  test('CI_ComandosEnAgents', () => {
+    const comandos = comandosDelProyecto();
+    assert.deepEqual(
+      comandos.map(({ directorio, comando }) => `${directorio} ${comando}`),
+      [
+        'web npm ci',
+        'e2e npm ci',
+        '. dotnet build Optica.sln',
+        '. dotnet test Optica.sln',
+        'web npm run lint',
+        'web npm run test:lint',
+        'web npm run test:coverage',
+        'web npm run build',
+        'e2e npm run test:unidad',
+        'e2e npm run test:harness',
+      ],
+    );
+
+    const faltantes = (agents) => {
+      const stack = seccionStack(agents);
+      return comandos.map(({ comando }) => comando).filter((comando) => !stack.includes(comando));
+    };
+
+    const agents = readFileSync(join(REPOSITORIO, 'AGENTS.md'), 'utf8');
+    assert.deepEqual(faltantes(agents), [], 'Hay comandos de COMANDOS_DEL_PROYECTO que no figuran en Stack.');
+
+    // Un comando que está en AGENTS.md pero fuera de la sección Stack no cuenta, y se nombra.
+    const stackSinLint =
+      '# Proyecto\n\n## Stack\n\n- Install: npm ci\n- Build: dotnet build Optica.sln\n---\n\n## Otra\n\nnpm run lint\n';
+    assert.ok(faltantes(stackSinLint).includes('npm run lint'), 'npm run lint fuera de Stack tiene que faltar.');
+    assert.ok(!faltantes(stackSinLint).includes('npm ci'), 'npm ci está en Stack.');
+
+    // La sección termina en el siguiente título de nivel 2.
+    assert.equal(seccionStack('## Stack\nuno\n## Testing\ndos\n').includes('dos'), false);
+
+    assert.throws(() => seccionStack('# Proyecto\n\n## Testing\n\nnpm ci\n'), {
+      name: 'Error',
+      message: 'AGENTS.md no tiene la sección Stack',
+    });
+  });
+
+  test('CI_SoloPush_Rechazado', () => {
+    const disparador = 'on:\n  pull_request:\n';
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, disparador, 'on: push\n'), 'disparador', 'on: push');
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: [pull_request, push]\n'),
+      'disparador',
+      'on: [pull_request, push]',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, "on:\n  pull_request:\n  schedule:\n    - cron: '0 3 * * *'\n"),
+      'disparador',
+      'pull_request con schedule',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on:\n  push:\n    branches: [master]\n'),
+      'disparador',
+      'push en bloque',
+    );
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, disparador, ''), 'disparador', 'sin on:');
+
+    // Un flujo de YAML partido en varias líneas.
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: [pull_request,\n  push]\n'),
+      'disparador',
+      'on: [pull_request, push] en dos líneas',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: {pull_request: {},\n  workflow_dispatch: {}}\n'),
+      'disparador',
+      'on: {pull_request, workflow_dispatch} en dos líneas',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: {pull_request: {types: [opened, reopened]}, push: {}}\n'),
+      'disparador',
+      'push después de un pull_request con valores anidados',
+    );
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, disparador, 'on: [pull_request,\n'), 'disparador', 'flujo sin cerrar');
+
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: {pull_request: {types: [opened,\n  reopened]}}\n'),
+      'Un flujo partido con solo pull_request vale.',
+    );
+    workflowAceptado(cambiar(WORKFLOW_VALIDO, disparador, 'on: pull_request\n'), 'on: pull_request en línea vale.');
+    workflowAceptado(cambiar(WORKFLOW_VALIDO, disparador, 'on: [pull_request]\n'), 'on: [pull_request] vale.');
+  });
+
+  test('CI_PullRequestTarget_Rechazado', () => {
+    const disparador = 'on:\n  pull_request:\n';
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on:\n  pull_request_target:\n'),
+      'disparador-inseguro',
+      'pull_request_target',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on:\n  workflow_run:\n    workflows: [CI]\n'),
+      'disparador-inseguro',
+      'workflow_run',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, disparador, 'on: [pull_request, pull_request_target]\n'),
+      'disparador-inseguro',
+      'pull_request_target junto a pull_request',
+    );
+  });
+
+  test('CI_ComandoFaltante_Rechazado', () => {
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '      - name: Lint de la web\n        working-directory: web\n        run: npm run lint\n', ''),
+      'comandos',
+      'sin npm run lint',
+    );
+    const enE2e = cambiar(
+      WORKFLOW_VALIDO,
+      '        working-directory: web\n        run: npm run build\n',
+      '        working-directory: e2e\n        run: npm run build\n',
+    );
+    workflowRechazado(enE2e, 'comandos', 'npm run build en e2e');
+    assert.ok(
+      revisarWorkflow(enE2e).some((p) => p.regla === 'comandos' && p.detalle.includes('npm run build')),
+      'El problema nombra el comando.',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '      - name: Compilar .NET\n        run:', '      - name: Compilar .NET\n        working-directory: web\n        run:'),
+      'comandos',
+      'dotnet build en web en lugar de la raíz',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'run: npm run test:harness', 'run: npm run test:harness -- --project chrome-acceso'),
+      'comandos',
+      'test:harness con otros argumentos',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '      - name: Pruebas de .NET\n        run: dotnet test Optica.sln\n', '      - name: Pruebas de .NET\n        run: ""\n'),
+      'comandos',
+      'run vacío en lugar de dotnet test',
+    );
+
+    // Un paso que puede fallar sin cortar el job, o que puede no correr, no cuenta.
+    const lint = '      - name: Lint de la web\n        working-directory: web\n        run: npm run lint\n';
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, lint, `${lint}        continue-on-error: true\n`),
+      'comandos',
+      'npm run lint con continue-on-error',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, lint, `${lint}        if: \${{ false }}\n`),
+      'comandos',
+      'npm run lint con if',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '    timeout-minutes: 45\n', '    timeout-minutes: 45\n    continue-on-error: true\n'),
+      'comandos',
+      'job con continue-on-error',
+    );
+
+    // defaults con working-directory cambia el directorio de los pasos sin que lo diga cada paso.
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'jobs:\n', 'defaults:\n  run:\n    working-directory: web\n\njobs:\n'),
+      'comandos',
+      'defaults con working-directory de primer nivel',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '    timeout-minutes: 45\n', '    timeout-minutes: 45\n    defaults:\n      run:\n        working-directory: e2e\n'),
+      'comandos',
+      'defaults con working-directory a nivel del job',
+    );
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, '    timeout-minutes: 45\n', '    timeout-minutes: 45\n    defaults:\n      run:\n        shell: bash\n'),
+      'defaults sin working-directory vale.',
+    );
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, lint, `${lint}        continue-on-error: false\n`),
+      'continue-on-error: false no cambia nada.',
+    );
+  });
+
+  test('CI_PasosSinNombre_Rechazado', () => {
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '      - name: Compilar .NET\n        run: dotnet build Optica.sln\n', '      - run: dotnet build Optica.sln\n'),
+      'pasos-con-nombre',
+      'un - run: sin name',
+    );
+
+    // El último paso sin nombre, seguido del name del job: ese name no es del paso.
+    const sinNombreDelJob = cambiar(WORKFLOW_VALIDO, '    name: Verificación\n', '');
+    workflowRechazado(
+      cambiar(
+        sinNombreDelJob,
+        '      - name: Pruebas de punta a punta (Chrome y Edge)\n        working-directory: e2e\n        run: npm run test:harness\n',
+        '      - working-directory: e2e\n        run: npm run test:harness\n    name: Verificación\n',
+      ),
+      'pasos-con-nombre',
+      'un paso cuyo único name es el del job',
+    );
+
+    workflowRechazado(
+      cambiar(
+        WORKFLOW_VALIDO,
+        '      - name: Compilar .NET\n        run: dotnet build Optica.sln\n',
+        '      - run: |\n          name: Compilar .NET\n          dotnet build Optica.sln\n',
+      ),
+      'pasos-con-nombre',
+      'un name: escrito dentro de un run: |',
+    );
+  });
+
+  test('CI_NpmInstall_Rechazado', () => {
+    const web = '        working-directory: web\n        run: npm ci\n';
+    const con = (comando) => cambiar(WORKFLOW_VALIDO, web, `        working-directory: web\n        run: ${comando}\n`);
+    workflowRechazado(con('npm install'), 'instalacion', 'npm install');
+    workflowRechazado(con('npm i'), 'instalacion', 'npm i al final de la línea');
+    workflowRechazado(con('npm add x'), 'instalacion', 'npm add x');
+    workflowRechazado(con('npm ci && npm install-test'), 'instalacion', 'npm install-test');
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'npx --no-install playwright', 'npx playwright'),
+      'instalacion',
+      'npx sin --no-install',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '          microsoft-edge --version\n', '          microsoft-edge --version\n          npm install\n'),
+      'instalacion',
+      'npm install en un run: |',
+    );
+
+    // Opciones entre npm y el subcomando, con o sin valor.
+    workflowRechazado(con('npm --prefix web install left-pad'), 'instalacion', 'npm --prefix web install');
+    workflowRechazado(con('npm -w x install'), 'instalacion', 'npm -w x install');
+    workflowRechazado(con('npm --silent i'), 'instalacion', 'npm --silent i');
+    workflowRechazado(con('npm --prefix=web add x'), 'instalacion', 'npm --prefix=web add');
+
+    // Abreviaturas y errores de tipeo que npm acepta como install, y los que instalan o actualizan por otra vía.
+    for (const subcomando of ['in', 'ins', 'inst', 'insta', 'instal', 'isntall', 'exec x', 'x playwright', 'update', 'up']) {
+      workflowRechazado(con(`npm ${subcomando}`), 'instalacion', `npm ${subcomando}`);
+    }
+
+    // Un run escalar plano partido en varias líneas: las siguientes son su continuación.
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, web, '        working-directory: web\n        run:\n          npm install\n'),
+      'instalacion',
+      'run: vacío con npm install en la línea siguiente',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, web, '        working-directory: web\n        run: npm ci &&\n          npm install x\n'),
+      'instalacion',
+      'npm install x en la continuación de un run plano',
+    );
+
+    // npm run y npm ci con opciones no instalan nada fuera del archivo de bloqueo.
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, '        run: dotnet dev-certs https\n', '        run: npm --version && npm run --silent env\n'),
+      'npm --version y npm run no son instalaciones.',
+    );
+
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, web, '        working-directory: web\n        run: npm ci # npm ci, no npm install\n'),
+      'Un npm install nombrado en un comentario no cuenta.',
+    );
+  });
+
+  test('CI_ReferenciaASecretos_Rechazada', () => {
+    const env = '      DOTNET_NOLOGO: "true"\n';
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, env, `${env}      TOKEN: \${{ secrets.TOKEN }}\n`), 'secretos', 'secrets.TOKEN');
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, env, `${env}      TOKEN: \${{ github.token }}\n`), 'secretos', 'github.token');
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, env, `${env}      GITHUB_TOKEN: x\n`), 'secretos', 'GITHUB_TOKEN');
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, env, `${env}      TOKEN: \${{ github['token'] }}\n`),
+      'secretos',
+      "github['token']",
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, env, `${env}      TOKEN: \${{ github[ "token" ] }}\n`),
+      'secretos',
+      'github["token"]',
+    );
+  });
+
+  test('CI_CheckoutConCredenciales_Rechazado', () => {
+    const conCredenciales = `@${SHA_CHECKOUT} # v7.0.1\n        with:\n          persist-credentials: false\n`;
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, conCredenciales, `@${SHA_CHECKOUT} # v7.0.1\n`),
+      'credenciales',
+      'checkout sin with',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, conCredenciales, `@${SHA_CHECKOUT} # v7.0.1\n        with:\n          persist-credentials: true\n`),
+      'credenciales',
+      'checkout con persist-credentials: true',
+    );
+    // persist-credentials: false en otro paso no cuenta para el checkout.
+    workflowRechazado(
+      cambiar(
+        cambiar(WORKFLOW_VALIDO, conCredenciales, `@${SHA_CHECKOUT} # v7.0.1\n`),
+        '          node-version: 22\n',
+        '          node-version: 22\n          persist-credentials: false\n',
+      ),
+      'credenciales',
+      'persist-credentials en otro paso',
+    );
+  });
+
+  test('CI_PermisoDeEscritura_Rechazado', () => {
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, 'contents: read', 'contents: write'), 'permisos', 'contents: write');
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'permissions:\n  contents: read\n', 'permissions: write-all\n'),
+      'permisos',
+      'permissions: write-all',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '    timeout-minutes: 45\n', '    timeout-minutes: 45\n    permissions:\n      pull-requests: write\n'),
+      'permisos',
+      'permiso de escritura a nivel del job',
+    );
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, 'permissions:\n  contents: read\n', ''), 'permisos', 'sin permissions');
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'permissions:\n  contents: read\n', 'permissions: read-all\n'),
+      'permisos',
+      'permissions: read-all de primer nivel',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '    timeout-minutes: 45\n', '    timeout-minutes: 45\n    permissions: read-all\n'),
+      'permisos',
+      'permissions: read-all a nivel del job',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'permissions:\n  contents: read\n', 'permissions: { contents: read, issues: write }\n'),
+      'permisos',
+      'write en un flujo de permissions',
+    );
+
+    // "write" fuera de un bloque permissions (el nombre de un paso) no es un permiso.
+    workflowAceptado(
+      cambiar(WORKFLOW_VALIDO, '      - name: Compilar .NET\n', '      - name: Compilar .NET (sin --write)\n'),
+      'Un paso llamado "sin --write" no pide permisos.',
+    );
+  });
+
+  test('CI_AccionNoPermitida_Rechazada', () => {
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, `actions/checkout@${SHA_CHECKOUT} # v7.0.1`, 'actions/checkout@v7'),
+      'acciones',
+      'actions/checkout@v7',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, `actions/checkout@${SHA_CHECKOUT}`, `otro/checkout@${SHA_OTRO}`),
+      'acciones',
+      'otro/checkout con SHA',
+    );
+    workflowRechazado(
+      cambiar(
+        WORKFLOW_VALIDO,
+        '      - name: Pruebas de punta a punta',
+        `      - name: Subir resultados\n        uses: actions/upload-artifact@${SHA_OTRO}\n      - name: Pruebas de punta a punta`,
+      ),
+      'acciones',
+      'actions/upload-artifact con SHA',
+    );
+  });
+
+  test('CI_SinTiempoMaximo_Rechazado', () => {
+    const tiempo = '    timeout-minutes: 45\n';
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, tiempo, ''), 'tiempo-maximo', 'sin timeout-minutes');
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, tiempo, '    timeout-minutes: 60\n'), 'tiempo-maximo', 'timeout-minutes: 60');
+    workflowRechazado(
+      cambiar(
+        cambiar(WORKFLOW_VALIDO, tiempo, ''),
+        '        run: npm run test:harness\n',
+        '        run: npm run test:harness\n        timeout-minutes: 30\n',
+      ),
+      'tiempo-maximo',
+      'timeout-minutes solo en un paso',
+    );
+  });
+
+  test('CI_SinCancelacion_Rechazado', () => {
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, '  cancel-in-progress: true\n', ''),
+      'cancelacion',
+      'sin cancel-in-progress',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'cancel-in-progress: true', 'cancel-in-progress: false'),
+      'cancelacion',
+      'cancel-in-progress: false',
+    );
+    workflowRechazado(
+      cambiar(WORKFLOW_VALIDO, 'group: ci-${{ github.event.pull_request.number }}', 'group: ci'),
+      'cancelacion',
+      'group: ci constante',
+    );
+    workflowRechazado(
+      cambiar(
+        WORKFLOW_VALIDO,
+        'concurrency:\n  group: ci-${{ github.event.pull_request.number }}\n  cancel-in-progress: true\n',
+        '',
+      ),
+      'cancelacion',
+      'sin concurrency',
+    );
+  });
+
+  test('CI_WorkflowVacio_Rechazado', () => {
+    assert.deepEqual(reglasDe(''), ['vacio'], 'Un texto vacío se rechaza solo por vacío.');
+    assert.deepEqual(reglasDe('  \n\t\n '), ['vacio'], 'Un texto con solo espacios se rechaza solo por vacío.');
   });
 });
