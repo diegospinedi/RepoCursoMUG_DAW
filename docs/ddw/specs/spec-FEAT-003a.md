@@ -6,7 +6,7 @@
 | PRD | docs/ddw/prd/prd-FEAT-003a.md |
 | Tier | FEATURE |
 | Date | 2026-11-06 |
-| Spec loops | 1 |
+| Spec loops | 2 |
 | Loops since last human decision | 0 |
 
 ## Summary
@@ -30,7 +30,7 @@ AC-07, AC-11, el mensaje de confirmación de AC-01 y AC-12, la línea con un art
 presupuesto no encontrado) no los fija el PRD: la spec los nombra como constantes con los textos que el usuario
 confirmó (D-24), y las pruebas comparan contra esas constantes. Que no se pueda modificar la fecha
 (FEAT-003 AC-11) y los triggers de inmutabilidad (`CierrePresupuestos`) son de FEAT-003c.
-Decisiones: `docs/ddw/specs/decisions-FEAT-003a.md` (D-01 a D-27).
+Decisiones: `docs/ddw/specs/decisions-FEAT-003a.md` (D-01 a D-37).
 
 ## Coverage: PRD → blocks
 | Requirement | Covered by |
@@ -51,10 +51,11 @@ Decisiones: `docs/ddw/specs/decisions-FEAT-003a.md` (D-01 a D-27).
 | FR-14 | Block 1, Block 2, Block 3, Block 4, Block 6 |
 | FR-15 | Block 1, Block 2, Block 3, Block 4, Block 5, Block 6 |
 | NFR-01 | Strategy: Block 6 corre AC-01 a AC-19 en los proyectos `chrome-presupuestos-alta` y `msedge-presupuestos-alta` (canal estable instalado); la versión anterior de cada navegador se verifica a mano, como en FEAT-001 y FEAT-002 |
-| NFR-02 | Strategy: importes en centésimos enteros (ADR-008) con los conversores existentes de `OpticaDbContext`; el Precio Unitario se copia del precio de venta ya redondeado (ADR-010) sin aritmética nueva; la Api devuelve los importes con 2 decimales y la pantalla los formatea con `mostrarImporte` de FEAT-002a ("$1.850,00") |
+| NFR-02 | Strategy: importes en centésimos enteros (ADR-008) con los conversores existentes de `OpticaDbContext`; el Precio Unitario se copia del precio de venta ya redondeado (ADR-010) sin aritmética nueva; la Api devuelve los importes como número JSON (D-33) y la pantalla los formatea con `mostrarImporte` de FEAT-002a ("1.850,00" con "($)" en el encabezado de la columna, D-34) |
 
 ## Dependencies between blocks
-Block 1 → Block 2 → Block 3 → Block 4 → Block 5 → Block 6. Cada bloque usa los tipos del anterior. Block 2 cambia la
+Block 1 → Block 2 → Block 3 → Block 4 → Block 5 → Block 6 → Block 7. Cada bloque usa los tipos del anterior; Block 7
+(agregado en el lazo correctivo de VERIFY, D-37) solo depende del pipeline de la Api y de las rutas de Block 4. Block 2 cambia la
 firma de `IArticuloRepository.BuscarAsync` y Block 3 la usa desde `BuscarArticulos`.
 
 ## Block 1 — Dominio: cliente, línea, presupuesto y numeración
@@ -516,8 +517,54 @@ clientes son ficticios (D-17).
 Las 18 pruebas pasan en `chrome-presupuestos-alta` y `msedge-presupuestos-alta` con `npm run test:harness`, y la suite
 completa de `e2e/` sigue en verde con los puertos nuevos.
 
+## Block 7 — Api: respuestas de /api sin caché (lazo correctivo de VERIFY)
+
+**Files**
+- `src/Optica.Api/Web/SinCacheApi.cs` (new) — middleware que, en toda respuesta a una ruta que empieza con `/api`,
+  fija `Cache-Control: no-store` antes de que la respuesta empiece (`Response.OnStarting`), incluidas las de error
+  (400, 401, 404, 413, 415, 423, 429 y 500).
+- `src/Optica.Api/Program.cs` (modified) — registra el middleware antes de `UseExceptionHandler`, así también cubre el
+  500 genérico y los rechazos de autorización, de `LimitesDelCuerpo` y del limitador.
+- `tests/Optica.Api.Tests/Acceso/SinCacheTests.cs` (new)
+
+**Logic**
+Protege los datos del cliente de FR-01 a FR-05 en tránsito hacia el navegador e implementa la mitigación de R-08 del
+modelo de amenazas (D-37): las respuestas de la Api llevan datos personales del cliente (`POST /api/presupuestos` y `GET /api/presupuestos/{numero}`) y datos comerciales (artículos, configuración),
+y no deben quedar en la caché del navegador ni de intermediarios. La SPA (`SpaEstatica`) conserva su
+`Cache-Control: no-cache` actual: el middleware solo actúa sobre `/api` (comparación de segmento, sin distinguir
+mayúsculas) y no pisa un `Cache-Control` que ya fijó un controlador de `/api` (hoy ninguno lo hace).
+
+**API contract**
+- Method + path: todos los métodos sobre `/api/*` (entre ellos `POST /api/presupuestos` y `GET /api/presupuestos/{numero}`)
+- Request: sin cambios respecto de Block 4 y de los endpoints existentes
+- Response: el mismo cuerpo y código de estado que hoy, más el encabezado `Cache-Control: no-store`
+- Error codes: los mismos de cada endpoint (400, 401, 404, 413, 415, 423, 429, 500), todos con `no-store`
+- Auth: sin cambios; la política de sesión por defecto sigue aplicando
+
+**Data model**
+- Reuses `Presupuesto` and `LineaPresupuesto` from Block 2 — no schema change; constraints as declared there: CHECK con nombre, claves foráneas RESTRICT, PK `Numero` sin AUTOINCREMENT.
+
+**Input validation**
+- La ruta del pedido: solo decide si empieza con el segmento `/api` (`PathString.StartsWithSegments`); no se
+  interpreta ningún otro dato del pedido.
+
+**Error handling**
+- Respuesta de error de `/api` (401 sin sesión, 404, 413, 415, 400 rechazado o 500 no controlado) — también lleva
+  `no-store`; el middleware no cambia el código de estado ni el cuerpo. Las rutas fuera de `/api` (la SPA) no son un
+  error: se responden sin `no-store`, con el `no-cache` de `SpaEstatica`.
+
+**Required tests**
+- [ ] `Api_RespuestasExitosas_NoStore` — `GET /api/acceso/estado`, `POST /api/presupuestos` (201) y `GET /api/presupuestos/{numero}` (200) llevan `Cache-Control: no-store`
+- [ ] `Api_RespuestasDeError_NoStore` — 401 sin sesión, 404 de presupuesto inexistente, 413, 415 y 400 de cuerpo inválido rechazado: todas con `no-store`
+- [ ] `Spa_ArchivosYRutas_SinNoStore` — `/` y `/presupuestos/nuevo` siguen con `no-cache` y sin `no-store` (ruta fuera de /api, caso no aplicable al middleware)
+
+**Completion criterion**
+Las 3 pruebas pasan, `Optica.Api.Tests` queda en verde y `curl -sk -D - https://localhost:5001/api/acceso/estado`
+muestra `Cache-Control: no-store`.
+
 ## Final verification
 Las suites completas (`dotnet test Optica.sln`, `npm run test:coverage` y `npm run build` en `web/`, `npm run test:unidad`
 y `npm run test:harness` en `e2e/`) pasan; AC-01 a AC-19 tienen prueba de punta a punta; `HasPendingModelChanges` es
 falso; la migración `Presupuestos` no reconstruye `Articulo` (ADR-012); Catálogo no referencia a Presupuestos (D-05);
-ningún registro de la Api ni `ToString` contiene datos del cliente (D-17); los textos son los de D-24.
+ningún registro de la Api ni `ToString` contiene datos del cliente (D-17); los textos son los de D-24; toda
+respuesta de `/api` lleva `Cache-Control: no-store` (D-37).

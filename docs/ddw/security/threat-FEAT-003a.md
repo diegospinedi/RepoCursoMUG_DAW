@@ -15,6 +15,7 @@
 | `src/Optica.Application/Presupuestos/AltaPresupuesto.cs` (con `ObtenerPresupuesto.cs` y `BuscarArticulos.cs`) | Block 3 |
 | `src/Optica.Api/Controllers/PresupuestosController.cs` (con `ArticulosController.cs` y `soloActivos`) | Block 4 |
 | `web/src/paginas/NuevoPresupuesto.tsx` (con `Presupuesto.tsx` y `web/src/api/cliente.ts`) | Block 5 |
+| `src/Optica.Api/Web/SinCacheApi.cs` | Block 7 |
 
 ## Trust boundaries
 - Navegador de la operadora → API ASP.NET Core: `POST /api/presupuestos` lleva en el cuerpo JSON el Apellido, el
@@ -89,10 +90,19 @@
 - **Denial of Service:** el buscador pide páginas de 50 de a una.
 - **Elevation of Privilege:** la SPA no expone acciones que la API no permita.
 
+### `src/Optica.Api/Web/SinCacheApi.cs`
+- **Spoofing:** no maneja identidades; corre antes de la autenticación y no la reemplaza.
+- **Tampering:** solo agrega un encabezado de respuesta; no lee el cuerpo ni cambia el código de estado.
+- **Repudiation:** sin registro propio; el log de la Api no cambia.
+- **Information Disclosure:** fija `Cache-Control: no-store` en toda respuesta de `/api`, incluidas las de error,
+  para que el navegador no guarde en su caché las respuestas con DNI, domicilio, email y teléfono del cliente (R-08).
+- **Denial of Service:** costo constante por pedido (una comparación de ruta y un encabezado).
+- **Elevation of Privilege:** no cambia la autorización; la política de sesión por defecto sigue igual.
+
 ## Data classification
 | Data | Class | At rest | In transit |
 |---|---|---|---|
-| Apellido, Nombre, DNI, Domicilio, Email y Nro. de Teléfono del cliente | PII (Ley 25.326) | tabla `Presupuesto` de `optica.db` sin cifrar, en el perfil de la cuenta de la Api con permisos NTFS solo para esa cuenta, Administradores y SYSTEM; los respaldos en la carpeta con la ACL de `docs/instalacion.md`; no van al log ni a `ToString` (R-01, R-02) | TLS (HTTPS de Kestrel), solo con sesión, en el cuerpo y nunca en la URL |
+| Apellido, Nombre, DNI, Domicilio, Email y Nro. de Teléfono del cliente | PII (Ley 25.326) | tabla `Presupuesto` de `optica.db` sin cifrar, en el perfil de la cuenta de la Api con permisos NTFS solo para esa cuenta, Administradores y SYSTEM; los respaldos en la carpeta con la ACL de `docs/instalacion.md`; no van al log ni a `ToString` (R-01, R-02) | TLS (HTTPS de Kestrel), solo con sesión, en el cuerpo y nunca en la URL; respuestas con `Cache-Control: no-store` (R-08) |
 | Código, descripción y Precio Unitario de la línea | financial (precio comercial de la empresa) | tabla `LineaPresupuesto`, centésimos con CHECK | TLS, solo con sesión |
 | Número y fecha del presupuesto | public (identificador interno) | tabla `Presupuesto`, clave primaria | TLS, solo con sesión |
 | Cookie de sesión | credentials | sin cambios respecto de FEAT-001a: cifrada con Data Protection, claves con DPAPI | TLS, `Secure`, `HttpOnly`, `SameSite=Strict` |
@@ -107,6 +117,7 @@
 | R-05 | CSRF o manipulación del precio desde el pedido | T | L | H | `SameSite=Strict`, sin CORS, JSON obligatorio (415); el pedido solo lleva códigos y el precio sale del catálogo (D-12) |
 | R-06 | XSS con un dato del cliente (por ejemplo, un domicilio con HTML) | I | L | M | React escapa el texto; sin `dangerouslySetInnerHTML`; los datos no se guardan en el almacenamiento del navegador |
 | R-07 | Cuerpo grande o muchas líneas para cargar la API | D | L | L | 16 KB (413) y 100 líneas (D-16); lecturas por clave primaria |
+| R-08 | El navegador guarda en su caché las respuestas de `/api` con los datos del cliente y quedan disponibles para otra persona en una PC compartida | I | M | H | `Cache-Control: no-store` en toda respuesta de `/api` (`SinCacheApi`, Block 7, D-37), con pruebas `Api_RespuestasExitosas_NoStore` y `Api_RespuestasDeError_NoStore` |
 
 ## Accepted risks
 ### R-01
