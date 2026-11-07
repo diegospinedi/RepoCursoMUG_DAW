@@ -18,11 +18,13 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
 | `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
 | `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5547 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5548 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5549 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5550 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5551 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5552 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5548 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5549 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5550 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5551 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5552 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5553 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5554 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -30,7 +32,8 @@ antes que `articulos-edicion` y `configuracion` antes que `configuracion-recalcu
 otro ordena primero). Un archivo nuevo corre los puertos de los que vienen después: `articulos.spec.ts` (FEAT-002a)
 movió `chrome-configuracion` de 5544 a 5545 y los de Edge de 5545–5546 a 5546–5548; `articulos-edicion.spec.ts`
 (FEAT-002b) movió `chrome-configuracion` a 5546 y los de Edge a 5547–5550; y `configuracion-recalculo.spec.ts`
-(FEAT-002c) ocupa 5547 en Chrome y mueve los de Edge a 5548–5551, con el suyo en 5552. Si tenés algo fijado a un
+(FEAT-002c) ocupa 5547 en Chrome y mueve los de Edge a 5548–5551, con el suyo en 5552; y `presupuestos-alta.spec.ts`
+(FEAT-003a) ocupa 5548 en Chrome y mueve los de Edge a 5549–5553, con el suyo en 5554. Si tenés algo fijado a un
 puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
 
 `articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
@@ -50,6 +53,15 @@ quedan de una prueba a la otra, así que la cantidad del aviso "Cambió el preci
 con los precios de toda la base leídos antes y después de grabar. La prueba de AC-04 tiene que ser la última: deja un
 artículo de costo `ImporteMaximo` que haría rechazar cualquier recálculo posterior con múltiplo 50. Ese artículo solo
 existe en la base de este proyecto, que no comparte ningún otro archivo.
+
+`presupuestos-alta.spec.ts` (FEAT-003a, AC-01 a AC-19) graba presupuestos desde la pantalla y los vuelve a abrir. La
+primera prueba define la contraseña y verifica AC-10 con la base vacía (el primer presupuesto recibe el número 1); las
+demás ingresan con ella. Cada prueba deja por la Api Responsable Inscripto, alícuota 21 y múltiplo 0,01, y crea sus
+artículos por la Api con códigos en el proveedor propios (`PR-…`); solo la prueba de AC-13 graba descripciones con
+"Armazón" o "armazon", activas e inactivas. Ninguna prueba, salvo AC-10 y AC-09, espera un número fijo: lo leen de la
+respuesta del alta. La prueba de AC-09 graba por la Api hasta que el último número es 154 y graba el 155 desde la
+pantalla; la de AC-19 compara la fecha con la del día de la PC que corre la Api y la suite (la misma). Los datos de
+clientes son ficticios (D-17 y D-36 de FEAT-003a).
 
 Dentro de un proyecto las pruebas corren en orden y de a una, porque dependen de lo que dejó la anterior en su base.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
@@ -130,6 +142,6 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 ## Diagnóstico sin Chrome ni Edge
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
-(proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion` y
-`chromium-configuracion-recalculo`).
+(proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion`,
+`chromium-configuracion-recalculo` y `chromium-presupuestos-alta`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

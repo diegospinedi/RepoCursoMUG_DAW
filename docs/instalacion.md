@@ -97,8 +97,17 @@ esa cuenta, SYSTEM y Administradores. No la compartas en red.
 Carpeta de backups (sección 9): control total para Administradores y SYSTEM, y modificación para la cuenta de la Api,
 que es la que genera los backups. Ninguna otra cuenta la lee: los backups contienen el hash de la contraseña, los
 eventos de acceso (fecha y hora de cada ingreso, rechazo, bloqueo, cambio y restablecimiento: datos personales de las
-operadoras, riesgo R-14) y, más adelante, los datos de los clientes. Si está en un disco externo, tiene que ser NTFS (FAT32 y exFAT no guardan
-permisos).
+operadoras, riesgo R-14) y los datos personales de los clientes de cada presupuesto (apellido, nombre, DNI,
+domicilio, email y teléfono). Si está en un disco externo, tiene que ser NTFS (FAT32 y exFAT no guardan permisos).
+
+> **Datos personales de clientes sin cifrar (Ley 25.326).** La base (`optica.db` y `optica.db-wal`) y **cada copia**
+> de backup guardan el DNI, el domicilio, el email y el teléfono de los clientes **en claro**: quien pueda leer el
+> archivo puede leer esos datos, que están alcanzados por la Ley 25.326 de Protección de los Datos Personales. Lo único
+> que los protege es la ubicación fuera del árbol de fuentes y los permisos NTFS de esta sección: la base, los de la
+> carpeta de datos, y los backups, los de la carpeta de backups. El cifrado de la base y de las copias no está
+> implementado: es un riesgo aceptado mientras el sistema se usa como software de prueba, y se tiene que revisar antes
+> de cargar datos reales de clientes, de pasar a producción, al definir el backup (PRD 09) o si la PC se comparte (R-01
+> del modelo de amenazas de FEAT-003a, D-23 y D-27).
 
 ```powershell
 New-Item -ItemType Directory -Force D:\Backups\OpticaSistema
@@ -244,7 +253,8 @@ Recién con la contraseña definida:
 - **`npm run dev`:** nunca contra una Api con datos reales.
 - **Datos reales:** con FEAT-001b instalado, el ingreso ya se bloquea después de 5 intentos fallidos (R-03). Antes de
   cargar datos reales de clientes hay que revisar la retención de los eventos de acceso (R-14): hoy se guardan sin
-  límite, en la base y en cada backup (sección 9).
+  límite, en la base y en cada backup (sección 9). También hay que revisar el riesgo aceptado de la base y los backups
+  sin cifrar, que guardan los datos personales de los clientes en claro (R-01 de FEAT-003a, D-27; ver secciones 4 y 9).
 - **Restablecimiento:** solo con la Api detenida y desde la PC, con la cuenta de la Api (sección 10). No hay pantalla
   ni dirección web para restablecer la contraseña, y no hay que agregarla.
 
@@ -269,10 +279,12 @@ C:\OpticaSistema\Herramientas\sqlite3.exe "$env:LOCALAPPDATA\OpticaSistema\optic
 (o con la ruta completa de la carpeta de datos de la cuenta de la Api). El archivo de destino no debe existir.
 Guardá los backups en un medio con acceso restringido: contienen el hash de la contraseña, **los eventos de acceso**
 (fecha y hora de cada ingreso, rechazo, bloqueo, cambio y restablecimiento: datos personales de las operadoras, que se
-guardan sin límite de tiempo, riesgo R-14) y, más adelante, los datos de los clientes. **Cada backup se guarda con la
-misma protección que `optica.db`**: la carpeta de backups de la sección 4, sin compartirla en red, y un medio externo
-solo si es NTFS con esos mismos permisos. Las claves de `claves\` no hace falta respaldarlas: si se pierden, solo se
-cierran las sesiones abiertas.
+guardan sin límite de tiempo, riesgo R-14) y **los datos personales de los clientes** de cada presupuesto: apellido,
+nombre, DNI, domicilio, email y teléfono, **sin cifrar**, alcanzados por la Ley 25.326 (R-01 del modelo de amenazas de
+FEAT-003a, D-23 y D-27). Cualquiera que obtenga una copia puede leerlos con `sqlite3.exe` o con cualquier visor de
+SQLite. **Cada backup se guarda con la misma protección que `optica.db`**: la carpeta de backups de la sección 4, sin
+compartirla en red, y un medio externo solo si es NTFS con esos mismos permisos. Las claves de `claves\` no hace falta
+respaldarlas: si se pierden, solo se cierran las sesiones abiertas.
 
 ### Restaurar un backup
 
@@ -299,7 +311,8 @@ cierran las sesiones abiertas.
 
    El segundo comando tiene que responder `ok`.
 4. Iniciá la Api e ingresá con la contraseña **vigente a la fecha del backup** (la contraseña viaja con la base).
-5. Cuando compruebes que todo funciona, borrá la carpeta `anterior`: tiene los mismos datos sensibles que un backup.
+5. Cuando compruebes que todo funciona, borrá la carpeta `anterior`: tiene los mismos datos sensibles que un backup,
+   incluidos los datos personales de los clientes sin cifrar (R-01 de FEAT-003a).
 
 ## 10. Restablecer la contraseña olvidada (en la PC del local)
 
