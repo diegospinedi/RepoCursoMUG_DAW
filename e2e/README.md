@@ -3,7 +3,8 @@
 `npm run test:harness` corre la suite en los canales estables de Chrome y Edge instalados en el sistema (NFR-03).
 `servidor.mjs` compila la web y la Api y levanta **una Api por navegador y por archivo de pruebas**, cada una con su
 base y su marca de prueba en directorios temporales. `npm run test:unidad` corre las pruebas unitarias de
-`compilacion.mjs` (sin navegador ni Api).
+`compilacion.mjs` (sin navegador ni Api) y las de `ci.mjs`, que fijan las reglas de la integración continua (por
+ejemplo, que cada proyecto de .NET tenga su `packages.lock.json` y que la CI restaure en modo bloqueado).
 
 ## Proyectos, Api y bases
 
