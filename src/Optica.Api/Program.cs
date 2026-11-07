@@ -56,6 +56,10 @@ var app = builder.Build();
 // la clave Optica:Datos:Directorio, y la Api no arranca.
 app.Services.InicializarBaseDeDatos();
 
+// Cache-Control: no-store en toda respuesta de /api, también en las de error: va primero para cubrir el 500 genérico,
+// los rechazos de autorización, de LimitesDelCuerpo y del limitador (D-37, R-08). La SPA conserva su no-cache.
+app.Use(SinCacheApi.AplicarAsync);
+
 app.UseExceptionHandler();
 if (!app.Environment.IsDevelopment())
 {
