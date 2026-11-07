@@ -3,7 +3,7 @@
 ────────────────────────────────────────────────────────────────
   ✅ F-TEST-07: the report describes one run
   ✅ F-TEST-01: runner and command named: dotnet test (SDK 10) con xUnit y coverlet; Vitest con cobertura v8 (web); node:test (e2e unidad); Playwright con Chrome y Edge estables — `dotnet test Optica.sln --collect:"XPlat Code Cov`
-  ✅ F-TEST-02: 2167 test(s): 2167 passed, 0 failed, 0 skipped — and they add up
+  ✅ F-TEST-02: 2170 test(s): 2170 passed, 0 failed, 0 skipped — and they add up
   ✅ F-TEST-08: no failing tests
   ✅ F-TEST-03: no failures to name
   ✅ F-TEST-04: coverage stated: line 96%, branch 92%, function 96%

@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Ticket | FEAT-003a |
-| Alcance | `git diff master...e298f0e`: 34 archivos de `src/`, `web/src` y `e2e/` (sin migraciones generadas), más las pruebas .NET |
+| Alcance | `git diff master...7f890d6`: 36 archivos de `src/`, `web/src` y `e2e/` (sin migraciones generadas), más las pruebas .NET |
 | Tools | revisión manual del diff con búsquedas de patrones (grep), `npm audit` (web y e2e), `dotnet list Optica.sln package --vulnerable` |
 | Date | 2026-11-07 |
 
@@ -23,7 +23,7 @@
 | F-SAST-12 | ✅ | cookie `SameSite=Strict`, sin CORS y JSON obligatorio en el POST (415); sesión obligatoria por la política por defecto (401) |
 | F-SAST-13 | ✅ | `npm audit`: 0 vulnerabilidades en web y en e2e; `dotnet list package --vulnerable`: ningún paquete vulnerable en los 8 proyectos |
 | F-SAST-14 | ✅ | validación en el borde: cuerpo hasta 16 KB (413), hasta 100 líneas, largos de D-08, DNI y email con formato, `soloActivos` booleano (400), número de ruta `long`; el dominio vuelve a validar |
-| F-SAST-15 | ✅ | errores 400 con texto fijo que no repite valores, 404 sin detalles, 500 genérico sin excepción; `DbUpdateException` no se serializa ni se registra completa (D-30) |
+| F-SAST-15 | ✅ | errores 400 con texto fijo que no repite valores, 404 sin detalles, 500 genérico sin excepción; `DbUpdateException` no se serializa ni se registra completa (D-30); toda respuesta de `/api`, incluidas las de error, lleva `Cache-Control: no-store` (`src/Optica.Api/Web/SinCacheApi.cs`, R-08, D-37) |
 | F-SAST-16 | ✅ | sin dependencias nuevas en .NET, web ni e2e |
 | F-SAST-17 | ✅ | sin rutas de código dinámico |
 
