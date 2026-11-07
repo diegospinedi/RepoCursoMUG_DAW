@@ -515,6 +515,30 @@ export function revisarWorkflow(texto) {
     );
   }
 
+  // Perfil fuera del código (D-20): el env de cada job (no el de un paso) fija HOME en una carpeta de /tmp/, con un
+  // valor fijo, sin expresiones ni `..` que lo saquen de ahí.
+  const sinPerfil = jobs.filter((indice) => {
+    const envs = clavesDirectas(hijos(lineas, indice)).filter((linea) => linea.clave === 'env');
+    const homes = envs.flatMap((env) =>
+      clavesDirectas(hijos(lineas, lineas.indexOf(env))).filter((linea) => linea.clave === 'HOME'),
+    );
+    return (
+      homes.length === 0 ||
+      homes.some((linea) => {
+        const valor = sinComillas(linea.valor ?? '');
+        return !valor.startsWith('/tmp/') || valor.includes('${{') || valor.includes('..');
+      })
+    );
+  });
+  if (jobs.length === 0 || sinPerfil.length > 0) {
+    const nombres = sinPerfil.map((indice) => lineas[indice].clave).join(', ');
+    problema(
+      'perfil',
+      'Cada job necesita en su env un HOME fijo dentro de /tmp/ (sin ${{ }} ni ..), fuera del código' +
+        `${nombres ? `: ${nombres}` : ''}.`,
+    );
+  }
+
   const concurrencias = lineas.flatMap((linea, indice) => (linea.clave === 'concurrency' ? [indice] : []));
   const cancela =
     concurrencias.length > 0 &&

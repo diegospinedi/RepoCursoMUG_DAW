@@ -254,7 +254,10 @@ jobs:
     env:
       DOTNET_NOLOGO: "true"
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      HOME: /tmp/perfil-ci
     steps:
+      - name: Crear la carpeta del perfil
+        run: mkdir -p "$HOME"
       - name: Descargar el código
         uses: actions/checkout@${SHA_CHECKOUT} # v7.0.1
         with:
@@ -741,6 +744,61 @@ describe('workflow de integración continua', () => {
       'cancelacion',
       'sin concurrency',
     );
+  });
+
+  test('CI_SinPerfilFueraDelCodigo_Rechazado', () => {
+    const home = '      HOME: /tmp/perfil-ci\n';
+    const sinHome = cambiar(WORKFLOW_VALIDO, home, '');
+    workflowRechazado(sinHome, 'perfil', 'sin HOME en el env del job');
+    assert.deepEqual(reglasDe(sinHome), ['perfil'], 'Sin HOME el único problema es el de perfil.');
+
+    // Un HOME en el env de un paso no cambia el perfil de los demás pasos.
+    const pruebas = '      - name: Pruebas de .NET\n';
+    const enUnPaso = cambiar(sinHome, pruebas, `${pruebas}        env:\n          HOME: /tmp/perfil-ci\n`);
+    workflowRechazado(enUnPaso, 'perfil', 'HOME solo en el env de un paso');
+    assert.deepEqual(reglasDe(enUnPaso), ['perfil'], 'Con HOME solo en un paso el único problema es el de perfil.');
+
+    // Un job sin env.
+    const env = '    env:\n      DOTNET_NOLOGO: "true"\n      DOTNET_CLI_TELEMETRY_OPTOUT: "true"\n';
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, `${env}${home}`, ''), 'perfil', 'job sin env');
+
+    // Cada job necesita el suyo: un segundo job sin HOME queda rechazado aunque el primero lo tenga.
+    const segundoJob =
+      '  otro:\n    name: Otro\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n' +
+      '    steps:\n      - name: Nada\n        run: echo nada\n';
+    const conSegundoJob = `${WORKFLOW_VALIDO}${segundoJob}`;
+    workflowRechazado(conSegundoJob, 'perfil', 'un segundo job sin HOME');
+    assert.ok(
+      revisarWorkflow(conSegundoJob).some((p) => p.regla === 'perfil' && p.detalle.includes('otro')),
+      'El problema nombra el job sin HOME.',
+    );
+    workflowAceptado(
+      `${WORKFLOW_VALIDO}${segundoJob.replace('    steps:\n', `    env:\n${home}    steps:\n`)}`,
+      'Dos jobs con HOME fuera del código valen.',
+    );
+  });
+
+  test('CI_PerfilInvalido_Rechazado', () => {
+    const home = '      HOME: /tmp/perfil-ci\n';
+    const conHome = (valor) => cambiar(WORKFLOW_VALIDO, home, `      HOME: ${valor}\n`);
+    for (const valor of [
+      '/home/runner',
+      'perfil',
+      '${{ github.workspace }}/p',
+      '/tmp/../home/runner',
+      '""',
+      '/tmpx/perfil',
+      '"/home/runner"',
+    ]) {
+      const texto = conHome(valor);
+      workflowRechazado(texto, 'perfil', `HOME: ${valor}`);
+      assert.deepEqual(reglasDe(texto), ['perfil'], `Con HOME: ${valor} el único problema es el de perfil.`);
+    }
+    workflowRechazado(cambiar(WORKFLOW_VALIDO, home, '      HOME:\n'), 'perfil', 'HOME sin valor');
+
+    workflowAceptado(WORKFLOW_VALIDO, 'HOME: /tmp/perfil-ci vale.');
+    workflowAceptado(conHome('"/tmp/x"'), 'HOME: "/tmp/x" vale.');
+    workflowAceptado(conHome("'/tmp/x' # comentario"), "HOME: '/tmp/x' con un comentario vale.");
   });
 
   test('CI_WorkflowVacio_Rechazado', () => {

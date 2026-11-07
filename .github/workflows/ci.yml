@@ -26,8 +26,16 @@ jobs:
     env:
       DOTNET_NOLOGO: "true"
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      # Perfil fuera del código (D-20): el checkout queda en /home/runner/work, dentro del perfil /home/runner, y
+      # las pruebas que verifican que logs y errores no lleven la carpeta del usuario la encontrarían. Valor fijo:
+      # el contexto runner no existe en el env de un job. Las cachés de NuGet y npm quedan acá y se descartan con
+      # el runner.
+      HOME: /tmp/perfil-ci
     # Las acciones van fijadas por el SHA del commit de su versión (D-02): una etiqueta se puede mover, el SHA no.
     steps:
+      # Primero de todo: actions/checkout escribe la configuración global de git en $HOME.
+      - name: Crear la carpeta del perfil
+        run: mkdir -p "$HOME"
       - name: Descargar el código
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
