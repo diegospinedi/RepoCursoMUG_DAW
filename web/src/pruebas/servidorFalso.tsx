@@ -1,8 +1,8 @@
 import { act, render } from '@testing-library/react';
-import { useEffect } from 'react';
-import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
+import { MemoryRouter, type NavigateFunction } from 'react-router';
 import { vi } from 'vitest';
 import { App } from '../App';
+import { Navegador, Ubicacion } from './sondas';
 
 /** Un pedido tal como lo recibió el `fetch` falso. */
 export interface PedidoRegistrado {
@@ -70,31 +70,14 @@ export function servidorFalso(rutas: Record<string, Respuesta | Respuesta[]>) {
   };
 }
 
-function Ubicacion() {
-  const ubicacion = useLocation();
-  // El estado de la navegación va en un atributo para que las pruebas comprueben que no lleva contraseñas.
-  return (
-    <output data-testid="ubicacion" data-estado={JSON.stringify(ubicacion.state ?? null)}>
-      {ubicacion.pathname + ubicacion.search + ubicacion.hash}
-    </output>
-  );
-}
-
 /** Una entrada del historial: la ruta, o la ruta con el estado de la navegación. */
 type Entrada = string | { pathname: string; state?: unknown };
 
 let navegarEnPrueba: NavigateFunction | null = null;
 
-/** Registra la navegación del router montado y la quita al desmontarse (`cleanup` entre pruebas). */
-function Navegador() {
-  const navegar = useNavigate();
-  useEffect(() => {
-    navegarEnPrueba = navegar;
-    return () => {
-      navegarEnPrueba = null;
-    };
-  }, [navegar]);
-  return null;
+/** Guarda la navegación del router montado; función de módulo, estable entre renders, para `Navegador`. */
+function registrarNavegacion(navegar: NavigateFunction | null) {
+  navegarEnPrueba = navegar;
 }
 
 /**
@@ -107,7 +90,7 @@ export function renderizarApp(ruta: Entrada | Entrada[] = '/') {
     <MemoryRouter initialEntries={historial} initialIndex={historial.length - 1}>
       <App />
       <Ubicacion />
-      <Navegador />
+      <Navegador registrar={registrarNavegacion} />
     </MemoryRouter>,
   );
   return {

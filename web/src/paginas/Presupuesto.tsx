@@ -41,6 +41,11 @@ function confirmacionDe(estado: unknown): string | null {
 
 type Carga = { tipo: 'cargando' } | { tipo: 'error'; mensaje: string } | { tipo: 'listo'; presupuesto: PresupuestoGrabado };
 
+/** La carga de un número de ruta antes de consultarlo: inválido ya es "no encontrado"; si no, se está cargando. */
+function cargaInicial(numero: number | null): Carga {
+  return numero === null ? { tipo: 'error', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO } : { tipo: 'cargando' };
+}
+
 /**
  * Un presupuesto grabado, solo lectura (la edición es de FEAT-003c): número, fecha dd/mm/aaaa, estado, los seis datos
  * del cliente y las líneas con las siete columnas de FR-13 e importes con 2 decimales (NFR-02). Un número de ruta
@@ -51,16 +56,18 @@ export function Presupuesto() {
   const navegar = useNavigate();
   const confirmacion = confirmacionDe(useLocation().state);
   const numero = numeroDeLaRuta(useParams().numero);
-  const [carga, setCarga] = useState<Carga>(
-    numero === null ? { tipo: 'error', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO } : { tipo: 'cargando' },
-  );
+  const [carga, setCarga] = useState<Carga>(() => cargaInicial(numero));
+  // Con otro número en la ruta, la carga vuelve a empezar en este mismo render (el efecto solo consulta la Api).
+  const [numeroMostrado, setNumeroMostrado] = useState(numero);
+  if (numero !== numeroMostrado) {
+    setNumeroMostrado(numero);
+    setCarga(cargaInicial(numero));
+  }
 
   useEffect(() => {
     if (numero === null) {
-      setCarga({ tipo: 'error', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
       return;
     }
-    setCarga({ tipo: 'cargando' });
     let vigente = true;
     async function cargar(numeroValido: number) {
       const resultado = await consultarPresupuesto(numeroValido);

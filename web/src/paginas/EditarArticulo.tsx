@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   CAMPO_CODIGO_PROVEEDOR,
@@ -115,6 +115,11 @@ function CampoPrecioVenta({ valor }: { valor: string }) {
 
 type Carga = { tipo: 'cargando' } | { tipo: 'error'; mensaje: string } | { tipo: 'listo'; articulo: ArticuloGrabado };
 
+/** La carga de un código de ruta antes de consultarlo: inválido ya es "no encontrado"; si no, se está cargando. */
+function cargaInicial(codigo: number | null): Carga {
+  return codigo === null ? { tipo: 'error', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO } : { tipo: 'cargando' };
+}
+
 /**
  * Edición de un artículo (FR-01 a FR-03, D-02, D-08). Carga el artículo una vez al abrir y otra solo si la operadora
  * pide volver a abrirlo. El Precio de Venta es de solo lectura; Grabar envía los cuatro datos con la versión leída y
@@ -125,9 +130,14 @@ type Carga = { tipo: 'cargando' } | { tipo: 'error'; mensaje: string } | { tipo:
 export function EditarArticulo() {
   const navegar = useNavigate();
   const codigo = codigoDeLaRuta(useParams().codigo);
-  const [carga, setCarga] = useState<Carga>(
-    codigo === null ? { tipo: 'error', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO } : { tipo: 'cargando' },
-  );
+  const [carga, setCarga] = useState<Carga>(() => cargaInicial(codigo));
+  // Al abrir otro código, el formulario con la versión anterior deja de estar disponible en este mismo render (el
+  // efecto solo consulta la Api); "Volver a abrir" lo hace desde su propio manejador.
+  const [codigoMostrado, setCodigoMostrado] = useState(codigo);
+  if (codigo !== codigoMostrado) {
+    setCodigoMostrado(codigo);
+    setCarga(cargaInicial(codigo));
+  }
   const [aperturas, setAperturas] = useState(0);
   const [textos, setTextos] = useState<TextosArticulo | null>(null);
   const [errores, setErrores] = useState<ErroresArticulo>({});
@@ -136,13 +146,19 @@ export function EditarArticulo() {
   const [grabado, setGrabado] = useState(false);
   const [enviando, setEnviando] = useState(false);
 
+  /** Muestra el artículo tal como quedó guardado, sin mensajes de una operación anterior. */
+  const mostrar = useCallback((articulo: ArticuloGrabado) => {
+    setCarga({ tipo: 'listo', articulo });
+    setTextos(textosDe(articulo));
+    setErrores({});
+    setGeneral(null);
+    setConflicto(null);
+  }, []);
+
   useEffect(() => {
     if (codigo === null) {
-      setCarga({ tipo: 'error', mensaje: MENSAJE_ARTICULO_NO_ENCONTRADO });
       return;
     }
-    // Al abrir otro código o volver a abrir, el formulario con la versión anterior deja de estar disponible.
-    setCarga({ tipo: 'cargando' });
     let vigente = true;
     async function cargar(codigoValido: number) {
       const resultado = await consultarArticulo(codigoValido);
@@ -164,16 +180,7 @@ export function EditarArticulo() {
     return () => {
       vigente = false;
     };
-  }, [codigo, aperturas, navegar]);
-
-  /** Muestra el artículo tal como quedó guardado, sin mensajes de una operación anterior. */
-  function mostrar(articulo: ArticuloGrabado) {
-    setCarga({ tipo: 'listo', articulo });
-    setTextos(textosDe(articulo));
-    setErrores({});
-    setGeneral(null);
-    setConflicto(null);
-  }
+  }, [codigo, aperturas, navegar, mostrar]);
 
   function volverAAbrir() {
     setGrabado(false);

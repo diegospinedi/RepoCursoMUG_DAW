@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MarcaProvider, useMarca } from '../marca/MarcaProvider';
+import { useMarca } from '../marca/contextoMarca';
+import { MarcaProvider } from '../marca/MarcaProvider';
 import { json, servidorFalso } from '../pruebas/servidorFalso';
 import { Encabezado } from './Encabezado';
 

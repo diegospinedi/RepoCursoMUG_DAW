@@ -41,6 +41,7 @@ Desde un presupuesto en estado Final emite factura electrónica a consumidor fin
 - Install: npm ci en web/ y e2e/ (npm ≥ 10.9.8)
 - Build/typecheck: dotnet build Optica.sln · web: npm run build
 - Tests: dotnet test Optica.sln · web: npm run test:coverage · e2e: npm run test:unidad && npm run test:harness
+- Lint: web: npm run lint · prueba del lint: npm run test:lint
 ---
 
 ## Testing

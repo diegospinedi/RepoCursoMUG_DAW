@@ -31,7 +31,7 @@ const CAMPOS: readonly (keyof TextosArticulo)[] = [
 const esCampo = (campo: string): campo is keyof TextosArticulo => CAMPOS.some((c) => c === campo);
 
 /** El mensaje que confirma el alta, con el código que asignó el sistema (FR-01). */
-export const mensajeGrabado = (codigo: number) => `Artículo grabado con el código ${codigo}.`;
+const mensajeGrabado = (codigo: number) => `Artículo grabado con el código ${codigo}.`;
 
 interface PropsCampo {
   etiqueta: string;
