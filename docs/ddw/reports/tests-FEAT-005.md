@@ -41,8 +41,10 @@ Verificaciones manuales de la spec:
   pruebas de `MarcaTests`, `RegistroTests` y `FabricaConexionTests`; con `HOME=/tmp/perfil-ci` pasan 50/50; con
   `HOME` nuevo, `CI=true`, build y test pasan 1415/1415.
 - Corrida en el pull request #11 (AC-07, AC-11, `CI_PasoDeLaCorridaConError_Rechazado`): la primera corrida, sobre los
-  Blocks 1 y 2, quedó en rojo en el paso "Pruebas de .NET" (9 de 1415, por el perfil dentro del código, D-20); la
-  corrida con los 4 bloques queda pendiente del push.
+  Blocks 1 y 2, quedó en rojo en el paso "Pruebas de .NET" (9 de 1415, por el perfil dentro del código, D-20; corrida
+  42385023126), con el pull request marcado como fallado por ese paso. La corrida sobre `f73edaa`, con los 4 bloques
+  (corrida 42390071207/42390075541), quedó en verde en 4m22s: los 18 pasos en `success`, .NET 1415/1415, e2e 104
+  passed con Google Chrome 156.0.8078.79 y Microsoft Edge 156.0.4314.58; CodeQL sin alertas abiertas.
 
 `npm audit` en `web/`: 0 vulnerabilidades.
 
