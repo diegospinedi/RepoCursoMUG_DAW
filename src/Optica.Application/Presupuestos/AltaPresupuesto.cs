@@ -18,11 +18,24 @@ public sealed record DatosCliente(
 }
 
 /// <summary>
-/// El pedido de alta: el cliente y, por cada línea en orden, el código autonumérico del artículo (D-12, D-13). La línea no
-/// lleva precio ni descripción: el servidor los copia del catálogo (FR-10, FR-11).
+/// El pedido de alta: el cliente y las líneas en orden (D-12, D-13). Las líneas no llevan precios ni descripción: el
+/// servidor los copia del catálogo y los calcula (FR-10, FR-11; R-01 de FEAT-003b).
 /// </summary>
 /// <remarks>Lleva el cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17).</remarks>
-public sealed record DatosPresupuesto(DatosCliente? Cliente, IReadOnlyList<long?>? Lineas)
+public sealed record DatosPresupuesto(DatosCliente? Cliente, IReadOnlyList<DatosLinea?>? Lineas)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
+/// Una línea tal como llega: el código autonumérico del artículo, la Cantidad y el Porcentaje de Descuento (FR-01 a
+/// FR-03). <see cref="ValidacionPresupuesto.Validar"/> los valida, un error por campo.
+/// </summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra ningún valor (<c>DatosLinea { }</c>), como los demás datos del pedido: las
+/// condiciones comerciales de la venta tampoco van al log (D-17).
+/// </remarks>
+public sealed record DatosLinea(long? CodigoArticulo, int? Cantidad, decimal? PorcentajeDescuento)
 {
     private bool PrintMembers(System.Text.StringBuilder constructor) => false;
 }
@@ -60,7 +73,7 @@ public sealed record LineaGrabada(
 
 /// <summary>
 /// Un presupuesto grabado: número, fecha local sin hora, estado como texto (<see cref="EstadoBorrador"/> o
-/// <see cref="EstadoFinal"/>), cliente y líneas en el orden cargado.
+/// <see cref="EstadoFinal"/>), cliente, líneas en el orden cargado y <see cref="Total"/>.
 /// </summary>
 /// <remarks>
 /// Lleva el cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17). El estado es texto y no el enum del
@@ -77,6 +90,14 @@ public sealed record PresupuestoGrabado(
 
     private bool PrintMembers(System.Text.StringBuilder constructor) => false;
 
+    /// <summary>
+    /// La suma de los Precios Finales, con IVA incluido (FR-06). No se guarda ni se vuelve a sumar acá: es
+    /// <see cref="Presupuesto.Total"/> del dominio, copiado por <see cref="Desde"/> (D-05). Va fuera del constructor
+    /// posicional; la Api lo escribe como <c>total</c>, después de <c>lineas</c>. Es <c>required</c>: quien construya un
+    /// presupuesto grabado fuera de <see cref="Desde"/> tiene que darlo, así no queda en 0 por olvido.
+    /// </summary>
+    public required decimal Total { get; init; }
+
     /// <summary>El texto del estado.</summary>
     /// <exception cref="InvalidOperationException">El estado no tiene texto asignado (cerrado por defecto).</exception>
     public static string TextoDelEstado(EstadoPresupuesto estado) => estado switch
@@ -91,7 +112,10 @@ public sealed record PresupuestoGrabado(
         presupuesto.Fecha,
         TextoDelEstado(presupuesto.Estado),
         ClienteGrabado.Desde(presupuesto.Cliente),
-        [.. presupuesto.Lineas.Select(LineaGrabada.Desde)]);
+        [.. presupuesto.Lineas.Select(LineaGrabada.Desde)])
+    {
+        Total = presupuesto.Total,
+    };
 }
 
 /// <summary>Cómo terminó un alta de presupuesto: grabado, con el presupuesto, o inválido, con un error por campo.</summary>
@@ -133,10 +157,12 @@ public sealed class ResultadoAltaPresupuesto
 /// Da de alta un presupuesto en Borrador con su cliente y sus líneas del catálogo (FR-01 a FR-15). Si el cliente o la
 /// forma de las líneas incumplen <see cref="ValidacionPresupuesto.Validar"/>, devuelve
 /// <see cref="ResultadoAltaPresupuesto.Invalido"/> con todos los errores sin leer la base. Si no, dentro de una operación
-/// en transacción (ADR-013): lee cada artículo y rechaza junto a la línea uno inexistente, inactivo o con precio de venta
-/// negativo (D-14), sin registrar nada; si todos sirven, lee el último número, toma el siguiente (D-07), toma la fecha
-/// local del día con <see cref="TimeProvider.GetLocalNow"/> (D-06), registra el presupuesto y confirma. La relectura del
-/// presupuesto grabado va después.
+/// en transacción (ADR-013): lee cada artículo, arma la línea con la Cantidad y el Descuento pedidos
+/// (<see cref="LineaPresupuesto.DesdeArticulo"/>) y rechaza junto a la línea uno inexistente, inactivo o con precio de
+/// venta negativo (D-14); si todos sirven, controla con <see cref="ValidacionPresupuesto.ControlarTopes"/> el Precio
+/// Final de cada línea y el total (D-04). Cualquier rechazo termina sin registrar nada; si no hay ninguno, lee el
+/// último número, toma el siguiente (D-07), toma la fecha local del día con <see cref="TimeProvider.GetLocalNow"/>
+/// (D-06), registra el presupuesto y confirma. La relectura del presupuesto grabado va después.
 /// </summary>
 /// <remarks>
 /// Un <see cref="ConflictoAlConfirmarException"/> (número repetido) y cualquier otra falla al confirmar no se atienden:
@@ -159,17 +185,21 @@ public sealed class AltaPresupuesto(
             return ResultadoAltaPresupuesto.Invalido(errores);
         }
 
-        // La validación ya aceptó el cliente y cada código: existen y son positivos.
+        // La validación ya aceptó el cliente: existe, con apellido, nombre y DNI.
         var datosCliente = datos.Cliente!;
         var cliente = new ClientePresupuesto(
             datosCliente.Apellido!, datosCliente.Nombre!, datosCliente.Dni!, datosCliente.Domicilio,
             datosCliente.Email, datosCliente.Telefono);
-        var codigos = datos.Lineas!.Select(codigo => codigo!.Value).ToList();
+        // La validación ya aceptó cada línea: existe, con código, cantidad y descuento válidos.
+        var lineas = datos.Lineas!
+            .Select(linea => new LineaPedida(linea!.CodigoArticulo!.Value, linea.Cantidad!.Value,
+                linea.PorcentajeDescuento!.Value))
+            .ToList();
 
         // ADR-013 y D-07: los artículos, el último número y la fecha se leen en la misma transacción de escritura que
         // graba, así ninguna otra grabación confirma entre la lectura del número y la del presupuesto.
         var desenlace = await unidadDeTrabajo.EjecutarEnTransaccionAsync(
-            operacion => GrabarEnTransaccionAsync(cliente, codigos, operacion), cancelacion);
+            operacion => GrabarEnTransaccionAsync(cliente, lineas, operacion), cancelacion);
         if (desenlace.Rechazo is { } rechazo)
         {
             return rechazo;
@@ -183,23 +213,25 @@ public sealed class AltaPresupuesto(
     }
 
     private async Task<Desenlace> GrabarEnTransaccionAsync(
-        ClientePresupuesto cliente, IReadOnlyList<long> codigos, CancellationToken operacion)
+        ClientePresupuesto cliente, IReadOnlyList<LineaPedida> pedidas, CancellationToken operacion)
     {
-        var lineas = new List<LineaPresupuesto>(codigos.Count);
+        var resultados = new List<ResultadoLinea>(pedidas.Count);
         var errores = new List<ErrorValidacion>();
-        for (var indice = 0; indice < codigos.Count; indice++)
+        for (var indice = 0; indice < pedidas.Count; indice++)
         {
-            var articulo = await articulos.ObtenerAsync(codigos[indice], operacion);
+            var pedida = pedidas[indice];
+            var articulo = await articulos.ObtenerAsync(pedida.CodigoArticulo, operacion);
             if (articulo is null)
             {
                 errores.Add(ValidacionPresupuesto.ArticuloNoDisponible(indice));
                 continue;
             }
 
-            var resultado = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m);
-            if (resultado.EsValida)
+            var resultado = LineaPresupuesto.DesdeArticulo(articulo, pedida.Cantidad, pedida.PorcentajeDescuento);
+            if (resultado.EsValida || resultado.EsImporteExcedido)
             {
-                lineas.Add(resultado.Linea);
+                // Los topes de importe se controlan juntos, después (D-11).
+                resultados.Add(resultado);
             }
             else if (resultado.EsPrecioNegativo)
             {
@@ -215,6 +247,14 @@ public sealed class AltaPresupuesto(
             }
         }
 
+        // Los rechazos del catálogo no dependen de la cantidad ni del descuento: se informan primero. Si no hay, los
+        // topes del contrato (D-04, D-17), antes de construir el presupuesto: su constructor lanza con un total fuera
+        // del tipo, y así un importe excedido termina en un error por campo y nunca en una excepción.
+        if (errores.Count == 0)
+        {
+            errores.AddRange(ValidacionPresupuesto.ControlarTopes(resultados));
+        }
+
         if (errores.Count > 0)
         {
             // D-14: un rechazo no graba nada; la operación termina sin cambios registrados.
@@ -224,13 +264,38 @@ public sealed class AltaPresupuesto(
         var numero = NumeracionPresupuesto.Siguiente(await presupuestos.ObtenerUltimoNumeroAsync(operacion));
         // D-06: la fecha calendario de la PC, no la UTC.
         var fecha = DateOnly.FromDateTime(reloj.GetLocalNow().DateTime);
-        presupuestos.Agregar(Presupuesto.Nuevo(numero, fecha, cliente, lineas));
+        presupuestos.Agregar(Presupuesto.Nuevo(numero, fecha, cliente, LineasValidas(resultados)));
 
         // D-07 y D-30: un conflicto o cualquier otra falla al confirmar se propaga sin atenderla ni envolverla.
         await unidadDeTrabajo.ConfirmarAsync(operacion);
         return new Desenlace(numero, null);
     }
 
+    /// <summary>Las líneas de los resultados, en orden. Sin errores, ControlarTopes ya aceptó todas como válidas.</summary>
+    /// <exception cref="UnreachableException">Algún resultado no tiene línea: el control previo no se hizo.</exception>
+    private static List<LineaPresupuesto> LineasValidas(IReadOnlyList<ResultadoLinea> resultados)
+    {
+        var lineas = new List<LineaPresupuesto>(resultados.Count);
+        foreach (var resultado in resultados)
+        {
+            if (!resultado.EsValida)
+            {
+                throw new UnreachableException("Línea rechazada después de controlar los topes.");
+            }
+
+            lineas.Add(resultado.Linea);
+        }
+
+        return lineas;
+    }
+
     /// <summary>El número grabado, o el rechazo de alguna línea (sin grabar nada).</summary>
     private sealed record Desenlace(long Numero, ResultadoAltaPresupuesto? Rechazo);
+
+    /// <summary>Una línea ya validada por <see cref="ValidacionPresupuesto.Validar"/>, sin el artículo leído.</summary>
+    /// <remarks>Sin valores en <see cref="object.ToString"/>, como <see cref="DatosLinea"/> (D-17).</remarks>
+    private sealed record LineaPedida(long CodigoArticulo, int Cantidad, decimal PorcentajeDescuento)
+    {
+        private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+    }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Optica.Application.Comun;
 using Optica.Application.Presupuestos;
@@ -19,6 +20,8 @@ public class AltaPresupuestoTests
     private const string TextoArticuloNoDisponible = "Ese artículo ya no está disponible. Quitá la línea y buscalo de nuevo";
     private const string TextoPrecioNegativo = "El precio unitario no puede ser negativo";
     private const string TextoSinLineas = "Agregá al menos una línea al presupuesto";
+    private const string TextoImporteLinea = "El precio final de la línea es demasiado alto.";
+    private const string TextoTotal = "El total del presupuesto es demasiado alto.";
 
     /// <summary>10/03/2026 12:00 en Argentina.</summary>
     private static readonly DateTimeOffset MedioDia10DeMarzo = new(2026, 3, 10, 15, 0, 0, TimeSpan.Zero);
@@ -36,7 +39,11 @@ public class AltaPresupuestoTests
     private static DatosCliente ClienteCompleto() => new(Apellido, Nombre, Dni, Domicilio, Email, Telefono);
 
     private static DatosPresupuesto Datos(DatosCliente? cliente = null, params long?[] lineas) =>
-        new(cliente ?? ClienteCompleto(), lineas.Length == 0 ? [15] : lineas);
+        new(cliente ?? ClienteCompleto(), Lineas(lineas.Length == 0 ? [15] : lineas));
+
+    /// <summary>Una línea por código, con Cantidad 1 y Descuento 0.</summary>
+    private static DatosLinea?[] Lineas(params long?[] codigos) =>
+        [.. codigos.Select(codigo => new DatosLinea(codigo, 1, 0m))];
 
     private void AssertSinLeerLaBase()
     {
@@ -63,7 +70,7 @@ public class AltaPresupuestoTests
         AssertSinLeerLaBase();
 
         // Sin el cliente: los tres obligatorios faltan, igual que si llegaran vacíos.
-        var sinCliente = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(null, [15]));
+        var sinCliente = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(null, Lineas(15)));
         Assert.Equal(["apellido", "nombre", "dni"], sinCliente.Errores.Select(error => error.Campo));
         AssertSinLeerLaBase();
     }
@@ -161,7 +168,7 @@ public class AltaPresupuestoTests
     [MemberData(nameof(LineasInvalidas))]
     public async Task Alta_101LineasOCodigoFaltante_Rechazado(long?[] lineas, ErrorValidacion[] esperados)
     {
-        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(ClienteCompleto(), lineas));
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(ClienteCompleto(), Lineas(lineas)));
 
         Assert.Equal(esperados, resultado.Errores);
         AssertSinLeerLaBase();
@@ -171,7 +178,7 @@ public class AltaPresupuestoTests
     public async Task Alta_100Lineas_Grabado()
     {
         var resultado = await CrearCasoDeUso().EjecutarAsync(
-            new DatosPresupuesto(ClienteCompleto(), Enumerable.Repeat<long?>(15, 100).ToArray()));
+            new DatosPresupuesto(ClienteCompleto(), Lineas(Enumerable.Repeat<long?>(15, 100).ToArray())));
 
         Assert.True(resultado.EsGrabado);
         Assert.Equal(100, resultado.Presupuesto.Lineas.Count);
@@ -403,6 +410,128 @@ public class AltaPresupuestoTests
             _unidad.Articulos.Accesos);
     }
 
+    // Cantidad, descuento y cálculos (FEAT-003b).
+
+    /// <summary>AC-01: Precio Unitario 1.000,00, Cantidad 3 y 10 % dan 900,00 y 2.700,00, con escala 2 (D-14).</summary>
+    [Fact]
+    public async Task Alta_CantidadYDescuento_GrabaPreciosCalculados()
+    {
+        _unidad.SembrarArticulo(20, "Lente bifocal", 1000m);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(
+            new DatosPresupuesto(ClienteCompleto(), [new DatosLinea(20, 3, 10m)]));
+
+        Assert.True(resultado.EsGrabado);
+        var linea = Assert.Single(resultado.Presupuesto.Lineas);
+        Assert.Equal(new LineaGrabada(20, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m), linea);
+        Assert.Equal("900.00", linea.PrecioConDescuento.ToString(CultureInfo.InvariantCulture));
+        Assert.Equal("2700.00", linea.PrecioFinal.ToString(CultureInfo.InvariantCulture));
+        var guardada = Assert.Single(Assert.Single(_unidad.Guardados).Lineas);
+        Assert.Equal((3, 10m, 900m, 2700m),
+            (guardada.Cantidad, guardada.PorcentajeDescuento, guardada.PrecioConDescuento, guardada.PrecioFinal));
+    }
+
+    /// <summary>
+    /// AC-06 y AC-07: 6,67 × 3 con 50 % da 3,34 y 10,02 (redondea antes de multiplicar); con la línea de AC-01 el total
+    /// es 2.710,02, el del dominio.
+    /// </summary>
+    [Fact]
+    public async Task Alta_DevuelveTotal()
+    {
+        _unidad.SembrarArticulo(20, "Lente bifocal", 1000m);
+        _unidad.SembrarArticulo(21, "Paño", 6.67m);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(
+            ClienteCompleto(), [new DatosLinea(21, 3, 50m), new DatosLinea(20, 3, 10m)]));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal([10.02m, 2700m], resultado.Presupuesto.Lineas.Select(linea => linea.PrecioFinal));
+        Assert.Equal(3.34m, resultado.Presupuesto.Lineas[0].PrecioConDescuento);
+        Assert.Equal(2710.02m, resultado.Presupuesto.Total);
+        Assert.Equal("2710.02", resultado.Presupuesto.Total.ToString(CultureInfo.InvariantCulture));
+        Assert.Equal(Assert.Single(_unidad.Guardados).Total, resultado.Presupuesto.Total);
+    }
+
+    /// <summary>La cantidad y el descuento se validan con el cliente, sin leer la base (D-06).</summary>
+    [Fact]
+    public async Task Alta_CantidadODescuentoInvalidos_ErroresSinLeerLaBase()
+    {
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(
+            ClienteCompleto(), [new DatosLinea(15, 0, 0m), new DatosLinea(15, 10_000, 10.555m), new DatosLinea(15, 1, null)]));
+
+        Assert.Equal(
+            [
+                new ErrorValidacion("lineas[0].cantidad", "La cantidad debe ser un número entero mayor a 0"),
+                new ErrorValidacion("lineas[1].cantidad", "Usá hasta 9.999 unidades."),
+                new ErrorValidacion("lineas[1].porcentajeDescuento", "Ingresá hasta 2 decimales."),
+                new ErrorValidacion("lineas[2].porcentajeDescuento", "El descuento debe estar entre 0 y 100"),
+            ],
+            resultado.Errores);
+        AssertSinLeerLaBase();
+    }
+
+    public static TheoryData<string, decimal[], int, ErrorValidacion> ImportesExcedidos => new()
+    {
+        // Entra en el tipo del dominio, no en el contrato con la web (D-04).
+        { "linea", [10_000_000_000m], 9_999, new ErrorValidacion("lineas[0].cantidad", TextoImporteLinea) },
+        // Supera el límite del tipo: el dominio devuelve ImporteExcedido (D-17).
+        { "dominio", [10_000_000_000_000m], 9_999, new ErrorValidacion("lineas[0].cantidad", TextoImporteLinea) },
+        // Cada línea entra; la suma no.
+        { "total", [50_000_000_000_000m, 50_000_000_000_000m], 1, new ErrorValidacion("lineas", TextoTotal) },
+    };
+
+    /// <summary>
+    /// D-04 y D-17: un Precio Final o un total por encima de <c>ImporteMaximoContrato</c> (o del límite del tipo) se
+    /// rechaza con el texto fijo, sin numerar ni grabar nada, y no termina en una excepción.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ImportesExcedidos))]
+    public async Task Alta_ImporteExcedido_Rechazado(string caso, decimal[] precios, int cantidad, ErrorValidacion esperado)
+    {
+        var lineas = new List<DatosLinea?>();
+        for (var indice = 0; indice < precios.Length; indice++)
+        {
+            _unidad.SembrarArticulo(30 + indice, "Artículo " + caso, precios[indice]);
+            lineas.Add(new DatosLinea(30 + indice, cantidad, 0m));
+        }
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(ClienteCompleto(), lineas));
+
+        Assert.False(resultado.EsGrabado);
+        Assert.Equal([esperado], resultado.Errores);
+        Assert.Equal(0, _unidad.Agregados);
+        Assert.Empty(_unidad.Guardados);
+        Assert.DoesNotContain(_unidad.Articulos.Accesos, acceso => acceso.Accion == PresupuestosEnMemoria.AccesoUltimoNumero);
+    }
+
+    /// <summary>Justo en el tope del contrato, la línea y el total se graban.</summary>
+    [Fact]
+    public async Task Alta_ImporteEnElTope_Grabado()
+    {
+        _unidad.SembrarArticulo(30, "Artículo tope", 90_071_992_547_409.90m);
+        _unidad.SembrarArticulo(31, "Artículo centavo", 0.01m);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(
+            ClienteCompleto(), [new DatosLinea(30, 1, 0m), new DatosLinea(31, 1, 0m)]));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(90_071_992_547_409.91m, resultado.Presupuesto.Total);
+    }
+
+    /// <summary>Un rechazo del catálogo y un importe excedido: primero se informa el del catálogo, que no depende de la cantidad.</summary>
+    [Fact]
+    public async Task Alta_ArticuloInactivoEImporteExcedido_InformaElDelCatalogo()
+    {
+        _unidad.SembrarArticulo(16, "Lente orgánico", 900m, activo: false);
+        _unidad.SembrarArticulo(30, "Artículo caro", 10_000_000_000m);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(new DatosPresupuesto(
+            ClienteCompleto(), [new DatosLinea(16, 1, 0m), new DatosLinea(30, 9_999, 0m)]));
+
+        Assert.Equal([new ErrorValidacion("lineas[0]", TextoArticuloNoDisponible)], resultado.Errores);
+        Assert.Empty(_unidad.Guardados);
+    }
+
     /// <summary>
     /// D-17: el alta no recibe un registrador, así que no registra nada; y si quien la llama registra los datos o el
     /// resultado, el registrador no recibe ninguno de los seis datos del cliente (los records no imprimen sus miembros).
@@ -429,7 +558,7 @@ public class AltaPresupuestoTests
         object?[] registrados =
         [
             datos, datos.Cliente, cliente, new PresupuestoGrabado(1, new DateOnly(2026, 3, 10),
-                PresupuestoGrabado.EstadoBorrador, cliente, []),
+                PresupuestoGrabado.EstadoBorrador, cliente, []) { Total = 0m },
             grabado, grabado.Presupuesto, grabado.Presupuesto?.Cliente, invalido, leido, leido?.Cliente,
         ];
         foreach (var registrado in registrados)

@@ -23,7 +23,10 @@ public sealed class PresupuestosApiTests
     private const string AccionCuerpoIlegible = "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
     private const string TituloNoEncontrado = "No se encontró el presupuesto.";
 
-    private static readonly string[] CamposRespuesta = ["numero", "fecha", "estado", "cliente", "lineas"];
+    private const string TextoCantidadInvalida = "La cantidad debe ser un número entero mayor a 0";
+    private const string TextoDescuentoFueraDeRango = "El descuento debe estar entre 0 y 100";
+
+    private static readonly string[] CamposRespuesta = ["numero", "fecha", "estado", "cliente", "lineas", "total"];
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
     private static readonly string[] CamposLinea =
@@ -223,6 +226,28 @@ public sealed class PresupuestosApiTests
         Assert.DoesNotContain("zq7", texto, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("5555", texto, StringComparison.Ordinal);
         await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+
+        // R-04 (FEAT-003b): tampoco repiten la cantidad ni el descuento de la línea.
+        var lineas = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":98765,\"porcentajeDescuento\":12.345}",
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":-4321,\"porcentajeDescuento\":543.21}"));
+
+        await AfirmarRechazoAsync(
+            lineas,
+            new()
+            {
+                ["lineas[0].cantidad"] = ["Usá hasta 9.999 unidades."],
+                ["lineas[0].porcentajeDescuento"] = ["Ingresá hasta 2 decimales."],
+                ["lineas[1].cantidad"] = [TextoCantidadInvalida],
+                ["lineas[1].porcentajeDescuento"] = [TextoDescuentoFueraDeRango],
+            });
+        var textoLineas = await lineas.Content.ReadAsStringAsync();
+        foreach (var valor in new[] { "98765", "12.345", "4321", "543.21" })
+        {
+            Assert.DoesNotContain(valor, textoLineas, StringComparison.Ordinal);
+        }
+
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
     }
 
     /// <summary>
@@ -403,34 +428,254 @@ public sealed class PresupuestosApiTests
     }
 
     /// <summary>
-    /// AC-15 y AC-18: un artículo de precio de venta 1850 (costo 1850, margen 0) da una línea con su código, su
-    /// descripción, Precio Unitario 1850, Cantidad 1, Descuento 0 y los dos precios en 1850. Un precio, una descripción,
-    /// una cantidad o un descuento enviados en la línea se ignoran: el servidor copia los del catálogo (D-12, FR-11).
+    /// AC-15 de FEAT-003a, invertida por FEAT-003b: la Cantidad y el Descuento enviados en la línea se usan (FR-01); el
+    /// precio unitario y la descripción enviados se siguen ignorando: el servidor copia los del catálogo (D-12, FR-11).
+    /// Precio de venta 1850, Cantidad 5 y 50 % dan 925,00 y 4.625,00.
     /// </summary>
     [Fact]
-    public async Task Post_Articulo1850_Linea1850Cantidad1Descuento0()
+    public async Task Post_Articulo1850_UsaCantidadYDescuentoDelPedido()
     {
         using var fabrica = new FabricaApi();
         var cliente = fabrica.CrearClienteSinCookies();
         var cookie = await Http.DefinirAsync(cliente);
         var codigo = await GrabarArticuloAsync(cliente, cookie, "Armazón acetato", "ACE-1", 1850m, 0m);
-        var cuerpo =
-            "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},\"lineas\":[{\"codigoArticulo\":"
-            + codigo + ",\"precioUnitario\":1,\"descripcion\":\"Otra\",\"cantidad\":5,\"porcentajeDescuento\":50}]}";
+        var cuerpo = CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo
+            + ",\"precioUnitario\":1,\"descripcion\":\"Otra\",\"cantidad\":5,\"porcentajeDescuento\":50}");
 
         var respuesta = await PostAsync(cliente, cookie, cuerpo);
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         AfirmarLinea(
             Assert.Single((await Http.JsonAsync(respuesta)).GetProperty("lineas").EnumerateArray()),
-            codigo,
-            "Armazón acetato",
-            1850m);
+            codigo, "Armazón acetato", 1850m, 5, 50m, 925m, 4625m);
         AfirmarLinea(
             Assert.Single((await LeerAsync(cliente, cookie, 1)).GetProperty("lineas").EnumerateArray()),
-            codigo,
-            "Armazón acetato",
-            1850m);
+            codigo, "Armazón acetato", 1850m, 5, 50m, 925m, 4625m);
+    }
+
+    /// <summary>
+    /// AC-01 y AC-07 (D-05, D-14): 1.000,00 × 3 con 10 % da 900,00 y 2.700,00; con una línea de 1.850,00 el total es
+    /// 4.550,00. El alta y la consulta devuelven <c>total</c> después de <c>lineas</c>, con el mismo cuerpo.
+    /// </summary>
+    [Fact]
+    public async Task Get_DevuelveTotal()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+        var armazon = await GrabarArticuloAsync(cliente, cookie, "Armazón acetato", "ACE-1", 1850m, 0m);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + lente + ",\"cantidad\":3,\"porcentajeDescuento\":10}",
+            "{\"codigoArticulo\":" + armazon + ",\"cantidad\":1,\"porcentajeDescuento\":0}"));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var alta = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposRespuesta, Nombres(alta));
+        Assert.Equal(4550m, alta.GetProperty("total").GetDecimal());
+        AfirmarLinea(alta.GetProperty("lineas")[0], lente, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m);
+        AfirmarLinea(alta.GetProperty("lineas")[1], armazon, "Armazón acetato", 1850m);
+
+        var leido = await LeerAsync(cliente, cookie, 1);
+        Assert.Equal(CamposRespuesta, Nombres(leido));
+        Assert.Equal(4550m, leido.GetProperty("total").GetDecimal());
+        Assert.Equal(alta.GetRawText(), leido.GetRawText());
+    }
+
+    /// <summary>
+    /// R-01: el pedido no fija precios. Un <c>precioConDescuento</c>, un <c>precioFinal</c> o un <c>total</c> enviados se
+    /// ignoran y se graba lo que calcula el servidor.
+    /// </summary>
+    [Fact]
+    public async Task Post_PreciosEnElPedido_SeIgnoran()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+        var cuerpo =
+            "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"99999999\"},\"total\":1,"
+            + "\"lineas\":[{\"codigoArticulo\":" + codigo + ",\"cantidad\":3,\"porcentajeDescuento\":10,"
+            + "\"precioConDescuento\":1,\"precioFinal\":1}]}";
+
+        var respuesta = await PostAsync(cliente, cookie, cuerpo);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var leido = await LeerAsync(cliente, cookie, 1);
+        AfirmarLinea(leido.GetProperty("lineas")[0], codigo, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m);
+        Assert.Equal(2700m, leido.GetProperty("total").GetDecimal());
+    }
+
+    /// <summary>AC-02: Cantidad 0, -1 o ausente (o null), 400 en <c>lineas[i].cantidad</c> con el texto del PRD.</summary>
+    [Theory]
+    [InlineData(",\"cantidad\":0")]
+    [InlineData(",\"cantidad\":-1")]
+    [InlineData(",\"cantidad\":null")]
+    [InlineData("")]
+    public async Task Post_CantidadInvalida_400(string cantidad)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":0}",
+            "{\"codigoArticulo\":" + codigo + cantidad + ",\"porcentajeDescuento\":0}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[1].cantidad"] = [TextoCantidadInvalida] });
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>
+    /// D-07 y D-09: una cantidad que no es un entero JSON escrito con dígitos (2.5, 1e3 —el lector no la toma como
+    /// 1000—, un texto) es un cuerpo ilegible en <c>lineas[i].cantidad</c>, con el texto de AC-02 y sin el valor ni el
+    /// mensaje del lector.
+    /// </summary>
+    [Theory]
+    [InlineData("2.5")]
+    [InlineData("1e3")]
+    [InlineData("\"3\"")]
+    [InlineData("\"Zq7-marcado\"")]
+    public async Task Post_CantidadDecimal_400(string cantidad)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":0}",
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":" + cantidad + ",\"porcentajeDescuento\":0}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[1].cantidad"] = [TextoCantidadInvalida] });
+        AfirmarSinDetallesDelLector(await respuesta.Content.ReadAsStringAsync(), "2.5", "Zq7");
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>
+    /// D-07 y D-09: un descuento que no es un número JSON (<c>"10"</c>, un texto, un objeto) es un cuerpo ilegible en
+    /// <c>lineas[i].porcentajeDescuento</c>, con el texto de AC-03 y sin el valor ni el mensaje del lector.
+    /// </summary>
+    [Theory]
+    [InlineData("\"10\"")]
+    [InlineData("\"Zq7-marcado\"")]
+    [InlineData("{\"valor\":10}")]
+    public async Task Post_DescuentoTexto_400(string descuento)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":" + descuento + "}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[0].porcentajeDescuento"] = [TextoDescuentoFueraDeRango] });
+        AfirmarSinDetallesDelLector(await respuesta.Content.ReadAsStringAsync(), "\"10\"", "Zq7");
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>
+    /// D-01: un entero JSON positivo que no entra en un <c>int</c> también es "más de 9.999" y lleva ese texto, no el de
+    /// un cuerpo ilegible; un entero negativo enorme sigue con el de AC-02. Ninguno repite el valor.
+    /// </summary>
+    [Theory]
+    [InlineData("2147483648", "Usá hasta 9.999 unidades.")]
+    [InlineData("10000000000", "Usá hasta 9.999 unidades.")]
+    [InlineData("123456789012345678901234567890123456789", "Usá hasta 9.999 unidades.")]
+    [InlineData("-2147483649", TextoCantidadInvalida)]
+    [InlineData("-10000000000", TextoCantidadInvalida)]
+    public async Task Post_CantidadFueraDeInt_400(string cantidad, string accion)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":" + cantidad + ",\"porcentajeDescuento\":0}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[0].cantidad"] = [accion] });
+        AfirmarSinDetallesDelLector(await respuesta.Content.ReadAsStringAsync(), cantidad.TrimStart('-'));
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>AC-09 (D-01): Cantidad 10.000, 400 en <c>lineas[i].cantidad</c> con "Usá hasta 9.999 unidades.".</summary>
+    [Fact]
+    public async Task Post_CantidadMayorAlMaximo_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":10000,\"porcentajeDescuento\":0}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[0].cantidad"] = ["Usá hasta 9.999 unidades."] });
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>AC-03: descuento -1, 100.01, ausente o null, 400 en <c>lineas[i].porcentajeDescuento</c>.</summary>
+    [Theory]
+    [InlineData(",\"porcentajeDescuento\":-1")]
+    [InlineData(",\"porcentajeDescuento\":100.01")]
+    [InlineData(",\"porcentajeDescuento\":null")]
+    [InlineData("")]
+    public async Task Post_DescuentoFueraDeRango_400(string descuento)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":1" + descuento + "}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[0].porcentajeDescuento"] = [TextoDescuentoFueraDeRango] });
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>D-02: descuento 10.555, 400 en <c>lineas[i].porcentajeDescuento</c> con "Ingresá hasta 2 decimales.".</summary>
+    [Fact]
+    public async Task Post_DescuentoConTresDecimales_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        var respuesta = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":10.555}"));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[0].porcentajeDescuento"] = ["Ingresá hasta 2 decimales."] });
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
+    }
+
+    /// <summary>
+    /// D-04 por la Api: un Precio Final por encima del tope del contrato responde 400 en <c>lineas[i].cantidad</c>, no
+    /// 500, y no graba nada. El artículo de 10.000.000.000 entra en el catálogo; por 9.999 ya no entra en la web.
+    /// </summary>
+    [Fact]
+    public async Task Post_ImporteExcedido_400SinGrabar()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie, "Artículo caro", "CAR-1", 10_000_000_000m, 0m);
+
+        var linea = await PostAsync(cliente, cookie, CuerpoConLineas(
+            "{\"codigoArticulo\":" + codigo + ",\"cantidad\":9999,\"porcentajeDescuento\":0}"));
+        var total = await PostAsync(cliente, cookie, CuerpoConLineas(
+            Enumerable.Repeat("{\"codigoArticulo\":" + codigo + ",\"cantidad\":1000,\"porcentajeDescuento\":0}", 10)
+                .ToArray()));
+
+        await AfirmarRechazoAsync(linea, new() { ["lineas[0].cantidad"] = ["El precio final de la línea es demasiado alto."] });
+        await AfirmarRechazoAsync(total, new() { ["lineas"] = ["El total del presupuesto es demasiado alto."] });
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 1);
     }
 
     /// <summary>
@@ -532,8 +777,14 @@ public sealed class PresupuestosApiTests
         JsonSerializer.Serialize(new
         {
             cliente = new { apellido, nombre, dni, domicilio, email, telefono },
-            lineas = codigos.Select(codigo => new { codigoArticulo = codigo }).ToArray(),
+            lineas = codigos.Select(codigo => new { codigoArticulo = codigo, cantidad = 1, porcentajeDescuento = 0 })
+                .ToArray(),
         });
+
+    /// <summary>Un cliente ficticio válido (DNI fuera del rango que se emite) y las líneas JSON tal cual.</summary>
+    private static string CuerpoConLineas(params string[] lineas) =>
+        "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"99999999\"},\"lineas\":["
+        + string.Join(",", lineas) + "]}";
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient cliente, string cookie, string cuerpo) =>
         Http.PostJsonAsync(cliente, Ruta, cuerpo, cookie);
@@ -611,17 +862,35 @@ public sealed class PresupuestosApiTests
         Assert.Equal(telefono, Texto(datos.GetProperty("telefono")));
     }
 
-    /// <summary>Una línea con Cantidad 1, Descuento 0 y los tres precios iguales al de venta del artículo (D-03).</summary>
-    private static void AfirmarLinea(JsonElement linea, long codigo, string descripcion, decimal precio)
+    /// <summary>Una línea con Cantidad 1, Descuento 0 y los tres precios iguales al de venta del artículo.</summary>
+    private static void AfirmarLinea(JsonElement linea, long codigo, string descripcion, decimal precio) =>
+        AfirmarLinea(linea, codigo, descripcion, precio, 1, 0m, precio, precio);
+
+    private static void AfirmarLinea(
+        JsonElement linea, long codigo, string descripcion, decimal precio, int cantidad, decimal descuento,
+        decimal precioConDescuento, decimal precioFinal)
     {
         Assert.Equal(CamposLinea, Nombres(linea));
         Assert.Equal(codigo, linea.GetProperty("codigoArticulo").GetInt64());
         Assert.Equal(descripcion, linea.GetProperty("descripcion").GetString());
         Assert.Equal(precio, linea.GetProperty("precioUnitario").GetDecimal());
-        Assert.Equal(1, linea.GetProperty("cantidad").GetInt32());
-        Assert.Equal(0m, linea.GetProperty("porcentajeDescuento").GetDecimal());
-        Assert.Equal(precio, linea.GetProperty("precioConDescuento").GetDecimal());
-        Assert.Equal(precio, linea.GetProperty("precioFinal").GetDecimal());
+        Assert.Equal(cantidad, linea.GetProperty("cantidad").GetInt32());
+        Assert.Equal(descuento, linea.GetProperty("porcentajeDescuento").GetDecimal());
+        Assert.Equal(precioConDescuento, linea.GetProperty("precioConDescuento").GetDecimal());
+        Assert.Equal(precioFinal, linea.GetProperty("precioFinal").GetDecimal());
+    }
+
+    /// <summary>R-04: el 400 de un cuerpo ilegible no trae el mensaje del lector, la ruta JSON ni los valores dados.</summary>
+    private static void AfirmarSinDetallesDelLector(string texto, params string[] valores)
+    {
+        Assert.DoesNotContain("JSON", texto, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("LineNumber", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("$.", texto, StringComparison.Ordinal);
+        foreach (var valor in valores)
+        {
+            Assert.DoesNotContain(valor, texto, StringComparison.Ordinal);
+        }
     }
 
     private static string? Texto(JsonElement valor) =>

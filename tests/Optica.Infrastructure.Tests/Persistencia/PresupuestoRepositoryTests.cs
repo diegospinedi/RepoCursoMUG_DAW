@@ -429,6 +429,33 @@ public partial class PresupuestoRepositoryTests
                 "typeof(Cantidad), typeof(DescuentoCentesimos) FROM LineaPresupuesto")));
     }
 
+    /// <summary>
+    /// FEAT-003b: Cantidad 3 y 10 % sobre 1.000,00 se guardan en centésimos (descuento 1000, 90000 y 270000) y se leen
+    /// igual, con el total del dominio en 2.700,00.
+    /// </summary>
+    [Fact]
+    public async Task Repositorio_LeeCantidadYDescuento()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = await GrabarArticulo(baseTemporal, "LEN-1", "Lente bifocal", 1000m);
+        var articulo = await LeerArticulo(baseTemporal, codigo);
+        var resultado = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 3, porcentajeDescuento: 10m);
+        Assert.True(resultado.EsValida);
+
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [resultado.Linea]));
+
+        Assert.Equal(
+            ["1", "1", codigo.ToString(CultureInfo.InvariantCulture), "Lente bifocal", "100000", "90000", "270000", "3",
+                "1000"],
+            Assert.Single(Filas(cadena, SelectLinea)));
+        var leido = await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(1);
+        var linea = Assert.Single(leido!.Lineas);
+        Assert.Equal((3, 10m, 900m, 2700m),
+            (linea.Cantidad, linea.PorcentajeDescuento, linea.PrecioConDescuento, linea.PrecioFinal));
+        Assert.Equal(2700m, leido.Total);
+    }
+
     [Fact]
     public async Task Agregar_Fecha10_03_2026_GuardaTextoYLeeIgual()
     {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Optica.Application.Comun;
+using Optica.Domain.Comun;
 using Optica.Domain.Presupuestos;
 
 namespace Optica.Application.Presupuestos;
@@ -55,6 +56,86 @@ public static class ValidacionPresupuesto
     /// <summary>El código de artículo más alto que se acepta: 2^53 − 1, el entero exacto más grande de JavaScript.</summary>
     public const long CodigoArticuloMaximo = 9_007_199_254_740_991;
 
+    /// <summary>El texto de AC-02, tal cual lo fija el PRD: cantidad ausente, no entera o menor que 1.</summary>
+    public const string AccionCantidadInvalida = "La cantidad debe ser un número entero mayor a 0";
+
+    /// <summary>Cantidad mayor que <see cref="CalculoLinea.CantidadMaxima"/> (AC-09, D-01).</summary>
+    public const string AccionCantidadMaxima = "Usá hasta 9.999 unidades.";
+
+    /// <summary>El texto de AC-03, tal cual lo fija el PRD: descuento ausente o fuera de 0..100 (D-02).</summary>
+    public const string AccionDescuentoFueraDeRango = "El descuento debe estar entre 0 y 100";
+
+    /// <summary>Precio Final de la línea por encima de <see cref="ImporteMaximoContrato"/> (D-04).</summary>
+    public const string AccionImporteLineaExcedido = "El precio final de la línea es demasiado alto.";
+
+    /// <summary>Total del presupuesto por encima de <see cref="ImporteMaximoContrato"/> (D-04).</summary>
+    public const string AccionTotalExcedido = "El total del presupuesto es demasiado alto.";
+
+    /// <summary>
+    /// El importe más alto que admite el contrato con la web: <c>Number.MAX_SAFE_INTEGER / 100</c>, el mayor número de
+    /// centésimos que JavaScript lee exacto (D-04, ADR-016). Es un límite técnico, como
+    /// <see cref="CodigoArticuloMaximo"/>, y más bajo que el límite del tipo del dominio
+    /// (<c>ReglasImporte.ImporteMaximo</c>).
+    /// </summary>
+    public const decimal ImporteMaximoContrato = 90_071_992_547_409.91m;
+
+    /// <summary>El campo de la cantidad de la línea <paramref name="indice"/>: <c>lineas[i].cantidad</c> (D-06).</summary>
+    public static string CampoCantidad(int indice) =>
+        string.Create(CultureInfo.InvariantCulture, $"{CampoLinea(indice)}.cantidad");
+
+    /// <summary>
+    /// El campo del descuento de la línea <paramref name="indice"/>: <c>lineas[i].porcentajeDescuento</c> (D-06).
+    /// </summary>
+    public static string CampoDescuento(int indice) =>
+        string.Create(CultureInfo.InvariantCulture, $"{CampoLinea(indice)}.porcentajeDescuento");
+
+    /// <summary>
+    /// Los topes de importe del contrato, evaluados en un solo lugar (D-04, D-11): cada línea cuyo Precio Final supera
+    /// <see cref="ImporteMaximoContrato"/>, o que el dominio rechazó con <see cref="ResultadoLinea.ImporteExcedido"/>,
+    /// da <see cref="AccionImporteLineaExcedido"/> en <c>lineas[i].cantidad</c>; si todas entran y la suma de sus
+    /// Precios Finales supera el tope, <see cref="AccionTotalExcedido"/> en <c>lineas</c>. Vacío si se puede grabar.
+    /// </summary>
+    /// <remarks>
+    /// Con todas las líneas dentro del tope, la suma también entra en el límite del tipo del dominio: el constructor de
+    /// <see cref="Presupuesto"/> no la rechaza después.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="resultados"/> o alguno de ellos es null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Algún resultado es un rechazo que no es de importe (inactivo, precio negativo): se traduce antes de controlar los
+    /// topes.
+    /// </exception>
+    public static IReadOnlyList<ErrorValidacion> ControlarTopes(IReadOnlyList<ResultadoLinea> resultados)
+    {
+        ArgumentNullException.ThrowIfNull(resultados);
+        var errores = new List<ErrorValidacion>();
+        var total = 0m;
+        for (var indice = 0; indice < resultados.Count; indice++)
+        {
+            var resultado = resultados[indice] ?? throw new ArgumentNullException(nameof(resultados));
+            if (resultado.EsValida && resultado.Linea.PrecioFinal <= ImporteMaximoContrato)
+            {
+                // Cada sumando es como máximo ImporteMaximoContrato (~9 × 10^13): la suma entra en decimal sin desbordar.
+                total += resultado.Linea.PrecioFinal;
+            }
+            else if (resultado.EsValida || resultado.EsImporteExcedido)
+            {
+                errores.Add(new ErrorValidacion(CampoCantidad(indice), AccionImporteLineaExcedido));
+            }
+            else
+            {
+                throw new ArgumentException("Hay un rechazo de línea que no es de importe.", nameof(resultados));
+            }
+        }
+
+        // Con una línea por encima ya no se graba, y la suma deja de ser un importe que la web lea: no se informa.
+        if (errores.Count == 0 && total > ImporteMaximoContrato)
+        {
+            errores.Add(new ErrorValidacion(CampoLineas, AccionTotalExcedido));
+        }
+
+        return errores;
+    }
+
     /// <summary>El campo de la línea <paramref name="indice"/>, desde 0: <c>lineas[i]</c> (D-20).</summary>
     public static string CampoLinea(int indice) =>
         string.Create(CultureInfo.InvariantCulture, $"{CampoLineas}[{indice}]");
@@ -69,8 +150,10 @@ public static class ValidacionPresupuesto
     /// Evalúa el cliente con <see cref="PoliticaCliente"/> y la forma de las líneas, sin leer la base, y devuelve todos
     /// los errores: primero los del cliente, uno por campo como máximo, en el orden apellido, nombre, DNI, domicilio,
     /// email, teléfono; después los de las líneas: sin líneas o más de <see cref="LineasMaximas"/> en <c>lineas</c>, o
-    /// cada código faltante, no positivo o mayor que <see cref="CodigoArticuloMaximo"/> en <c>lineas[i]</c>. Un cliente
-    /// ausente cuenta como seis datos ausentes. Vacío si los datos se pueden grabar.
+    /// por cada línea, en este orden, el código faltante, no positivo o mayor que <see cref="CodigoArticuloMaximo"/> en
+    /// <c>lineas[i]</c>, la cantidad en <c>lineas[i].cantidad</c> (D-01) y el descuento en
+    /// <c>lineas[i].porcentajeDescuento</c> (D-02). Un cliente ausente cuenta como seis datos ausentes, y una línea
+    /// ausente, como sus tres datos ausentes. Vacío si los datos se pueden grabar.
     /// </summary>
     public static IReadOnlyList<ErrorValidacion> Validar(DatosPresupuesto datos)
     {
@@ -95,15 +178,51 @@ public static class ValidacionPresupuesto
         {
             for (var indice = 0; indice < lineas.Count; indice++)
             {
-                if (lineas[indice] is not (>= 1 and <= CodigoArticuloMaximo))
-                {
-                    errores.Add(ArticuloNoDisponible(indice));
-                }
+                ValidarLinea(lineas[indice], indice, errores);
             }
         }
 
         return errores;
     }
+
+    /// <summary>
+    /// Los errores de la línea <paramref name="indice"/>, en el orden artículo, cantidad, descuento. Una línea ausente
+    /// cuenta como sus tres datos ausentes, como el cliente ausente. La regla de cantidad y descuento es la del dominio
+    /// (<see cref="CalculoLinea"/>); acá solo se elige el campo y el texto de cada rechazo.
+    /// </summary>
+    private static void ValidarLinea(DatosLinea? linea, int indice, List<ErrorValidacion> errores)
+    {
+        if (linea?.CodigoArticulo is not (>= 1 and <= CodigoArticuloMaximo))
+        {
+            errores.Add(ArticuloNoDisponible(indice));
+        }
+
+        if (AccionDeLaCantidad(linea?.Cantidad) is { } accionCantidad)
+        {
+            errores.Add(new ErrorValidacion(CampoCantidad(indice), accionCantidad));
+        }
+
+        if (AccionDelDescuento(linea?.PorcentajeDescuento) is { } accionDescuento)
+        {
+            errores.Add(new ErrorValidacion(CampoDescuento(indice), accionDescuento));
+        }
+    }
+
+    /// <summary>Ausente o menor que el mínimo, AC-02; mayor que el máximo, AC-09 (D-01); si no, null.</summary>
+    private static string? AccionDeLaCantidad(int? cantidad) => cantidad switch
+    {
+        null or < CalculoLinea.CantidadMinima => AccionCantidadInvalida,
+        > CalculoLinea.CantidadMaxima => AccionCantidadMaxima,
+        _ => null,
+    };
+
+    /// <summary>Primero el rango (ausente o fuera de 0..100, AC-03), después la escala (D-02); si no, null.</summary>
+    private static string? AccionDelDescuento(decimal? descuento) => descuento switch
+    {
+        null or < CalculoLinea.DescuentoMinimo or > CalculoLinea.DescuentoMaximo => AccionDescuentoFueraDeRango,
+        { } valor when ReglasImporte.TieneMasDeDosDecimales(valor) => AccionesNumericas.HastaDosDecimales,
+        _ => null,
+    };
 
     /// <summary>El campo y la acción de una infracción del cliente.</summary>
     /// <exception cref="UnreachableException">
