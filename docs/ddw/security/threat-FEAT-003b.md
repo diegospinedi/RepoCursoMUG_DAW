@@ -68,10 +68,14 @@
 - **Spoofing:** sin identidades; el cliente HTTP usa la cookie de sesión existente.
 - **Tampering:** el cálculo en pantalla usa BigInt en centésimos y las mismas fórmulas que el servidor; la pantalla
   muestra lo que devuelve el servidor después de grabar, así una diferencia no queda grabada (R-05). `leerPresupuesto`
-  exige `total` y que sea la suma de los Precios Finales recibidos.
+  exige `total` y que sea la suma de los Precios Finales recibidos. Con el punto de miles (D-29), `validarCantidad`
+  solo acepta grupos de 3 dígitos bien formados y lo que envía es el entero ya leído, como número JSON: el servidor no
+  interpreta separadores y sigue validando 1 a 9.999 por su cuenta (R-01), así que un texto ambiguo no puede llegar
+  grabado como otra cantidad.
 - **Repudiation:** no aplica en el navegador.
 - **Information Disclosure:** las reglas no registran ni guardan nada; los mensajes son fijos.
-- **Denial of Service:** validación y cálculo constantes por línea en el navegador de la operadora.
+- **Denial of Service:** validación y cálculo constantes por línea en el navegador de la operadora; leer una cantidad con
+  puntos de miles es lineal en el largo del texto escrito, sin expresiones con retroceso exponencial.
 - **Elevation of Privilege:** no aplica.
 
 ### `web/src/paginas/NuevoPresupuesto.tsx` (con `Presupuesto.tsx`)

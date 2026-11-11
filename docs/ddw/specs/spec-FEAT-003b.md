@@ -6,8 +6,8 @@
 | PRD | docs/ddw/prd/prd-FEAT-003b.md |
 | Tier | FEATURE |
 | Date | 2026-11-11 |
-| Spec loops | 4 |
-| Loops since last human decision | 2 |
+| Spec loops | 5 |
+| Loops since last human decision | 0 |
 
 ## Summary
 La línea del presupuesto deja de grabarse con Cantidad 1 y Descuento 0 fijos (D-03 de FEAT-003a): la pantalla envía
@@ -224,12 +224,16 @@ encima de `ImporteMaximoContrato` (o un `ImporteExcedido` del dominio) en `Accio
 - `web/src/App.test.tsx` (modified) — el fixture de :295-315 con `total`.
 
 **Logic**
-Implements FR-02 a FR-07 en el navegador. `validarCantidad` acepta solo dígitos ASCII que formen un entero de 1 a
-9.999. `validarDescuento` lee con `leerDecimal` (coma o punto), primero el rango y después la escala (D-02).
+Implements FR-02 a FR-07 en el navegador. `validarCantidad` acepta un entero escrito con dígitos ASCII, sin separador
+o con punto de miles bien formado (grupos de 3 dígitos después del primero: "1.000" es 1000, "10.000" es diez mil;
+D-29, decisión del usuario), y lo valida de 1 a 9.999; un entero de cualquier largo mayor a 9.999 da
+`MENSAJE_CANTIDAD_MAXIMA`. Un punto mal agrupado ("1.00", "10.0000"), la coma, el signo o el exponente dan
+`MENSAJE_CANTIDAD_INVALIDA`. El servidor no cambia: recibe la cantidad como número JSON. `validarDescuento` lee con `leerDecimal` (coma o punto), primero el rango y después la escala (D-02).
 `calcularLinea` convierte el precio a centésimos con `centavosDe` (no `Math.round` de flotantes), aplica las fórmulas
 de D-04 con BigInt y devuelve `null` si el Precio Final supera `IMPORTE_MAXIMO_SEGURO`; `calcularTotal` suma con
-`sumarCentesimos` y devuelve `null` si el total lo supera. Por encima de 2^46 centésimos el recálculo en pantalla puede
-diferir un centavo del servidor (D-22 de FEAT-002a, aceptado en ADR-016).
+`sumarCentesimos` y devuelve `null` si el total lo supera. Por encima de 2^46 pesos el recálculo en pantalla puede
+diferir un centavo del servidor (D-22 de FEAT-002a, aceptado en ADR-016; umbral corregido y limitación aceptada por el
+usuario en D-23).
 
 **API contract**
 - Method + path: consume `POST /api/presupuestos` y `GET /api/presupuestos/{numero}` de Block 2.
@@ -244,7 +248,7 @@ diferir un centavo del servidor (D-22 de FEAT-002a, aceptado en ADR-016).
   NOT NULL con CHECK `>= 0`. La web solo lee y envía; `total` no se guarda (D-05).
 
 **Input validation**
-- Cantidad: texto con solo dígitos, entero 1 a 9.999.
+- Cantidad: entero de dígitos, sin separador o con punto de miles bien formado (D-29), de 1 a 9.999.
 - Descuento: decimal con coma o punto, 0 a 100, hasta 2 decimales.
 
 **Error handling**
@@ -259,6 +263,8 @@ diferir un centavo del servidor (D-22 de FEAT-002a, aceptado en ADR-016).
 - [ ] `calcularTotal_suma de AC-07` — validates AC-07
 - [ ] `validarCantidad_0_-1_2,5_vacía: inválida` — validates AC-02 (sad path)
 - [ ] `validarCantidad_10000: rechazada` — validates AC-09 (sad path)
+- [ ] `validarCantidad_PuntoDeMiles` — "1.000" vale 1000, "9.999" vale 9999, "10.000" y "1.000.000" dan
+  `MENSAJE_CANTIDAD_MAXIMA`, "1.00" y "10.0000" dan `MENSAJE_CANTIDAD_INVALIDA`; validates AC-09 y D-29
 - [ ] `validarDescuento_-1_100,01_vacío: inválido` — validates AC-03 (sad path)
 - [ ] `validarDescuento_10,555: inválido por la escala` (sad path)
 - [ ] `calcularLinea_importe excedido: rechazado` (sad path)
@@ -337,7 +343,8 @@ recalculados, ve los mensajes de AC-02 y AC-03, graba y ve el total en el presup
 **Required tests**
 - [ ] `AC-01: cantidad 3 y 10 % dan 900,00 y 2.700,00` — validates AC-01
 - [ ] `AC-02: cantidad 0, -1 y 2,5 rechazada junto al campo` — validates AC-02 (sad path)
-- [ ] `AC-09: cantidad 10.000 rechazada junto al campo` — validates AC-09 (sad path)
+- [ ] `AC-09: cantidad 10.000 rechazada junto al campo` — validates AC-09 (sad path); la operadora escribe "10.000"
+  con punto de miles, como dice el AC (D-29)
 - [ ] `AC-03: descuento -1 y 100,01 rechazado junto al campo` — validates AC-03 (sad path)
 - [ ] `AC-07: total de dos líneas 2.710,02` — validates AC-07
 - [ ] `AC-08: el presupuesto grabado muestra el total con IVA incluido` — validates AC-08
