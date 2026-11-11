@@ -38,6 +38,51 @@ public class ObtenerPresupuestoTests
     }
 
     /// <summary>
+    /// D-05: el total no se guarda ni lo vuelve a sumar Application; <c>PresupuestoGrabado.Total</c> es el
+    /// <see cref="Presupuesto.Total"/> del dominio, con su misma escala.
+    /// </summary>
+    [Fact]
+    public async Task PresupuestoGrabado_TotalCopiadoDelDominio()
+    {
+        var guardado = new Presupuesto(
+            9,
+            new DateOnly(2026, 1, 5),
+            EstadoPresupuesto.Borrador,
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, null, null),
+            [
+                new LineaPresupuesto(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m),
+                new LineaPresupuesto(2, "Lente bifocal", 1000m, 3, 10m, 900.00m, 2700.00m),
+            ]);
+        _unidad.Guardados.Add(guardado);
+
+        var leido = await new ObtenerPresupuesto(_unidad).EjecutarAsync(9);
+
+        Assert.NotNull(leido);
+        Assert.Equal(2710.02m, guardado.Total);
+        Assert.Equal(guardado.Total, leido.Total);
+        Assert.Equal(
+            guardado.Total.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            leido.Total.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(
+            [new LineaGrabada(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m),
+                new LineaGrabada(2, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m)],
+            leido.Lineas);
+    }
+
+    /// <summary>
+    /// <c>Total</c> es obligatorio al construir un <see cref="PresupuestoGrabado"/>: fuera de <c>Desde</c> no puede
+    /// quedar en 0 por olvido.
+    /// </summary>
+    [Fact]
+    public void PresupuestoGrabado_TotalEsObligatorio()
+    {
+        var total = typeof(PresupuestoGrabado).GetProperty(nameof(PresupuestoGrabado.Total));
+
+        Assert.NotNull(total);
+        Assert.True(total.IsDefined(typeof(System.Runtime.CompilerServices.RequiredMemberAttribute), inherit: false));
+    }
+
+    /// <summary>
     /// El estado del dominio se devuelve como texto fijo en minúsculas (D-19): Borrador "borrador" y Final "final". FEAT-003a
     /// solo graba Borrador, pero un presupuesto Final guardado se lee con su texto.
     /// </summary>

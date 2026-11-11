@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { leerDecimal, mostrarDecimal, mostrarEntero, mostrarImporte } from './numeros';
+import { centavosDe, leerDecimal, mostrarDecimal, mostrarEntero, mostrarImporte, sumarCentesimos } from './numeros';
 import { IMPORTE_MAXIMO_SEGURO } from './reglas';
 
 describe('leerDecimal', () => {
@@ -139,5 +139,43 @@ describe('mostrarImporte', () => {
   ])('mostrarImporte_NotacionExponencial_%d', (valor, texto) => {
     // Fuera del rango de la pantalla, pero sin romper el formato.
     expect(mostrarImporte(valor)).toBe(texto);
+  });
+});
+
+describe('sumarCentesimos_y_centavosDe', () => {
+  it.each([
+    [0, 0n],
+    [0.1, 10n],
+    [10.02, 1002n],
+    [2700, 270000n],
+    [1850.5, 185050n],
+    [0.005, 1n],
+    [38779820885963.52, 3877982088596352n],
+    // El `number` más cercano a 90.071.992.547.409,91 se escribe 90071992547409.9 (D-22 de FEAT-002a).
+    [Number.MAX_SAFE_INTEGER / 100, 9007199254740990n],
+  ])('centavosDe_%d_%s', (valor, centavos) => {
+    expect(centavosDe(valor)).toBe(centavos);
+  });
+
+  it('sumarCentesimos_SumaExactaEnCentesimos', () => {
+    // 0,1 + 0,2 en punto flotante da 0,30000000000000004; en centésimos, 30.
+    expect(0.1 + 0.2).not.toBe(0.3);
+    expect(sumarCentesimos([0.1, 0.2])).toBe(30n);
+    expect(sumarCentesimos([0.3])).toBe(30n);
+    // AC-07: 10,02 + 2.700,00 = 2.710,02.
+    expect(sumarCentesimos([10.02, 2700])).toBe(271002n);
+    expect(sumarCentesimos([])).toBe(0n);
+  });
+
+  it('sumarCentesimos_ImportesGrandesSinPerderCentavos', () => {
+    // La suma en `number` de estos dos ya no distingue el centavo; en BigInt es exacta.
+    expect(sumarCentesimos([70368744177663.99, 0.01])).toBe(7036874417766400n);
+    expect(sumarCentesimos([45035996273704.95, 45035996273704.95])).toBe(9007199254740990n);
+  });
+
+  it('sumarCentesimos_ConSigno', () => {
+    // Los importes de la línea no son negativos, pero la suma no pierde el signo si llega uno.
+    expect(sumarCentesimos([-150, 1850])).toBe(170000n);
+    expect(sumarCentesimos([-0.1, -0.2])).toBe(-30n);
   });
 });

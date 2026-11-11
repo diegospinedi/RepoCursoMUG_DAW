@@ -16,7 +16,9 @@ import { expect, test, type APIRequestContext, type Locator, type Page } from '@
  * día de la PC que corre la Api, que es la misma que corre esta suite (D-06, D-22).
  *
  * Los importes se leen como los muestra la pantalla ("1.850,00"), con el símbolo en el encabezado de la columna
- * ("Precio Unitario ($)", D-34): no se busca el texto "$1.850,00".
+ * ("Precio Unitario ($)", D-34): no se busca el texto "$1.850,00". Desde FEAT-003b la tabla de líneas tiene el total
+ * en `tfoot` y, en el alta, la Cantidad y el Descuento son campos: las filas de líneas se cuentan y se leen solo en
+ * `tbody`, y los cálculos se verifican en presupuestos-calculos.spec.ts.
  *
  * Datos personales (D-17, D-36): todos los clientes son ficticios. "ana@mail.com" y el DNI "23.456.789" son los
  * ejemplos literales del PRD; los demás datos son inventados para esta suite.
@@ -127,6 +129,8 @@ interface PresupuestoGrabado {
     precioConDescuento: number;
     precioFinal: number;
   }[];
+  /** La suma de los Precios Finales, con IVA incluido (FEAT-003b, FR-06). */
+  total: number;
 }
 
 let violacionesCsp: string[] = [];
@@ -232,11 +236,17 @@ async function desactivar(request: APIRequestContext, codigo: number) {
   expect((await respuesta.json()).activo).toBe(false);
 }
 
-/** Graba un presupuesto por la Api, con un cliente ficticio y una línea; devuelve su número. */
+/**
+ * Graba un presupuesto por la Api, con un cliente ficticio y una línea de Cantidad 1 y Descuento 0 (desde FEAT-003b la
+ * Api exige los dos en cada línea); devuelve su número.
+ */
 async function grabarPorApi(request: APIRequestContext, codigoArticulo: number): Promise<number> {
   const { apellido: a, nombre: n, dni: d } = CLIENTE_MINIMO;
   const respuesta = await request.post('/api/presupuestos', {
-    data: { cliente: { apellido: a, nombre: n, dni: d }, lineas: [{ codigoArticulo }] },
+    data: {
+      cliente: { apellido: a, nombre: n, dni: d },
+      lineas: [{ codigoArticulo, cantidad: 1, porcentajeDescuento: 0 }],
+    },
   });
   expect(respuesta.status(), 'No se pudo grabar el presupuesto por la Api').toBe(201);
   const grabado: PresupuestoGrabado = await respuesta.json();
@@ -372,7 +382,10 @@ function comoSeMuestra(fecha: string): string {
   return `${dia}/${mes}/${anio}`;
 }
 
-/** La línea de un artículo de 1.850,00 como la muestra la tabla de líneas: Cantidad 1, Descuento 0 (FR-14). */
+/**
+ * La línea de un artículo de 1.850,00 como la muestra el presupuesto grabado: Cantidad 1, Descuento 0 (FR-14). Solo
+ * las filas de `tbody`: el total va en `tfoot` (FEAT-003b, D-10).
+ */
 const celdasLinea1850 = (articulo: Articulo) => [
   String(articulo.codigo),
   articulo.descripcion,
@@ -382,6 +395,28 @@ const celdasLinea1850 = (articulo: Articulo) => [
   '1.850,00',
   '1.850,00',
 ];
+
+/**
+ * La primera línea de la pantalla de alta, de un artículo de 1.850,00 recién agregado. Ahí el Precio Unitario, la
+ * Cantidad y el Descuento son campos (FEAT-003b, FR-01): sus celdas no tienen texto propio y se leen los valores de los
+ * campos; la última celda es la del botón Quitar.
+ */
+async function lineaEnAlta1850(page: Page, articulo: Articulo) {
+  await expect(filasLineas(page)).toHaveCount(1);
+  await expect(filasLineas(page).first().getByRole('cell')).toHaveText([
+    String(articulo.codigo),
+    articulo.descripcion,
+    '',
+    '',
+    '',
+    '1.850,00',
+    '1.850,00',
+    'Quitar',
+  ]);
+  await expect(page.getByLabel('Precio unitario de la línea 1', { exact: true })).toHaveValue('1.850,00');
+  await expect(page.getByLabel('Cantidad de la línea 1', { exact: true })).toHaveValue('1');
+  await expect(page.getByLabel('Porcentaje de descuento de la línea 1', { exact: true })).toHaveValue('0');
+}
 
 // Primera prueba del archivo: la base todavía no tiene presupuestos (D-22).
 test('el primer presupuesto de la base recibe el numero 1', async ({ page }) => {
@@ -735,12 +770,8 @@ test('la linea se graba con cantidad 1, descuento 0 y precios de 1.850,00', asyn
   await abrirNuevoPresupuesto(page);
   await cargarCliente(page, CLIENTE_MINIMO);
   await buscarYAgregar(page, articulo);
-  // Antes de grabar, la línea ya muestra los valores de FR-14. El Precio Unitario está en un campo de solo lectura (su
-  // celda no tiene texto propio) y la última celda es la del botón Quitar.
-  const enPantalla = celdasLinea1850(articulo);
-  enPantalla[2] = '';
-  await expect(filasLineas(page).first().getByRole('cell')).toHaveText([...enPantalla, 'Quitar']);
-  await expect(page.getByLabel('Precio unitario de la línea 1', { exact: true })).toHaveValue('1.850,00');
+  // Antes de grabar, la línea ya muestra los valores de FR-14: Cantidad 1 y Descuento 0, ahora en sus campos.
+  await lineaEnAlta1850(page, articulo);
   const grabado = await grabarDesdePantalla(page);
 
   // AC-18: lo grabado (importes de la Api en pesos, D-33) y lo que muestra el presupuesto al volver a abrirlo.
@@ -756,6 +787,7 @@ test('la linea se graba con cantidad 1, descuento 0 y precios de 1.850,00', asyn
       precioFinal: 1850,
     },
   ]);
+  expect(guardado.total).toBe(1850);
   await reabrir(page, grabado.numero);
   await expect(filasLineas(page)).toHaveCount(1);
   await expect(filasLineas(page).first().getByRole('cell')).toHaveText(celdasLinea1850(articulo));

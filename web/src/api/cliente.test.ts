@@ -10,6 +10,9 @@ import {
   consultarArticulo,
   consultarPresupuesto,
   grabarPresupuesto,
+  CAMPO_LINEAS,
+  campoCantidad,
+  campoDescuento,
   MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
   MENSAJE_ARTICULO_CAMBIADO,
   MENSAJE_ARTICULO_INACTIVO,
@@ -783,7 +786,7 @@ describe('cliente de la Api: presupuestos', () => {
   const CLIENTE = {
     apellido: 'Pérez',
     nombre: 'Ana',
-    dni: '23.456.789',
+    dni: '99.999.999',
     domicilio: 'Calle Falsa 123',
     email: 'ana@mail.com',
     telefono: '11 5555-0000',
@@ -801,24 +804,133 @@ describe('cliente de la Api: presupuestos', () => {
     numero: 155,
     fecha: '2026-03-10',
     estado: 'borrador',
-    cliente: { ...CLIENTE, dni: '23456789' },
+    cliente: { ...CLIENTE, dni: '99999999' },
     lineas: [LINEA],
+    total: 1850,
   };
+  /** Una línea a enviar con la cantidad y el descuento de una línea nueva. */
+  const UNA = [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }];
   const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
   const NO_ENCONTRADO = { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
 
-  it('grabarPresupuesto_201_EnviaElClienteYSoloLosCodigos', async () => {
+  it('grabarPresupuesto_envía cantidad y descuento', async () => {
     const servidor = servidorFalso({ 'POST /api/presupuestos': json(201, GRABADO) });
+    const lineas = [
+      { codigoArticulo: 7, cantidad: 3, porcentajeDescuento: 10 },
+      { codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 },
+      { codigoArticulo: 9, cantidad: 9999, porcentajeDescuento: 12.34 },
+    ];
 
-    expect(await grabarPresupuesto(CLIENTE, [7, 7, 9])).toEqual({ tipo: 'ok', datos: GRABADO });
+    expect(await grabarPresupuesto(CLIENTE, lineas)).toEqual({ tipo: 'ok', datos: GRABADO });
     const [pedido] = servidor.pedidosA('POST', '/api/presupuestos');
-    // D-12: la línea lleva solo el código; nunca precio ni descripción (FR-11).
-    expect(JSON.parse(String(pedido?.init?.body))).toEqual({
-      cliente: CLIENTE,
-      lineas: [{ codigoArticulo: 7 }, { codigoArticulo: 7 }, { codigoArticulo: 9 }],
-    });
+    // D-03 y D-12 de FEAT-003a: por línea, el código, la cantidad y el descuento; nunca precios ni descripción (R-01).
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ cliente: CLIENTE, lineas });
     expect(pedido?.init?.credentials).toBe('same-origin');
     expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarPresupuesto_NoEnviaCamposAjenosDeLaLinea', async () => {
+    const servidor = servidorFalso({ 'POST /api/presupuestos': json(201, GRABADO) });
+    const conPrecios = { codigoArticulo: 7, cantidad: 2, porcentajeDescuento: 5, precioFinal: 1, descripcion: 'x' };
+
+    await grabarPresupuesto(CLIENTE, [conPrecios]);
+    const [pedido] = servidor.pedidosA('POST', '/api/presupuestos');
+    expect(JSON.parse(String(pedido?.init?.body)).lineas).toEqual([
+      { codigoArticulo: 7, cantidad: 2, porcentajeDescuento: 5 },
+    ]);
+  });
+
+  it('CamposDeLaLinea_ComoLosNombraLaApi', () => {
+    // D-06: los errores de la cantidad y el descuento de la línea i.
+    expect(CAMPO_LINEAS).toBe('lineas');
+    expect(campoCantidad(0)).toBe('lineas[0].cantidad');
+    expect(campoDescuento(12)).toBe('lineas[12].porcentajeDescuento');
+  });
+
+  it('grabarPresupuesto_400_ErroresDeCantidadYDescuento', async () => {
+    servidorFalso({
+      'POST /api/presupuestos': json(400, {
+        errors: {
+          'lineas[0].cantidad': ['La cantidad debe ser un número entero mayor a 0'],
+          'lineas[0].porcentajeDescuento': ['El descuento debe estar entre 0 y 100'],
+          lineas: ['El total del presupuesto es demasiado alto.'],
+        },
+      }),
+    });
+
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'lineas[0].cantidad', mensaje: 'La cantidad debe ser un número entero mayor a 0' },
+        { campo: 'lineas[0].porcentajeDescuento', mensaje: 'El descuento debe estar entre 0 y 100' },
+        { campo: 'lineas', mensaje: 'El total del presupuesto es demasiado alto.' },
+      ],
+    });
+  });
+
+  it('leerPresupuesto_ImportesSinCerosFinales_LosLeeIgual', async () => {
+    // D-14b: la Api devuelve 900 y 10.5, no 900.00 y 10.50; la lectura no depende del formato del número.
+    const linea = { ...LINEA, precioUnitario: 1000, cantidad: 3, porcentajeDescuento: 10, precioConDescuento: 900 };
+    const texto = (decimales: boolean) =>
+      JSON.stringify({ ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 }).replace(
+        /"precioFinal":2700|"total":2700|"precioConDescuento":900/g,
+        (parte) => (decimales ? `${parte}.00` : parte),
+      );
+    const crudo = (cuerpo: string) => () =>
+      new Response(cuerpo, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    expect(texto(true)).toContain('"total":2700.00');
+    servidorFalso({ 'GET /api/presupuestos/155': [crudo(texto(false)), crudo(texto(true))] });
+
+    const esperado = { tipo: 'ok', datos: { ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 } };
+    expect(await consultarPresupuesto(155)).toEqual(esperado);
+    expect(await consultarPresupuesto(155)).toEqual(esperado);
+  });
+
+  it('leerPresupuesto_0,1 + 0,2 = 0,3 se lee bien', async () => {
+    // D-08: la suma se compara en centésimos (BigInt); en punto flotante 0,1 + 0,2 no es 0,3.
+    const cuerpo = {
+      ...GRABADO,
+      lineas: [
+        { ...LINEA, precioUnitario: 0.1, precioConDescuento: 0.1, precioFinal: 0.1 },
+        { ...LINEA, precioUnitario: 0.2, precioConDescuento: 0.2, precioFinal: 0.2 },
+      ],
+      total: 0.3,
+    };
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: cuerpo });
+  });
+
+  it('leerPresupuesto_AC07_TotalDeDosLineas', async () => {
+    const cuerpo = {
+      ...GRABADO,
+      lineas: [
+        { ...LINEA, precioUnitario: 6.67, cantidad: 3, porcentajeDescuento: 50, precioConDescuento: 3.34, precioFinal: 10.02 },
+        { ...LINEA, precioUnitario: 1000, cantidad: 3, porcentajeDescuento: 10, precioConDescuento: 900, precioFinal: 2700 },
+      ],
+      total: 2710.02,
+    };
+    servidorFalso({ 'POST /api/presupuestos': json(201, cuerpo) });
+
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual({ tipo: 'ok', datos: cuerpo });
+  });
+
+  it.each([
+    ['total ausente', { ...GRABADO, total: undefined }],
+    ['total nulo', { ...GRABADO, total: null }],
+    ['total de texto', { ...GRABADO, total: '1850' }],
+    ['total distinto de la suma', { ...GRABADO, total: 1850.01 }],
+    ['total que es solo una de las líneas', { ...GRABADO, lineas: [LINEA, LINEA], total: 1850 }],
+    ['total sobre el máximo seguro', { ...GRABADO, total: 90071992547410 }],
+    ['total distinto de cero sin líneas', { ...GRABADO, lineas: [], total: 1 }],
+  ])('leerPresupuesto_total faltante o distinto: error de lectura — %s', async (_caso, cuerpo) => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, cuerpo),
+      'POST /api/presupuestos': json(201, cuerpo),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual(ILEGIBLE);
   });
 
   it('grabarPresupuesto_201SinOpcionales_LosLeeComoNull', async () => {
@@ -829,7 +941,7 @@ describe('cliente de la Api: presupuestos', () => {
     };
     servidorFalso({ 'POST /api/presupuestos': json(201, sinOpcionales) });
 
-    expect(await grabarPresupuesto({ ...CLIENTE, domicilio: null, email: null, telefono: null }, [7])).toEqual({
+    expect(await grabarPresupuesto({ ...CLIENTE, domicilio: null, email: null, telefono: null }, UNA)).toEqual({
       tipo: 'ok',
       datos: sinOpcionales,
     });
@@ -845,7 +957,7 @@ describe('cliente de la Api: presupuestos', () => {
       }),
     });
 
-    expect(await grabarPresupuesto(CLIENTE, [7, 8])).toEqual({
+    expect(await grabarPresupuesto(CLIENTE, [...UNA, { codigoArticulo: 8, cantidad: 1, porcentajeDescuento: 0 }])).toEqual({
       tipo: 'campos',
       errores: [
         { campo: 'dni', mensaje: 'Ingresá el DNI del cliente' },
@@ -857,7 +969,7 @@ describe('cliente de la Api: presupuestos', () => {
   it('grabarPresupuesto_413_MensajeDelCatalogo', async () => {
     servidorFalso({ 'POST /api/presupuestos': vacia(413) });
 
-    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual({ tipo: 'general', mensaje: MENSAJE_ARTICULO_GRANDE });
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual({ tipo: 'general', mensaje: MENSAJE_ARTICULO_GRANDE });
   });
 
   it('grabarPresupuesto_401_SinSesion', async () => {
@@ -865,7 +977,7 @@ describe('cliente de la Api: presupuestos', () => {
     alPerderLaSesion(manejador);
     servidorFalso({ 'POST /api/presupuestos': vacia(401) });
 
-    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual({ tipo: 'sinSesion' });
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual({ tipo: 'sinSesion' });
     expect(manejador).toHaveBeenCalledOnce();
   });
 
@@ -908,7 +1020,7 @@ describe('cliente de la Api: presupuestos', () => {
     });
 
     expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
-    expect(await grabarPresupuesto(CLIENTE, [7])).toEqual(ILEGIBLE);
+    expect(await grabarPresupuesto(CLIENTE, UNA)).toEqual(ILEGIBLE);
   });
 
   it.each([
@@ -950,6 +1062,7 @@ describe('cliente de la Api: presupuestos', () => {
       ...GRABADO,
       numero: Number.MAX_SAFE_INTEGER,
       lineas: [{ ...LINEA, precioUnitario: IMPORTE_MAXIMO_SEGURO, precioFinal: -IMPORTE_MAXIMO_SEGURO }],
+      total: -IMPORTE_MAXIMO_SEGURO,
     };
     servidorFalso({ 'GET /api/presupuestos/155': json(200, enElLimite) });
 

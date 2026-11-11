@@ -48,7 +48,8 @@ function cargaInicial(numero: number | null): Carga {
 
 /**
  * Un presupuesto grabado, solo lectura (la edición es de FEAT-003c): número, fecha dd/mm/aaaa, estado, los seis datos
- * del cliente y las líneas con las siete columnas de FR-13 e importes con 2 decimales (NFR-02). Un número de ruta
+ * del cliente, las líneas con las siete columnas de FR-13 y el total con IVA incluido (FEAT-003b FR-08), con los
+ * importes que devolvió el servidor, sin recalcularlos (ADR-016), y 2 decimales (NFR-02). Un número de ruta
  * inválido o un 404 muestran "No se encontró el presupuesto." (D-24); sin sesión va a `/ingreso` reemplazando la
  * entrada. Los datos del cliente viven solo en el estado de este componente (D-17); no hay consultas periódicas.
  */
@@ -175,6 +176,15 @@ function DetallePresupuesto({ presupuesto }: { presupuesto: PresupuestoGrabado }
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            {/* FR-08: el total que devolvió el servidor (ADR-016, no se recalcula), con IVA incluido y sin discriminarlo. */}
+            <tr>
+              <th scope="row" colSpan={6}>
+                Total (IVA incluido)
+              </th>
+              <td className="tabla__importe">{mostrarImporte(presupuesto.total)}</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </>

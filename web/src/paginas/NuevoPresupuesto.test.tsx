@@ -37,7 +37,8 @@ const ENCABEZADOS_LINEAS = [
 const CLIENTE = {
   apellido: 'Pérez',
   nombre: 'Ana',
-  dni: '23.456.789',
+  // Claramente ficticio; con puntos, como lo escribe la operadora.
+  dni: '99.999.999',
   domicilio: 'Calle Falsa 123',
   email: 'ana@mail.com',
   telefono: '11 5555-0000',
@@ -54,6 +55,13 @@ const ETIQUETAS: Record<CampoCliente, string> = {
 
 const ARMAZON = { codigo: 7, codigoProveedor: 'ARM-7', descripcion: 'Armazón metálico', precioVenta: 1850, activo: true };
 const ESTUCHE = { codigo: 9, codigoProveedor: 'EST-9', descripcion: 'Estuche rígido', precioVenta: -150, activo: true };
+/** Los artículos de los AC de FEAT-003b: $1.000,00 (AC-01, AC-04, AC-05) y $6,67 (AC-06, AC-07). */
+const LENTE = { codigo: 12, codigoProveedor: 'LEN-12', descripcion: 'Lente orgánico', precioVenta: 1000, activo: true };
+const PANO = { codigo: 15, codigoProveedor: 'PAN-15', descripcion: 'Paño de limpieza', precioVenta: 6.67, activo: true };
+/** Precios cerca del tope de D-04 (90.071.992.547.409,91): solo para los límites técnicos. */
+const EQUIPO = { codigo: 20, codigoProveedor: 'EQU-20', descripcion: 'Equipo', precioVenta: 10_000_000_000, activo: true };
+const MITAD = { codigo: 21, codigoProveedor: 'MIT-21', descripcion: 'Mitad', precioVenta: 50_000_000_000_000, activo: true };
+const BUSCAR_CALCULOS = 'GET /api/articulos?texto=calculos&pagina=1&soloActivos=true';
 const pagina = (articulos: unknown[], numero = 1, total = articulos.length) => ({
   articulos,
   pagina: numero,
@@ -76,8 +84,9 @@ const GRABADO = {
   numero: 155,
   fecha: '2026-03-10',
   estado: 'borrador',
-  cliente: { ...CLIENTE, dni: '23456789' },
+  cliente: { ...CLIENTE, dni: '99999999' },
   lineas: [LINEA_GRABADA],
+  total: 1850,
 };
 
 const conSesion = { 'GET /api/sesion': vacia(204) };
@@ -87,6 +96,7 @@ function servidor(rutas: Parameters<typeof servidorFalso>[0] = {}) {
   return servidorFalso({
     ...conSesion,
     [BUSCAR_ARMAZON]: json(200, pagina([ARMAZON, ESTUCHE])),
+    [BUSCAR_CALCULOS]: json(200, pagina([LENTE, PANO, EQUIPO, MITAD])),
     'POST /api/presupuestos': json(201, GRABADO),
     'GET /api/presupuestos/155': json(200, GRABADO),
     ...rutas,
@@ -121,10 +131,61 @@ const grabar = () => fireEvent.click(screen.getByRole('button', { name: 'Grabar'
 
 const tablaLineas = () => screen.getByRole('table', { name: 'Líneas del presupuesto' });
 
+/** El cuerpo de la tabla de líneas: las líneas cargadas, sin el encabezado ni la fila del total (`tfoot`, D-10). */
+const cuerpoLineas = () => tablaLineas().querySelector('tbody')!;
+
 /** El texto de cada celda de cada línea cargada. */
 function lineas(): string[][] {
-  const [, ...datos] = within(tablaLineas()).getAllByRole('row');
-  return datos.map((fila) => within(fila).getAllByRole('cell').map((celda) => celda.textContent ?? ''));
+  return within(cuerpoLineas())
+    .queryAllByRole('row')
+    .map((fila) => within(fila).getAllByRole('cell').map((celda) => celda.textContent ?? ''));
+}
+
+const cantidadDe = (numero: number) => campo(`Cantidad de la línea ${numero}`);
+const descuentoDe = (numero: number) => campo(`Porcentaje de descuento de la línea ${numero}`);
+const escribir = (elemento: HTMLInputElement, valor: string) => fireEvent.change(elemento, { target: { value: valor } });
+
+/** El Precio con Descuento y el Precio Final que muestra la línea indicada (desde 1). */
+function preciosDe(numero: number): [string, string] {
+  const fila = within(cuerpoLineas()).getAllByRole('row')[numero - 1]!;
+  const celdas = within(fila).getAllByRole('cell');
+  return [celdas[5]!.textContent ?? '', celdas[6]!.textContent ?? ''];
+}
+
+/**
+ * Cómo anuncia el lector de pantalla el mensaje junto al elemento: `polite` si está dentro de una región
+ * `aria-live="polite"` sin `role="alert"` (lo que aparece mientras se escribe), `alert` si es `role="alert"` (lo que
+ * vuelve del servidor al grabar).
+ */
+function anuncio(elemento: HTMLElement): 'polite' | 'alert' | null {
+  const id = elemento.getAttribute('aria-describedby');
+  const mensaje = id ? document.getElementById(id) : null;
+  if (mensaje === null) {
+    return null;
+  }
+  if (mensaje.getAttribute('role') === 'alert') {
+    return 'alert';
+  }
+  return mensaje.closest('[aria-live="polite"]') !== null ? 'polite' : null;
+}
+
+/** La celda del total, en la fila "Total (IVA incluido)" del `tfoot` (D-10). */
+function celdaTotal(): HTMLElement {
+  const encabezado = within(tablaLineas()).getByRole('rowheader', { name: 'Total (IVA incluido)' });
+  expect(encabezado.closest('tfoot')).not.toBeNull();
+  return within(encabezado.closest('tr')!).getAllByRole('cell')[0]!;
+}
+
+/** Abre el alta con los seis datos completos y agrega los artículos indicados desde la búsqueda "calculos". */
+async function conLineas(...articulos: { codigo: number; descripcion: string }[]) {
+  const registro = servidor();
+  await abrir();
+  completar();
+  await buscar('calculos');
+  for (const articulo of articulos) {
+    agregar(articulo);
+  }
+  return registro;
 }
 
 /** El cuerpo del único POST enviado. */
@@ -162,7 +223,7 @@ describe('NuevoPresupuesto', () => {
     }
     expect(campo('Apellido').getAttribute('maxlength')).toBe('100');
     expect(campo('Nombre').getAttribute('maxlength')).toBe('100');
-    // Alcanza para "23.456.789", con los puntos.
+    // Alcanza para "99.999.999", con los puntos.
     expect(campo('DNI').getAttribute('maxlength')).toBe('10');
     expect(campo('Domicilio').getAttribute('maxlength')).toBe('200');
     expect(campo('Email').getAttribute('maxlength')).toBe('254');
@@ -399,10 +460,10 @@ describe('NuevoPresupuesto', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/155');
     expect(cuerpoEnviado(registro)).toEqual({
       cliente: CLIENTE,
-      lineas: [{ codigoArticulo: 7 }],
+      lineas: [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }],
     });
     // El presupuesto grabado muestra los seis datos (AC-01).
-    for (const valor of [...Object.values(CLIENTE).filter((v) => v !== CLIENTE.dni), '23456789']) {
+    for (const valor of [...Object.values(CLIENTE).filter((v) => v !== CLIENTE.dni), '99999999']) {
       expect(screen.getByText(valor)).toBeTruthy();
     }
   });
@@ -419,7 +480,7 @@ describe('NuevoPresupuesto', () => {
     await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
     expect(cuerpoEnviado(registro)).toEqual({
       cliente: { ...CLIENTE, domicilio: null, email: null, telefono: null },
-      lineas: [{ codigoArticulo: 7 }],
+      lineas: [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }],
     });
   });
 
@@ -553,10 +614,21 @@ describe('NuevoPresupuesto', () => {
     await buscar();
     agregar(ARMAZON);
 
-    expect(lineas()).toEqual([['7', 'Armazón metálico', '', '1', '0', '1.850,00', '1.850,00', 'Quitar']]);
+    // Precio Unitario, Cantidad y Descuento son campos: su celda no tiene texto propio.
+    expect(lineas()).toEqual([['7', 'Armazón metálico', '', '', '', '1.850,00', '1.850,00', 'Quitar']]);
     const precio = screen.getByLabelText('Precio unitario de la línea 1') as HTMLInputElement;
     expect(precio.value).toBe('1.850,00');
     expect(precio.readOnly).toBe(true);
+    // FEAT-003b: la línea nueva empieza con Cantidad 1 y Descuento 0, editables.
+    expect(cantidadDe(1).value).toBe('1');
+    expect(cantidadDe(1).readOnly).toBe(false);
+    expect(cantidadDe(1).getAttribute('inputmode')).toBe('numeric');
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(descuentoDe(1).value).toBe('0');
+    expect(descuentoDe(1).readOnly).toBe(false);
+    expect(descuentoDe(1).getAttribute('inputmode')).toBe('decimal');
+    expect(descuentoDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(celdaTotal().textContent).toBe('1.850,00');
   });
 
   it('NuevoPresupuesto_MismoArticuloDosVecesYQuitar', async () => {
@@ -599,7 +671,7 @@ describe('NuevoPresupuesto', () => {
       decodeURIComponent(window.location.href),
       ...consola.flatMap((espia) => espia.mock.calls.map((argumentos) => JSON.stringify(argumentos))),
     ];
-    for (const dato of [...Object.values(CLIENTE), '23456789']) {
+    for (const dato of [...Object.values(CLIENTE), '99999999']) {
       expect(lugares.filter((lugar) => lugar.includes(dato)), dato).toEqual([]);
     }
     expect(JSON.parse(ubicacion.getAttribute('data-estado') ?? 'null')).toEqual({
@@ -607,5 +679,415 @@ describe('NuevoPresupuesto', () => {
     });
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
+  });
+});
+
+const MENSAJE_CANTIDAD = 'La cantidad debe ser un número entero mayor a 0';
+const MENSAJE_CANTIDAD_MAXIMA = 'Usá hasta 9.999 unidades.';
+const MENSAJE_DESCUENTO = 'El descuento debe estar entre 0 y 100';
+const MENSAJE_DECIMALES = 'Ingresá hasta 2 decimales.';
+const MENSAJE_LINEA_EXCEDIDA = 'El precio final de la línea es demasiado alto.';
+const MENSAJE_TOTAL_EXCEDIDO = 'El total del presupuesto es demasiado alto.';
+const SIN_PRECIO = '—';
+
+describe('NuevoPresupuesto — cantidad, descuento y cálculos (FEAT-003b)', () => {
+  it('cambiar cantidad y descuento recalcula la fila', async () => {
+    // AC-01 y FR-07: de 1 a 3 y de 0 a 10 sobre $1.000,00 da $900,00 y $2.700,00; el total acompaña.
+    const registro = await conLineas(LENTE);
+    expect(preciosDe(1)).toEqual(['1.000,00', '1.000,00']);
+    expect(celdaTotal().textContent).toBe('1.000,00');
+
+    escribir(cantidadDe(1), '3');
+    expect(preciosDe(1)).toEqual(['1.000,00', '3.000,00']);
+    expect(celdaTotal().textContent).toBe('3.000,00');
+
+    escribir(descuentoDe(1), '10');
+    expect(preciosDe(1)).toEqual(['900,00', '2.700,00']);
+    expect(celdaTotal().textContent).toBe('2.700,00');
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBeNull();
+
+    // Se envían la cantidad y el descuento escritos, no los precios (D-03).
+    grabar();
+    await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
+    expect(cuerpoEnviado(registro)).toEqual({
+      cliente: CLIENTE,
+      lineas: [{ codigoArticulo: 12, cantidad: 3, porcentajeDescuento: 10 }],
+    });
+  });
+
+  it('descuento con coma decimal se envía como número', async () => {
+    // D-02: hasta 2 decimales, con coma o punto. 10,5 % de $1.000,00 = $895,00.
+    const registro = await conLineas(LENTE);
+    escribir(descuentoDe(1), '10,5');
+
+    expect(preciosDe(1)).toEqual(['895,00', '895,00']);
+    grabar();
+    await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
+    expect(cuerpoEnviado(registro)).toMatchObject({ lineas: [{ codigoArticulo: 12, cantidad: 1, porcentajeDescuento: 10.5 }] });
+  });
+
+  it.each(['0', '-1', '2,5', ''])('cantidad inválida muestra el mensaje junto al campo (%s)', async (cantidad) => {
+    // AC-02: no se acepta, la fila muestra "—" en los precios y no se envía.
+    const registro = await conLineas(LENTE);
+    escribir(cantidadDe(1), cantidad);
+
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+    // Aparece mientras se escribe: se anuncia sin interrumpir.
+    expect(anuncio(cantidadDe(1))).toBe('polite');
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBeNull();
+
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    // Al corregirla, el mensaje se va y la fila vuelve a calcularse.
+    escribir(cantidadDe(1), '2');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(preciosDe(1)).toEqual(['1.000,00', '2.000,00']);
+    expect(celdaTotal().textContent).toBe('2.000,00');
+  });
+
+  it('cantidad 10.000 rechazada con "Usá hasta 9.999 unidades."', async () => {
+    // AC-09; 9.999 sí se acepta.
+    const registro = await conLineas(LENTE);
+    escribir(cantidadDe(1), '10000');
+
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA);
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    escribir(cantidadDe(1), '9999');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(preciosDe(1)).toEqual(['1.000,00', '9.999.000,00']);
+  });
+
+  it('cantidad con punto de miles: "10.000" da el máximo y "1.000" se envía como 1000', async () => {
+    // AC-09 tal como lo escribe la operadora, con punto de miles (D-29).
+    const registro = await conLineas(LENTE);
+    escribir(cantidadDe(1), '10.000');
+
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA);
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    // Un punto mal agrupado sigue siendo el texto de AC-02.
+    escribir(cantidadDe(1), '1.00');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+
+    escribir(cantidadDe(1), '1.000');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(preciosDe(1)).toEqual(['1.000,00', '1.000.000,00']);
+    expect(celdaTotal().textContent).toBe('1.000.000,00');
+
+    // Se envía el número, no el texto escrito.
+    grabar();
+    await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
+    expect(cuerpoEnviado(registro)).toMatchObject({ lineas: [{ codigoArticulo: 12, cantidad: 1000, porcentajeDescuento: 0 }] });
+  });
+
+  it.each([
+    ['-1', MENSAJE_DESCUENTO],
+    ['100,01', MENSAJE_DESCUENTO],
+    ['', MENSAJE_DESCUENTO],
+    ['10,555', MENSAJE_DECIMALES],
+  ])('descuento inválido muestra el mensaje junto al campo (%s)', async (descuento, mensaje) => {
+    // AC-03 (y la escala de D-02): no se acepta, la fila muestra "—" en los precios y no se envía.
+    const registro = await conLineas(LENTE);
+    escribir(descuentoDe(1), descuento);
+
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBe(mensaje);
+    expect(anuncio(descuentoDe(1))).toBe('polite');
+    expect(descuentoDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(descuentoDe(1))).toBe(mensaje));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+  });
+
+  it('descuento 100 da 0,00', async () => {
+    // AC-04: se acepta y el Precio con Descuento es $0,00.
+    await conLineas(LENTE);
+    escribir(descuentoDe(1), '100');
+
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBeNull();
+    expect(preciosDe(1)).toEqual(['0,00', '0,00']);
+    expect(celdaTotal().textContent).toBe('0,00');
+  });
+
+  it('descuento 0 muestra el precio unitario', async () => {
+    // AC-05: con descuento 0 el Precio con Descuento es el unitario, también después de haber tenido otro.
+    await conLineas(LENTE);
+    escribir(descuentoDe(1), '25');
+    expect(preciosDe(1)).toEqual(['750,00', '750,00']);
+
+    escribir(descuentoDe(1), '0');
+    expect(preciosDe(1)).toEqual(['1.000,00', '1.000,00']);
+  });
+
+  it('total con dos líneas', async () => {
+    // AC-06 y AC-07: $6,67 × 3 con 50 % da $3,34 y $10,02; sumado a $2.700,00 da $2.710,02.
+    const registro = await conLineas(PANO, LENTE);
+    escribir(cantidadDe(1), '3');
+    escribir(descuentoDe(1), '50');
+    expect(preciosDe(1)).toEqual(['3,34', '10,02']);
+    expect(celdaTotal().textContent).toBe('1.010,02');
+
+    escribir(cantidadDe(2), '3');
+    escribir(descuentoDe(2), '10');
+    expect(preciosDe(2)).toEqual(['900,00', '2.700,00']);
+    expect(celdaTotal().textContent).toBe('2.710,02');
+
+    // Al quitar una línea, el total la descuenta.
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar línea 1' }));
+    expect(celdaTotal().textContent).toBe('2.700,00');
+    grabar();
+    await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
+    expect(cuerpoEnviado(registro)).toMatchObject({ lineas: [{ codigoArticulo: 12, cantidad: 3, porcentajeDescuento: 10 }] });
+  });
+
+  it('sin líneas el total es 0,00', async () => {
+    servidor();
+    await abrir();
+
+    expect(celdaTotal().textContent).toBe('0,00');
+  });
+
+  it('importe de la línea excedido: mensaje junto a la cantidad y no se envía', async () => {
+    // Límite técnico de D-04: $10.000.000.000 × 9.999 supera el tope; la cantidad en sí es válida. El mensaje va donde
+    // lo pone el servidor (`lineas[i].cantidad`), no junto a Quitar.
+    const registro = await conLineas(EQUIPO);
+    escribir(cantidadDe(1), '9999');
+
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_LINEA_EXCEDIDA);
+    expect(anuncio(cantidadDe(1))).toBe('polite');
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(mensajeJuntoAlCampo(screen.getByRole('button', { name: 'Quitar línea 1' }))).toBeNull();
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_LINEA_EXCEDIDA));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    escribir(cantidadDe(1), '2');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(preciosDe(1)).toEqual(['10.000.000.000,00', '20.000.000.000,00']);
+  });
+
+  it('total excedido: mensaje debajo de la tabla y no se envía', async () => {
+    // Límite técnico de D-04: dos líneas válidas de $50.000.000.000.000 suman más que el tope. El mensaje va donde
+    // pone el servidor el error `lineas`: debajo de la tabla, no en la celda del total.
+    const registro = await conLineas(MITAD, MITAD);
+
+    expect(preciosDe(1)).toEqual(['50.000.000.000.000,00', '50.000.000.000.000,00']);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+    expect(celdaTotal().hasAttribute('aria-describedby')).toBe(false);
+    expect(mensajeJuntoAlCampo(tablaLineas())).toBe(MENSAJE_TOTAL_EXCEDIDO);
+    expect(anuncio(tablaLineas())).toBe('polite');
+
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(tablaLineas())).toBe(MENSAJE_TOTAL_EXCEDIDO));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar línea 2' }));
+    expect(celdaTotal().textContent).toBe('50.000.000.000.000,00');
+    expect(mensajeJuntoAlCampo(tablaLineas())).toBeNull();
+  });
+
+  it('total excedido en el navegador gana al error `lineas` del servidor', async () => {
+    // $50.000.000.000.000 + $10.000.000.000 × 4.008 = $90.080.000.000.000, más que el tope; cada línea por sí sola no.
+    servidor({ 'POST /api/presupuestos': json(400, { errors: { lineas: ['Usá hasta 100 líneas.'] } }) });
+    await abrir();
+    completar();
+    await buscar('calculos');
+    agregar(MITAD);
+    agregar(EQUIPO);
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(tablaLineas())).toBe('Usá hasta 100 líneas.'));
+    expect(anuncio(tablaLineas())).toBe('alert');
+
+    escribir(cantidadDe(2), '4008');
+    expect(mensajeJuntoAlCampo(cantidadDe(2))).toBeNull();
+    expect(mensajeJuntoAlCampo(tablaLineas())).toBe(MENSAJE_TOTAL_EXCEDIDO);
+    expect(screen.queryByText('Usá hasta 100 líneas.')).toBeNull();
+  });
+
+  it('el mensaje viejo del servidor sobre la línea no tapa el importe excedido', async () => {
+    // Al editar un campo de la línea se van los mensajes del servidor de esa línea (artículo, cantidad y descuento),
+    // y queda a la vista el que calcula el navegador.
+    servidor({
+      'POST /api/presupuestos': json(400, {
+        errors: {
+          'lineas[0]': [MENSAJE_PRECIO_NEGATIVO],
+          'lineas[0].cantidad': [MENSAJE_CANTIDAD],
+          'lineas[0].porcentajeDescuento': [MENSAJE_DESCUENTO],
+        },
+      }),
+    });
+    await abrir();
+    completar();
+    await buscar('calculos');
+    agregar(EQUIPO);
+    grabar();
+    const quitar = () => screen.getByRole('button', { name: 'Quitar línea 1' });
+    await waitFor(() => expect(mensajeJuntoAlCampo(quitar())).toBe(MENSAJE_PRECIO_NEGATIVO));
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBe(MENSAJE_DESCUENTO);
+
+    escribir(cantidadDe(1), '9999');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_LINEA_EXCEDIDA);
+    expect(screen.getByText(MENSAJE_LINEA_EXCEDIDA)).toBeTruthy();
+    expect(mensajeJuntoAlCampo(quitar())).toBeNull();
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBeNull();
+    expect(screen.queryByText(MENSAJE_PRECIO_NEGATIVO)).toBeNull();
+  });
+
+  it('cantidad inválida en el navegador gana al mensaje del servidor del mismo campo', async () => {
+    servidor({ 'POST /api/presupuestos': json(400, { errors: { 'lineas[0].cantidad': [MENSAJE_CANTIDAD_MAXIMA] } }) });
+    await abrir();
+    completar();
+    await buscar('calculos');
+    agregar(LENTE);
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA));
+
+    escribir(cantidadDe(1), '0');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+    expect(anuncio(cantidadDe(1))).toBe('polite');
+  });
+
+  it('error 400 del servidor en la cantidad va junto al campo', async () => {
+    // D-06: `lineas[i].cantidad` y `lineas[i].porcentajeDescuento` van junto al campo de la fila i; un campo de línea
+    // desconocido o de una línea que no se envió va al mensaje general.
+    const registro = servidor({
+      'POST /api/presupuestos': json(400, {
+        errors: {
+          'lineas[0].cantidad': [MENSAJE_CANTIDAD_MAXIMA],
+          'lineas[1].porcentajeDescuento': [MENSAJE_DESCUENTO],
+          'lineas[0].otro': ['Revisá la línea.'],
+          'lineas[5].cantidad': ['Línea que no se envió.'],
+        },
+      }),
+    });
+    await abrir();
+    completar();
+    await buscar('calculos');
+    agregar(LENTE);
+    agregar(PANO);
+    grabar();
+
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA));
+    // Lo que vuelve del servidor al grabar se anuncia como alerta, como en el resto de los formularios.
+    expect(anuncio(cantidadDe(1))).toBe('alert');
+    expect(anuncio(descuentoDe(2))).toBe('alert');
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(mensajeJuntoAlCampo(descuentoDe(1))).toBeNull();
+    expect(mensajeJuntoAlCampo(cantidadDe(2))).toBeNull();
+    expect(mensajeJuntoAlCampo(descuentoDe(2))).toBe(MENSAJE_DESCUENTO);
+    expect(descuentoDe(2).getAttribute('aria-invalid')).toBe('true');
+    expect(mensajeJuntoAlCampo(screen.getByRole('button', { name: 'Quitar línea 1' }))).toBeNull();
+    expect(screen.getByText('Revisá la línea. Línea que no se envió.')).toBeTruthy();
+    expect(cuerpoEnviado(registro)).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    // Los valores escritos siguen en pantalla para corregirlos.
+    expect(cantidadDe(1).value).toBe('1');
+
+    // Al cambiar el campo, el mensaje del servidor se va (el del otro campo queda).
+    escribir(cantidadDe(1), '2');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(mensajeJuntoAlCampo(descuentoDe(2))).toBe(MENSAJE_DESCUENTO);
+    escribir(descuentoDe(2), '5');
+    expect(mensajeJuntoAlCampo(descuentoDe(2))).toBeNull();
+  });
+});
+
+describe('NuevoPresupuesto — foco al grabar con errores en las líneas (FEAT-003b)', () => {
+  // Los mensajes de las líneas ya se anunciaron al escribir: al grabar, el foco lleva al lector de pantalla al error.
+
+  it('va al primer campo inválido de las líneas en orden de lectura', async () => {
+    const registro = await conLineas(LENTE, PANO);
+    escribir(cantidadDe(2), '0');
+    escribir(descuentoDe(1), '-1');
+    grabar();
+
+    await waitFor(() => expect(document.activeElement).toBe(descuentoDe(1)));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+  });
+
+  it('va a la cantidad de la línea con el importe excedido', async () => {
+    await conLineas(LENTE, EQUIPO);
+    escribir(cantidadDe(2), '9999');
+    grabar();
+
+    await waitFor(() => expect(document.activeElement).toBe(cantidadDe(2)));
+  });
+
+  it('con solo el total excedido va al mensaje de debajo de la tabla', async () => {
+    await conLineas(MITAD, MITAD);
+    grabar();
+
+    const mensaje = document.getElementById(tablaLineas().getAttribute('aria-describedby') ?? '');
+    expect(mensaje?.textContent).toBe(MENSAJE_TOTAL_EXCEDIDO);
+    await waitFor(() => expect(document.activeElement).toBe(mensaje));
+    expect(mensaje?.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('con errores también en el cliente va al primer campo inválido del formulario', async () => {
+    const registro = await conLineas(LENTE);
+    fireEvent.change(campo('Nombre'), { target: { value: '' } });
+    fireEvent.change(campo('Email'), { target: { value: 'ana@' } });
+    escribir(cantidadDe(1), '0');
+    grabar();
+
+    await waitFor(() => expect(document.activeElement).toBe(campo('Nombre')));
+    expect(mensajeJuntoAlCampo(campo('Nombre'))).toBe('Ingresá el nombre del cliente');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+  });
+
+  it('después de llevar el foco al error, no lo vuelve a mover al escribir ni al agregar o quitar líneas', async () => {
+    await conLineas(LENTE, PANO);
+    escribir(cantidadDe(1), '0');
+    grabar();
+    await waitFor(() => expect(document.activeElement).toBe(cantidadDe(1)));
+
+    // La operadora pasa a otro campo y sigue trabajando: el foco queda donde ella lo puso.
+    descuentoDe(2).focus();
+    escribir(descuentoDe(2), '5');
+    expect(document.activeElement).toBe(descuentoDe(2));
+    agregar(LENTE);
+    expect(document.activeElement).toBe(descuentoDe(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar línea 3' }));
+    expect(document.activeElement).toBe(descuentoDe(2));
+
+    campo('Apellido').focus();
+    fireEvent.change(campo('Apellido'), { target: { value: 'Gómez' } });
+    expect(document.activeElement).toBe(campo('Apellido'));
+  });
+
+  it('con errores solo en el cliente no mueve el foco (como antes)', async () => {
+    await conLineas(LENTE);
+    fireEvent.change(campo('Nombre'), { target: { value: '' } });
+    grabar();
+
+    await waitFor(() => expect(mensajeJuntoAlCampo(campo('Nombre'))).toBe('Ingresá el nombre del cliente'));
+    expect(document.activeElement).not.toBe(campo('Nombre'));
   });
 });

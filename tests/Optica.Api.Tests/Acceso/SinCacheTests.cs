@@ -204,7 +204,7 @@ public sealed class SinCacheTests : IDisposable
         JsonSerializer.Serialize(new
         {
             cliente = new { apellido = "Ficticio", nombre = "Ana", dni = "30111222" },
-            lineas = new[] { new { codigoArticulo = codigo } },
+            lineas = new[] { new { codigoArticulo = codigo, cantidad = 1, porcentajeDescuento = 0 } },
             relleno,
         });
 

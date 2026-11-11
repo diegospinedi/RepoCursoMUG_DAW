@@ -1,3 +1,5 @@
+using Optica.Domain.Comun;
+
 namespace Optica.Domain.Presupuestos;
 
 /// <summary>Los dos estados del presupuesto (FR-08). FEAT-003a solo graba <see cref="Borrador"/>.</summary>
@@ -43,8 +45,9 @@ public sealed class Presupuesto
     /// <summary>Reconstruye un presupuesto guardado; el alta usa <see cref="Nuevo"/>.</summary>
     /// <exception cref="ArgumentNullException">El cliente o la lista de líneas es null.</exception>
     /// <exception cref="ArgumentException">
-    /// El número es menor que 1, la fecha es la por defecto de <see cref="DateOnly"/>, el estado no existe, o no hay líneas o alguna es null. El mensaje nombra el campo y
-    /// no incluye el valor recibido.
+    /// El número es menor que 1, la fecha es la por defecto de <see cref="DateOnly"/>, el estado no existe, no hay
+    /// líneas o alguna es null, o el total supera <see cref="ReglasImporte.ImporteMaximo"/>. El mensaje nombra el
+    /// campo y no incluye el valor recibido.
     /// </exception>
     public Presupuesto(
         long numero, DateOnly fecha, EstadoPresupuesto estado, ClientePresupuesto cliente,
@@ -72,11 +75,20 @@ public sealed class Presupuesto
             throw new ArgumentException("El presupuesto necesita al menos una línea.", nameof(lineas));
         }
 
+        var total = 0m;
         foreach (var linea in lineas)
         {
             if (linea is null)
             {
                 throw new ArgumentException("Las líneas del presupuesto no son válidas.", nameof(lineas));
+            }
+
+            // Cada Precio Final ya es como máximo ImporteMaximo: la suma parcial no pasa de 2 × ImporteMaximo, que
+            // entra en decimal sin desbordar, porque se corta en cuanto supera el límite.
+            total += linea.PrecioFinal;
+            if (total > ReglasImporte.ImporteMaximo)
+            {
+                throw new ArgumentException("El total del presupuesto es demasiado alto.", nameof(lineas));
             }
         }
 
@@ -85,6 +97,7 @@ public sealed class Presupuesto
         Estado = estado;
         Cliente = cliente;
         Lineas = [.. lineas];
+        Total = total;
     }
 
     /// <summary>Un presupuesto grabado por primera vez: queda en <see cref="EstadoPresupuesto.Borrador"/> (FR-08).</summary>
@@ -105,4 +118,10 @@ public sealed class Presupuesto
 
     /// <summary>Al menos una línea (FR-07), en el orden en que se cargaron.</summary>
     public IReadOnlyList<LineaPresupuesto> Lineas { get; }
+
+    /// <summary>
+    /// La suma de los Precios Finales ya redondeados de las líneas, con IVA incluido (FR-06, D-05). No se guarda: se
+    /// calcula al construir el presupuesto. Nunca supera <see cref="ReglasImporte.ImporteMaximo"/>.
+    /// </summary>
+    public decimal Total { get; }
 }

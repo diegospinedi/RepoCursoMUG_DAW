@@ -23,7 +23,8 @@ const CONFIRMACION = 'Presupuesto N.º 155 grabado. Estado: Borrador.';
 const CLIENTE = {
   apellido: 'Pérez',
   nombre: 'Ana',
-  dni: '23456789',
+  // Claramente ficticio, tal como queda guardado (sin puntos).
+  dni: '99999999',
   domicilio: 'Calle Falsa 123',
   email: 'ana@mail.com',
   telefono: '11 5555-0000',
@@ -37,7 +38,7 @@ const LINEA = {
   precioConDescuento: 1850,
   precioFinal: 1850,
 };
-const GRABADO = { numero: 155, fecha: '2026-03-10', estado: 'borrador', cliente: CLIENTE, lineas: [LINEA] };
+const GRABADO = { numero: 155, fecha: '2026-03-10', estado: 'borrador', cliente: CLIENTE, lineas: [LINEA], total: 1850 };
 
 /** Abre el presupuesto 155 con la respuesta indicada (por defecto, el grabado) y espera que se muestre. */
 async function abrir(cuerpo: unknown = GRABADO, estado?: unknown) {
@@ -92,11 +93,12 @@ describe('Presupuesto', () => {
     expect(dato('Fecha')).toBe('10/03/2026');
   });
 
+  // El nombre conserva el número con que lo rastrean la spec y el informe de FEAT-003a; el dato es ficticio.
   it('Presupuesto_MuestraDni23456789', async () => {
     // AC-05: el DNI tal como quedó guardado, sin puntos.
     await abrir();
 
-    expect(dato('DNI')).toBe('23456789');
+    expect(dato('DNI')).toBe('99999999');
   });
 
   it('Presupuesto_MuestraElEstadoYLosSeisDatos', async () => {
@@ -125,7 +127,7 @@ describe('Presupuesto', () => {
 
   it('Presupuesto_Linea_MuestraLasSieteColumnas', async () => {
     // AC-17 y AC-18: las siete columnas de FR-13, con importes con 2 decimales (NFR-02).
-    await abrir({ ...GRABADO, lineas: [LINEA, { ...LINEA, codigoArticulo: 8, descripcion: 'Lente', precioUnitario: 1234567.5, precioConDescuento: 1234567.5, precioFinal: 1234567.5 }] });
+    await abrir({ ...GRABADO, lineas: [LINEA, { ...LINEA, codigoArticulo: 8, descripcion: 'Lente', precioUnitario: 1234567.5, precioConDescuento: 1234567.5, precioFinal: 1234567.5 }], total: 1236417.5 });
 
     const tabla = screen.getByRole('table', { name: 'Líneas del presupuesto' });
     expect(within(tabla).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
@@ -137,11 +139,39 @@ describe('Presupuesto', () => {
       'Precio con Descuento ($)',
       'Precio Final ($)',
     ]);
-    const [, ...filas] = within(tabla).getAllByRole('row');
+    const filas = within(tabla.querySelector('tbody')!).getAllByRole('row');
     expect(filas.map((f) => within(f).getAllByRole('cell').map((c) => c.textContent))).toEqual([
       ['7', 'Armazón metálico', '1.850,00', '1', '0', '1.850,00', '1.850,00'],
       ['8', 'Lente', '1.234.567,50', '1', '0', '1.234.567,50', '1.234.567,50'],
     ]);
+  });
+
+  it('presupuesto grabado muestra el total sin discriminar IVA', async () => {
+    // AC-08 y FR-08: cantidad, descuento, precios y total tal como los devolvió el servidor (ADR-016: no recalcula),
+    // con IVA incluido y sin columna ni fila de IVA. AC-06 y AC-07: $10,02 + $2.700,00 = $2.710,02.
+    await abrir({
+      ...GRABADO,
+      lineas: [
+        { ...LINEA, codigoArticulo: 15, descripcion: 'Paño de limpieza', precioUnitario: 6.67, cantidad: 3, porcentajeDescuento: 50, precioConDescuento: 3.34, precioFinal: 10.02 },
+        // Un Precio Final que no es la cuenta de la pantalla (900 × 3): se muestra el del servidor, sin recalcular.
+        { ...LINEA, codigoArticulo: 12, descripcion: 'Lente orgánico', precioUnitario: 1000, cantidad: 3, porcentajeDescuento: 10.5, precioConDescuento: 900, precioFinal: 2700.01 },
+      ],
+      total: 2710.03,
+    });
+
+    const tabla = screen.getByRole('table', { name: 'Líneas del presupuesto' });
+    const filas = within(tabla.querySelector('tbody')!).getAllByRole('row');
+    expect(filas.map((f) => within(f).getAllByRole('cell').map((c) => c.textContent))).toEqual([
+      ['15', 'Paño de limpieza', '6,67', '3', '50', '3,34', '10,02'],
+      ['12', 'Lente orgánico', '1.000,00', '3', '10,5', '900,00', '2.700,01'],
+    ]);
+    const encabezado = within(tabla).getByRole('rowheader', { name: 'Total (IVA incluido)' });
+    expect(encabezado.closest('tfoot')).not.toBeNull();
+    expect(within(encabezado.closest('tr')!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2.710,03']);
+    // Sin discriminar IVA: ningún encabezado ni fila de IVA aparte.
+    const encabezados = [...within(tabla).getAllByRole('columnheader'), ...within(tabla).getAllByRole('rowheader')];
+    expect(encabezados.map((c) => c.textContent).filter((t) => t !== 'Total (IVA incluido)' && /IVA/i.test(t ?? ''))).toEqual([]);
+    expect(within(tabla).getAllByRole('rowheader')).toHaveLength(1);
   });
 
   it('Presupuesto_ConLaConfirmacionDelAlta_LaMuestra', async () => {

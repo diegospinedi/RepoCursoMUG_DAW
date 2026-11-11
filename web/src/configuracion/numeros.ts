@@ -15,6 +15,13 @@
  */
 export const IMPORTE_MAXIMO_SEGURO = Number.MAX_SAFE_INTEGER / 100;
 
+/**
+ * {@link IMPORTE_MAXIMO_SEGURO} en centésimos exactos: 9.007.199.254.740.991, es decir 90.071.992.547.409,91, el tope
+ * del contrato con la web de D-04 (`ValidacionPresupuesto.ImporteMaximoContrato`). Se compara en BigInt porque como
+ * `number` decimal ,91 y ,90 son el mismo valor (D-23).
+ */
+export const IMPORTE_MAXIMO_SEGURO_CENTESIMOS = BigInt(Number.MAX_SAFE_INTEGER);
+
 /** El resultado de leer un texto: un número con sus decimales significativos, sin valor (vacío) o inválido. */
 export type LecturaDecimal = { tipo: 'numero'; valor: number; decimales: number } | { tipo: 'vacio' } | { tipo: 'invalido' };
 
@@ -51,9 +58,10 @@ export function mostrarImporte(valor: number): string {
  * Los centavos de un valor no negativo, redondeados a la mitad hacia arriba. Se leen del texto decimal del número
  * (`String`, la representación más corta que vuelve al mismo `number`, la misma que envía `JSON.stringify`), no de
  * `valor * 100`: desde 2^45 esa multiplicación en punto flotante ya cae en el centavo equivocado
- * (38779820885963,52 daba ,53).
+ * (38779820885963,52 daba ,53). Exportada para el cálculo de la línea del presupuesto y la suma de importes
+ * (ADR-016): este módulo no importa nada, así `presupuestos/reglas.ts` y `api/cliente.ts` la usan sin un ciclo.
  */
-function centavosDe(valor: number): bigint {
+export function centavosDe(valor: number): bigint {
   const texto = String(valor);
   if (/e/i.test(texto)) {
     // Notación exponencial: desde 1e21 el número es entero (BigInt lo lee exacto); debajo de 1e-6, redondea a cero.
@@ -63,6 +71,16 @@ function centavosDe(valor: number): bigint {
   const relleno = decimales.padEnd(3, '0');
   const redondeo = Number(relleno[2]) >= 5 ? 1n : 0n;
   return BigInt(entera) * 100n + BigInt(relleno.slice(0, 2)) + redondeo;
+}
+
+/**
+ * La suma exacta de los importes en centésimos (BigInt), sin los errores de sumar en punto flotante: 0,1 + 0,2 da
+ * 30 centésimos, no 0,30000000000000004 (D-08 de FEAT-003b). Cada importe se lleva a centésimos con
+ * {@link centavosDe}; uno negativo resta. Recibe importes finitos: `NaN` o `±Infinity` no tienen centésimos y lanzan
+ * una excepción, así que quien no los descartó antes (como `calcularTotal`) tiene que hacerlo.
+ */
+export function sumarCentesimos(importes: readonly number[]): bigint {
+  return importes.reduce((suma, importe) => suma + (importe < 0 ? -centavosDe(-importe) : centavosDe(importe)), 0n);
 }
 
 /**

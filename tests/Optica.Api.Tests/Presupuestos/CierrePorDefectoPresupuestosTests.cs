@@ -74,6 +74,25 @@ public sealed class CierrePorDefectoPresupuestosTests
     }
 
     /// <summary>
+    /// D-09: la cantidad y el descuento de la línea i tienen su propio campo, sin distinguir mayúsculas en la clave; el
+    /// código de artículo sigue en <c>lineas[i]</c>, y una línea desde la 100 sigue en <c>lineas</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("$.lineas[1].cantidad", "lineas[1].cantidad")]
+    [InlineData("lineas[0].cantidad", "lineas[0].cantidad")]
+    [InlineData("$.Lineas[2].Cantidad", "lineas[2].cantidad")]
+    [InlineData("$.lineas[99].porcentajeDescuento", "lineas[99].porcentajeDescuento")]
+    [InlineData("$.lineas[3].PorcentajeDescuento", "lineas[3].porcentajeDescuento")]
+    [InlineData("$.lineas[1].codigoArticulo", "lineas[1]")]
+    [InlineData("$.lineas[1].cantidadX", "lineas[1]")]
+    [InlineData("$.lineas[100].cantidad", "lineas")]
+    [InlineData("$.lineas[100].porcentajeDescuento", "lineas")]
+    public void CampoDeLaClave_CamposDeLinea(string clave, string campo)
+    {
+        Assert.Equal(campo, PresupuestosController.CampoDeLaClave(clave));
+    }
+
+    /// <summary>
     /// Alerta de datos (D-17, Ley 25.326): MVC registra en Trace los argumentos de la acción con su <c>ToString()</c>, y
     /// el de un record muestra todos sus valores. Las tres solicitudes no muestran ninguno, sin depender del nivel del log.
     /// Datos ficticios.
@@ -86,8 +105,10 @@ public sealed class CierrePorDefectoPresupuestosTests
         var textos = new[]
         {
             cliente.ToString(),
-            new SolicitudLinea(987654321).ToString(),
-            new SolicitudPresupuesto(cliente, [new SolicitudLinea(987654321)]).ToString(),
+            new SolicitudLinea(987654321, 7531, 12.34m).ToString(),
+            new SolicitudPresupuesto(cliente, [new SolicitudLinea(987654321, 7531, 12.34m)]).ToString(),
+            new DatosLinea(987654321, 7531, 12.34m).ToString(),
+            new DatosPresupuesto(null, [new DatosLinea(987654321, 7531, 12.34m)]).ToString(),
         };
 
         foreach (var texto in textos)
@@ -96,6 +117,9 @@ public sealed class CierrePorDefectoPresupuestosTests
             Assert.DoesNotContain("30111222", texto, StringComparison.Ordinal);
             Assert.DoesNotContain("5555", texto, StringComparison.Ordinal);
             Assert.DoesNotContain("987654321", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("7531", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12.34", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12,34", texto, StringComparison.Ordinal);
             Assert.DoesNotContain("=", texto, StringComparison.Ordinal);
         }
     }

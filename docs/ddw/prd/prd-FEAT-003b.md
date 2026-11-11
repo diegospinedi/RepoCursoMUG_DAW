@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-06 |
 | PRD padre | `docs/ddw/prd/prd-FEAT-003.md` (índice), derivado de `prd-DISC-001-04.md` |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de origen. Los AC
@@ -31,8 +31,8 @@ pantalla al cambiar la cantidad o el descuento.
   línea después de seleccionar el artículo. Estos valores reemplazan la Cantidad 1 y el Porcentaje de
   Descuento 0 fijos con los que FEAT-003a graba las líneas (FEAT-003a FR-14).
   [FEAT-003 FR-19; PRD-001 RF-40; decisión del usuario 2026-11-06]
-- FR-02: El sistema debe admitir como Cantidad únicamente un número entero mayor a 0.
-  [FEAT-003 FR-20; PRD-001 RF-16, RF-60]
+- FR-02: El sistema debe admitir como Cantidad únicamente un número entero mayor a 0 y de hasta 9.999 unidades
+  por línea. [FEAT-003 FR-20; PRD-001 RF-16, RF-60; tope decidido por el usuario el 2026-11-11]
 - FR-03: El sistema debe admitir como Porcentaje de Descuento únicamente un valor entre 0 y 100, ambos
   inclusive. [FEAT-003 FR-21; PRD-001 RF-59]
 - FR-04: El sistema debe calcular el Precio con Descuento de cada línea como Precio Unitario × (1 −
@@ -80,6 +80,9 @@ pantalla al cambiar la cantidad o el descuento.
 - AC-08 (FR-08; FEAT-003 AC-33): WHEN la operadora abre un presupuesto con líneas, THE sistema SHALL
   mostrar las líneas y el total sin discriminar IVA, con los importes finales al consumidor.
   [PRD-001 AC-28]
+- AC-09 (FR-02): IF la operadora ingresa como Cantidad 10.000, THEN THE sistema SHALL no aceptar el valor y mostrar
+  junto al campo el mensaje "Usá hasta 9.999 unidades.". [decisión del usuario 2026-11-11; sin número global en
+  FEAT-003]
 
 ## Out of Scope
 - Alta del presupuesto, datos del cliente y sus validaciones, numeración, estado inicial,

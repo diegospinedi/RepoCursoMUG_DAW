@@ -203,7 +203,8 @@ public sealed class ProteccionTests
     /// </summary>
     private static string CuerpoPresupuesto(long codigo, string? relleno = null) =>
         "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},\"lineas\":[{\"codigoArticulo\":"
-        + codigo + "}]" + (relleno is null ? string.Empty : ",\"relleno\":\"" + relleno + "\"") + "}";
+        + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":0}]"
+        + (relleno is null ? string.Empty : ",\"relleno\":\"" + relleno + "\"") + "}";
 
     private static string CuerpoPresupuestoDeBytes(long codigo, int bytes)
     {

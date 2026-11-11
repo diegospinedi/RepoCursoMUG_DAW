@@ -1,3 +1,4 @@
+using Optica.Domain.Comun;
 using Optica.Domain.Presupuestos;
 
 namespace Optica.Domain.Tests.Presupuestos;
@@ -93,6 +94,50 @@ public class PresupuestoTests
         var error = Assert.Throws<ArgumentException>(() => Presupuesto.Nuevo(1, default, Cliente(), UnaLinea()));
         Assert.Equal("fecha", error.ParamName);
         Assert.DoesNotContain("0001", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Total_SumaPreciosFinales()
+    {
+        // AC-07: 10,02 (AC-06) + 2.700,00 (AC-01) = 2.710,02, sumando los Precios Finales ya redondeados.
+        LineaPresupuesto[] lineas =
+        [
+            new(7, "Armazón metálico", 6.67m, 3, 50m, 3.34m, 10.02m),
+            new(8, "Lente orgánico", 1000m, 3, 10m, 900m, 2700m),
+        ];
+
+        Assert.Equal(2710.02m, Presupuesto.Nuevo(1, Fecha, Cliente(), lineas).Total);
+        Assert.Equal(1850m, Presupuesto.Nuevo(1, Fecha, Cliente(), UnaLinea()).Total);
+        Assert.Equal(2710.02m, new Presupuesto(1, Fecha, EstadoPresupuesto.Final, Cliente(), lineas).Total);
+    }
+
+    [Fact]
+    public void Constructor_TotalExcedido_Rechazado()
+    {
+        const decimal maximo = ReglasImporte.ImporteMaximo;
+
+        // Justo en el límite del tipo: se acepta.
+        LineaPresupuesto[] enElLimite =
+        [
+            new(7, "Armazón metálico", maximo - 0.01m, 1, 0m, maximo - 0.01m, maximo - 0.01m),
+            new(8, "Lente orgánico", 0.01m, 1, 0m, 0.01m, 0.01m),
+        ];
+        Assert.Equal(maximo, Presupuesto.Nuevo(1, Fecha, Cliente(), enElLimite).Total);
+
+        LineaPresupuesto[] excedidas =
+        [
+            new(7, "Armazón metálico", maximo, 1, 0m, maximo, maximo),
+            new(8, "Lente orgánico", 0.01m, 1, 0m, 0.01m, 0.01m),
+        ];
+
+        var error = Assert.Throws<ArgumentException>(() => Presupuesto.Nuevo(1, Fecha, Cliente(), excedidas));
+        Assert.Equal("lineas", error.ParamName);
+        Assert.DoesNotContain("92233720368547758", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("92.233.720", error.Message, StringComparison.Ordinal);
+
+        var errorReconstruido = Assert.Throws<ArgumentException>(
+            () => new Presupuesto(1, Fecha, EstadoPresupuesto.Final, Cliente(), excedidas));
+        Assert.Equal("lineas", errorReconstruido.ParamName);
     }
 
     [Fact]

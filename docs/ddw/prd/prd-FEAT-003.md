@@ -12,13 +12,15 @@
 | Sub-ticket | Title | PRD | ACs | Dependencies | Status |
 |---|---|---|---|---|---|
 | FEAT-003a | Alta del presupuesto con cliente y líneas del catálogo | prd-FEAT-003a.md | AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-09, AC-10, AC-12, AC-13, AC-21, AC-22, AC-23, AC-24, AC-29 | none | done (PR #9, 4d10c42) |
-| FEAT-003b | Cantidad, descuento y cálculos de las líneas y el total | prd-FEAT-003b.md | AC-25, AC-26, AC-27, AC-28, AC-30, AC-31, AC-32, AC-33 | depends on a | active |
-| FEAT-003c | Edición en Borrador y paso a Final irreversible | prd-FEAT-003c.md | AC-11, AC-14, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20, AC-34, AC-35 | depends on a and b | pending |
+| FEAT-003b | Cantidad, descuento y cálculos de las líneas y el total | prd-FEAT-003b.md | AC-25, AC-26, AC-27, AC-28, AC-30, AC-31, AC-32, AC-33 | depends on a | done (PR #13, merge a cargo del usuario) |
+| FEAT-003c | Edición en Borrador y paso a Final irreversible | prd-FEAT-003c.md | AC-11, AC-14, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20, AC-34, AC-35 | depends on a and b | active |
 | FEAT-003d | Concurrencia, volumen y navegadores | prd-FEAT-003d.md | AC-36, AC-37, AC-38 | depends on a, b and c | pending |
 
 AC-01 a AC-38 vienen de `prd-DISC-001-04.md` (PRD 04 de DISC-001). En DEFINE no se agregaron criterios
 globales; FEAT-003a suma un criterio local sin número global (su AC-18), que valida la regla de líneas
-con Cantidad 1 y Porcentaje de Descuento 0 decidida por el usuario el 2026-11-06.
+con Cantidad 1 y Porcentaje de Descuento 0 decidida por el usuario el 2026-11-06. FEAT-003b suma otro criterio
+local (su AC-09): el tope de 9.999 unidades por línea, decidido por el usuario el 2026-11-11, con lo que esa parte
+queda con 9 AC (8 globales y 1 local).
 
 Los AC de esta tabla son los números globales, iguales a los de `prd-DISC-001-04.md`. Cada sub-PRD
 numera sus criterios desde AC-01 y cita junto a cada uno su número global (por ejemplo,

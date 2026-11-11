@@ -39,7 +39,7 @@ public sealed class SinDatosArcaTests
             cliente,
             RutaPresupuestos,
             "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},"
-            + "\"lineas\":[{\"codigoArticulo\":" + codigoArticulo + "}]}",
+            + "\"lineas\":[{\"codigoArticulo\":" + codigoArticulo + ",\"cantidad\":1,\"porcentajeDescuento\":0}]}",
             cookie);
         Assert.Equal(System.Net.HttpStatusCode.Created, presupuesto.StatusCode);
         var numero = (await Http.JsonAsync(presupuesto)).GetProperty("numero").GetInt64();

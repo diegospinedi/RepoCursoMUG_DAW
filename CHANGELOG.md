@@ -45,6 +45,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Pantalla `/presupuestos/{numero}` con el presupuesto grabado en solo lectura y el mensaje "Presupuesto N.º {n} grabado. Estado: Borrador.".
   - `POST /api/presupuestos` (recibe solo los códigos de artículo, nunca precios), `GET /api/presupuestos/{numero}` y el parámetro `soloActivos` en `GET /api/articulos`; tablas `Presupuesto` y `LineaPresupuesto` con la migración `Presupuestos`.
   - Pruebas de punta a punta de los 19 criterios en Chrome y Edge.
+- [FEAT-003b] Cantidad, descuento y cálculos de las líneas y el total del presupuesto:
+  - Cada línea tiene Cantidad (entero de 1 a 9.999; con punto de miles, "1.000" vale 1000 y "10.000" se rechaza con "Usá hasta 9.999 unidades.") y Porcentaje de Descuento (0 a 100, hasta 2 decimales, con coma o punto), que empiezan en 1 y 0.
+  - Precio con Descuento = Precio Unitario × (100 − Descuento) / 100, redondeado a 2 decimales mitad hacia arriba; Precio Final = Precio con Descuento × Cantidad; Total = suma de los Precios Finales, con IVA incluido y sin discriminarlo (ADR-016).
+  - El servidor calcula y graba los importes con aritmética exacta en centésimos; la pantalla calcula en espejo con BigInt para mostrarlos al escribir, y el presupuesto grabado muestra lo que devolvió el servidor.
+  - `POST /api/presupuestos` recibe por línea código, cantidad y descuento (ignora precios enviados) y responde los errores junto a cada campo (`lineas[i].cantidad`, `lineas[i].porcentajeDescuento`); el alta y `GET /api/presupuestos/{numero}` devuelven `total`. Un importe de línea o un total por encima de 90.071.992.547.409,91 se rechaza con su mensaje. Sin cambios en la base.
+  - Pantalla de alta con un mensaje por campo, la fila "Total (IVA incluido)" al pie de la tabla y el foco en el primer campo con error al grabar.
+  - Pruebas de punta a punta de cantidad, descuento y total en Chrome y Edge.
 - [FEAT-004] Análisis estático de la web con oxlint 1.92.0 (en lugar de ESLint, que con typescript-eslint no soporta TypeScript 7):
   - `npm run lint` en `web/` revisa la aplicación y sus pruebas con las reglas equivalentes a la plantilla de Vite (corrección, hooks de React, exportaciones para recarga en caliente y reglas de TypeScript), sin admitir avisos (`--max-warnings 0`) e ignorando `dist/` y `coverage/`.
   - `npm run test:lint` con 8 pruebas que fijan la configuración; el comando quedó declarado en la sección "Stack" de `AGENTS.md`.
