@@ -15,7 +15,7 @@ public class LineaPresupuestoTests
     [Fact]
     public void DesdeArticulo_PrecioMenos150_Rechazado()
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(-150m));
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(-150m), 1, 0m);
 
         Assert.True(resultado.EsPrecioNegativo);
         Assert.False(resultado.EsValida);
@@ -26,7 +26,7 @@ public class LineaPresupuestoTests
     [Fact]
     public void DesdeArticulo_Inactivo_Rechazado()
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m, activo: false));
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m, activo: false), 1, 0m);
 
         Assert.True(resultado.EsInactivo);
         Assert.False(resultado.EsValida);
@@ -34,15 +34,15 @@ public class LineaPresupuestoTests
         Assert.Null(resultado.Linea);
 
         // Un artículo sin código no salió del catálogo: es un error de programación, no un rechazo.
-        var error = Assert.Throws<ArgumentException>(() => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m, codigo: null)));
+        var error = Assert.Throws<ArgumentException>(() => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m, codigo: null), 1, 0m));
         Assert.Equal("articulo", error.ParamName);
-        Assert.Throws<ArgumentNullException>(() => LineaPresupuesto.DesdeArticulo(null!));
+        Assert.Throws<ArgumentNullException>(() => LineaPresupuesto.DesdeArticulo(null!, 1, 0m));
     }
 
     [Fact]
     public void DesdeArticulo_1850_CopiaCodigoDescripcionYPrecio()
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m));
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 1, 0m);
 
         Assert.True(resultado.EsValida);
         Assert.Equal(7, resultado.Linea.CodigoArticulo);
@@ -53,7 +53,7 @@ public class LineaPresupuestoTests
     [Fact]
     public void DesdeArticulo_1850_Cantidad1Descuento0YPreciosIguales()
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m));
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 1, 0m);
 
         Assert.True(resultado.EsValida);
         var linea = resultado.Linea;
@@ -69,7 +69,7 @@ public class LineaPresupuestoTests
     [Fact]
     public void DesdeArticulo_PrecioCero_SeAdmite()
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(0m));
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(0m), 1, 0m);
 
         Assert.True(resultado.EsValida);
         Assert.Equal(7, resultado.Linea.CodigoArticulo);
@@ -105,6 +105,7 @@ public class LineaPresupuestoTests
             ("precioUnitario", "92233720368547758.08", () => new LineaPresupuesto(7, Descripcion, ImporteMaximo + 0.01m, 1, 0m, 1850m, 1850m)),
             ("cantidad", "-4321", () => new LineaPresupuesto(7, Descripcion, 1850m, -4321, 0m, 1850m, 1850m)),
             ("cantidad", "0", () => new LineaPresupuesto(7, Descripcion, 1850m, 0, 0m, 1850m, 1850m)),
+            ("cantidad", "10000", () => new LineaPresupuesto(7, Descripcion, 1850m, 10_000, 0m, 1850m, 1850m)),
             ("porcentajeDescuento", "-1", () => new LineaPresupuesto(7, Descripcion, 1850m, 1, -1m, 1850m, 1850m)),
             ("porcentajeDescuento", "100.01", () => new LineaPresupuesto(7, Descripcion, 1850m, 1, 100.01m, 1850m, 1850m)),
             ("porcentajeDescuento", "12.345", () => new LineaPresupuesto(7, Descripcion, 1850m, 1, 12.345m, 1850m, 1850m)),
@@ -126,5 +127,127 @@ public class LineaPresupuestoTests
 
         // Rama defensiva: el resultado válido siempre lleva una línea.
         Assert.Throws<ArgumentNullException>(() => ResultadoLinea.Valida(null!));
+    }
+
+    [Fact]
+    public void DesdeArticulo_RechazosDeFeat003a_AntesQueCantidadYDescuento()
+    {
+        // Un artículo inactivo se rechaza como inactivo, sean cuales sean la cantidad y el descuento (FR-09, D-14).
+        foreach (var (cantidad, descuento) in new[] { (0, 0m), (10_000, 0m), (1, -0.01m), (1, 100.01m), (0, 10.555m) })
+        {
+            Assert.True(LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m, activo: false), cantidad, descuento).EsInactivo);
+            Assert.True(LineaPresupuesto.DesdeArticulo(ArticuloCon(-150m), cantidad, descuento).EsPrecioNegativo);
+        }
+    }
+
+    [Fact]
+    public void DesdeArticulo_CantidadYDescuento_CalculaPrecios()
+    {
+        // AC-01: Precio Unitario 1.000,00, Cantidad 3 y Descuento 10 dan 900,00 y 2.700,00.
+        var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(1000m), 3, 10m);
+
+        Assert.True(resultado.EsValida);
+        var linea = resultado.Linea;
+        Assert.Equal(1000.00m, linea.PrecioUnitario);
+        Assert.Equal(3, linea.Cantidad);
+        Assert.Equal(10m, linea.PorcentajeDescuento);
+        Assert.Equal(900.00m, linea.PrecioConDescuento);
+        Assert.Equal(2700.00m, linea.PrecioFinal);
+
+        // AC-06: el Precio Final usa el Precio con Descuento ya redondeado.
+        var ac06 = LineaPresupuesto.DesdeArticulo(ArticuloCon(6.67m), 3, 50m);
+        Assert.True(ac06.EsValida);
+        Assert.Equal(3.34m, ac06.Linea.PrecioConDescuento);
+        Assert.Equal(10.02m, ac06.Linea.PrecioFinal);
+
+        // Los extremos de la cantidad (D-01) y del descuento (AC-04).
+        var maxima = LineaPresupuesto.DesdeArticulo(ArticuloCon(1000m), 9_999, 100m);
+        Assert.True(maxima.EsValida);
+        Assert.Equal(9_999, maxima.Linea.Cantidad);
+        Assert.Equal(0m, maxima.Linea.PrecioConDescuento);
+        Assert.Equal(0m, maxima.Linea.PrecioFinal);
+    }
+
+    [Fact]
+    public void Constructor_CantidadInvalida_Rechazada()
+    {
+        // AC-09: 10.000 supera el tope de D-01; 0 no es mayor que 0 (AC-02).
+        _ = new LineaPresupuesto(7, Descripcion, 1850m, 9_999, 0m, 1850m, 1850m * 9_999);
+
+        foreach (var cantidad in new[] { 0, 10_000, int.MaxValue, int.MinValue })
+        {
+            var error = Assert.Throws<ArgumentException>(
+                () => new LineaPresupuesto(7, Descripcion, 1850m, cantidad, 0m, 1850m, 1850m));
+            Assert.Equal("cantidad", error.ParamName);
+
+            var errorAlta = Assert.Throws<ArgumentException>(
+                () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), cantidad, 0m));
+            Assert.Equal("cantidad", errorAlta.ParamName);
+        }
+    }
+
+    [Fact]
+    public void Constructor_DescuentoInvalido_Rechazado()
+    {
+        foreach (var descuento in new[] { -0.01m, 100.01m, 10.555m })
+        {
+            var error = Assert.Throws<ArgumentException>(
+                () => new LineaPresupuesto(7, Descripcion, 1850m, 1, descuento, 1850m, 1850m));
+            Assert.Equal("porcentajeDescuento", error.ParamName);
+
+            var errorAlta = Assert.Throws<ArgumentException>(
+                () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 1, descuento));
+            Assert.Equal("porcentajeDescuento", errorAlta.ParamName);
+        }
+    }
+
+    [Fact]
+    public void DesdeArticulo_ImporteExcedido_Rechazado()
+    {
+        // Justo en el límite del tipo: se acepta.
+        var enElLimite = LineaPresupuesto.DesdeArticulo(ArticuloCon(ImporteMaximo), 1, 0m);
+        Assert.True(enElLimite.EsValida);
+        Assert.False(enElLimite.EsImporteExcedido);
+        Assert.Equal(ImporteMaximo, enElLimite.Linea.PrecioFinal);
+
+        // ImporteMaximo × 50 % = …879,035 → …879,04; × 2 = …758,08: un centésimo por encima del límite.
+        foreach (var (cantidad, descuento) in new[] { (2, 0m), (2, 50m), (9_999, 0m) })
+        {
+            var resultado = LineaPresupuesto.DesdeArticulo(ArticuloCon(ImporteMaximo), cantidad, descuento);
+
+            Assert.True(resultado.EsImporteExcedido);
+            Assert.False(resultado.EsValida);
+            Assert.False(resultado.EsInactivo);
+            Assert.False(resultado.EsPrecioNegativo);
+            Assert.Null(resultado.Linea);
+        }
+
+        // Los rechazos de FEAT-003a no cambian: inactivo y precio negativo antes que el importe.
+        Assert.False(LineaPresupuesto.DesdeArticulo(ArticuloCon(-150m), 1, 0m).EsImporteExcedido);
+        Assert.False(ResultadoLinea.Inactivo.EsImporteExcedido);
+        Assert.True(ResultadoLinea.ImporteExcedido.EsImporteExcedido);
+    }
+
+    [Fact]
+    public void Excepciones_NoRepitenElValor()
+    {
+        var casos = new (string Valor, Action Crear)[]
+        {
+            ("10000", () => _ = new LineaPresupuesto(7, Descripcion, 1850m, 10_000, 0m, 1850m, 1850m)),
+            ("4321", () => _ = new LineaPresupuesto(7, Descripcion, 1850m, -4321, 0m, 1850m, 1850m)),
+            ("10.555", () => _ = new LineaPresupuesto(7, Descripcion, 1850m, 1, 10.555m, 1850m, 1850m)),
+            ("100.01", () => _ = new LineaPresupuesto(7, Descripcion, 1850m, 1, 100.01m, 1850m, 1850m)),
+            ("10000", () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 10_000, 0m)),
+            ("4321", () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), -4321, 0m)),
+            ("10.555", () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 1, 10.555m)),
+            ("100.01", () => LineaPresupuesto.DesdeArticulo(ArticuloCon(1850m), 1, 100.01m)),
+        };
+
+        foreach (var (valor, crear) in casos)
+        {
+            var error = Assert.Throws<ArgumentException>(crear);
+            Assert.DoesNotContain(valor, error.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(valor.Replace('.', ','), error.Message, StringComparison.Ordinal);
+        }
     }
 }

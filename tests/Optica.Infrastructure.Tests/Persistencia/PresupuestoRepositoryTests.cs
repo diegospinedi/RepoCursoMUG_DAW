@@ -635,7 +635,7 @@ public partial class PresupuestoRepositoryTests
 
     private static LineaPresupuesto Linea(Articulo articulo)
     {
-        var resultado = LineaPresupuesto.DesdeArticulo(articulo);
+        var resultado = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m);
         Assert.True(resultado.EsValida);
         return resultado.Linea;
     }

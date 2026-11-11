@@ -196,7 +196,7 @@ public sealed class AltaPresupuesto(
                 continue;
             }
 
-            var resultado = LineaPresupuesto.DesdeArticulo(articulo);
+            var resultado = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m);
             if (resultado.EsValida)
             {
                 lineas.Add(resultado.Linea);

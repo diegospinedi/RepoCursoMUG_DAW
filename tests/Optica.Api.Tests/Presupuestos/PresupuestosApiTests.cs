@@ -563,7 +563,7 @@ public sealed class PresupuestosApiTests
         var servicios = alcance.ServiceProvider;
         var articulo = await servicios.GetRequiredService<IArticuloRepository>().ObtenerAsync(codigoArticulo)
             ?? throw new InvalidOperationException("No se encontró el artículo de la prueba.");
-        var linea = LineaPresupuesto.DesdeArticulo(articulo).Linea
+        var linea = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m).Linea
             ?? throw new InvalidOperationException("El artículo de la prueba no da una línea válida.");
         servicios.GetRequiredService<IPresupuestoRepository>().Agregar(Presupuesto.Nuevo(
             numero,
