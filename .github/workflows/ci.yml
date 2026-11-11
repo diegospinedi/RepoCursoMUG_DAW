@@ -1,0 +1,93 @@
+# Verificación de cada pull request (FEAT-005). Las reglas de este archivo las revisa e2e/ci.mjs
+# (revisarWorkflow) dentro de `npm run test:unidad`: un cambio que las rompa falla en la misma corrida.
+name: CI
+
+# Solo pull_request: corre el código del pull request sin acceso a los secretos del repositorio,
+# aunque venga de un fork. Tipos por defecto: abierto, sincronizado y reabierto.
+on:
+  pull_request:
+
+# Solo lectura del código: la corrida no puede modificar el repositorio, los issues ni los pull requests.
+permissions:
+  contents: read
+
+# Una sola corrida por pull request: un push nuevo cancela la anterior (NFR-02).
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verificacion:
+    name: Verificación
+    # Imagen fija: un cambio de imagen (y de los Chrome y Edge que trae) no cambia la corrida sin que nadie lo decida.
+    runs-on: ubuntu-24.04
+    # Tope de la corrida (NFR-01; se estiman unos 13 minutos): una prueba colgada no consume minutos sin límite.
+    timeout-minutes: 45
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      # Perfil fuera del código (D-20): el checkout queda en /home/runner/work, dentro del perfil /home/runner, y
+      # las pruebas que verifican que logs y errores no lleven la carpeta del usuario la encontrarían. Valor fijo:
+      # el contexto runner no existe en el env de un job. Las cachés de NuGet y npm quedan acá y se descartan con
+      # el runner.
+      HOME: /tmp/perfil-ci
+    # Las acciones van fijadas por el SHA del commit de su versión (D-02): una etiqueta se puede mover, el SHA no.
+    steps:
+      # Primero de todo: actions/checkout escribe la configuración global de git en $HOME.
+      - name: Crear la carpeta del perfil
+        run: mkdir -p "$HOME"
+      - name: Descargar el código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Sin dejar la credencial de la corrida guardada en .git/config, al alcance de los pasos siguientes.
+          persist-credentials: false
+      - name: Instalar .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Instalar Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # npm ci instala exactamente lo de package-lock.json y falla si no coincide con package.json.
+      - name: Dependencias de la web
+        working-directory: web
+        run: npm ci
+      - name: Dependencias de e2e
+        working-directory: e2e
+        run: npm ci
+      # GitHub Actions define CI=true: la restauración de NuGet corre en modo bloqueado (Directory.Build.props).
+      - name: Compilar .NET
+        run: dotnet build Optica.sln
+      - name: Pruebas de .NET
+        run: dotnet test Optica.sln
+      - name: Lint de la web
+        working-directory: web
+        run: npm run lint
+      - name: Prueba del lint
+        working-directory: web
+        run: npm run test:lint
+      - name: Pruebas de la web con cobertura
+        working-directory: web
+        run: npm run test:coverage
+      - name: Compilar la web
+        working-directory: web
+        run: npm run build
+      - name: Pruebas de unidad de e2e
+        working-directory: e2e
+        run: npm run test:unidad
+      # --no-install: usa el Playwright fijado en e2e/package-lock.json, nunca uno bajado del registro.
+      # Se usan los Chrome y Edge estables de la imagen; acá solo se agregan sus dependencias de sistema (D-06).
+      - name: Dependencias de sistema de Chrome y Edge
+        working-directory: e2e
+        run: npx --no-install playwright install-deps chrome msedge
+      - name: Versiones de los navegadores
+        run: |
+          google-chrome --version
+          microsoft-edge --version
+      # Certificado de desarrollo para el HTTPS de la Api en la suite; se descarta con el runner.
+      - name: Certificado de desarrollo HTTPS
+        run: dotnet dev-certs https
+      - name: Pruebas de punta a punta (Chrome y Edge)
+        working-directory: e2e
+        run: npm run test:harness

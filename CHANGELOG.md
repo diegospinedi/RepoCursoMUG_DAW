@@ -49,11 +49,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - `npm run lint` en `web/` revisa la aplicación y sus pruebas con las reglas equivalentes a la plantilla de Vite (corrección, hooks de React, exportaciones para recarga en caliente y reglas de TypeScript), sin admitir avisos (`--max-warnings 0`) e ignorando `dist/` y `coverage/`.
   - `npm run test:lint` con 8 pruebas que fijan la configuración; el comando quedó declarado en la sección "Stack" de `AGENTS.md`.
   - Los 7 problemas que marcaba en el código actual se corrigieron sin desactivar reglas y sin cambiar el comportamiento (las 602 pruebas de la web siguen igual).
+- [FEAT-005] Integración continua para los pull requests (`.github/workflows/ci.yml`):
+  - Cada pull request corre en GitHub Actions, en un solo job sobre `ubuntu-24.04`, los comandos de `AGENTS.md`: `npm ci` en `web/` y `e2e/`, compilación y pruebas de .NET, lint y prueba del lint de la web, pruebas de la web con cobertura, su compilación, pruebas de unidad de e2e y la suite de punta a punta en Chrome y Edge. Un paso que falla deja el pull request en rojo con su nombre.
+  - Sin secretos, con permiso de solo lectura, checkout sin credenciales guardadas, acciones oficiales fijadas por SHA, tope de 45 minutos y cancelación de la corrida anterior del mismo pull request.
+  - .NET pasa a tener archivos de bloqueo de NuGet (`packages.lock.json`), exigidos en modo bloqueado en la CI.
+  - `e2e/ci.mjs` fija las reglas del workflow, del bloqueo de NuGet y de los hosts de las pruebas con pruebas dentro de `npm run test:unidad`.
 
 ### Fixed
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
 
 ### Security
+- [FEAT-005] Ninguna prueba habla con servicios externos: Chrome, Edge y el Chromium de diagnóstico solo resuelven `localhost`, y una prueba rechaza URL a hosts externos en los archivos de prueba. Riesgo conocido, pendiente de un FIX: si la aplicación se instala dentro del perfil del usuario de Windows, la línea "Content root path" del log de arranque lleva su nombre de usuario.
 - [FEAT-003a] Toda respuesta de `/api`, incluidas las de error, lleva `Cache-Control: no-store`, así el navegador de una PC compartida no guarda los datos personales de los clientes (DNI, domicilio, email y teléfono). Los datos del cliente no llegan al log, a la URL ni al almacenamiento del navegador, y `docs/instalacion.md` advierte que la base y los backups los guardan sin cifrar (riesgo aceptado mientras el sistema sea de prueba; Ley 25.326).
 - [FIX-001] El bloqueo del ingreso por 5 intentos fallidos ya no se levanta cuando el reloj de la PC retrocede (por ejemplo, al sincronizarse sola): un retroceso de hasta 5 minutos mantiene el bloqueo, que puede extenderse hasta 10 minutos desde ese momento (ADR-014).
 - [FEAT-001b] `ConflictoAlConfirmarException` ya no admite una excepción interna, así que el hash de la contraseña que viaja en los `Entries` de EF Core no puede llegar al log por esa vía.

@@ -28,4 +28,23 @@
     <SourceRoot Include="$(MSBuildThisFileDirectory)" />
   </ItemGroup>
 
+  <!--
+    Bloqueo de dependencias de NuGet (FEAT-005, D-04).
+
+    Cada proyecto tiene su packages.lock.json versionado con las versiones exactas de todos sus paquetes, también los
+    transitivos: sin él, dos restauraciones del mismo commit podían traer versiones distintas.
+
+    En la corrida de CI (GitHub Actions define CI=true) la restauración es en modo bloqueado: si un PackageReference
+    no coincide con su archivo de bloqueo, `dotnet build` y `dotnet test` fallan con NU1004 y el pull request queda
+    rechazado. En la PC de desarrollo no hay modo bloqueado: agregar o cambiar un paquete actualiza el archivo de
+    bloqueo, que se commitea junto con el cambio.
+  -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <RestoreLockedMode>true</RestoreLockedMode>
+  </PropertyGroup>
+
 </Project>
