@@ -78,6 +78,7 @@ const GRABADO = {
   estado: 'borrador',
   cliente: { ...CLIENTE, dni: '23456789' },
   lineas: [LINEA_GRABADA],
+  total: 1850,
 };
 
 const conSesion = { 'GET /api/sesion': vacia(204) };
@@ -399,7 +400,7 @@ describe('NuevoPresupuesto', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/155');
     expect(cuerpoEnviado(registro)).toEqual({
       cliente: CLIENTE,
-      lineas: [{ codigoArticulo: 7 }],
+      lineas: [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }],
     });
     // El presupuesto grabado muestra los seis datos (AC-01).
     for (const valor of [...Object.values(CLIENTE).filter((v) => v !== CLIENTE.dni), '23456789']) {
@@ -419,7 +420,7 @@ describe('NuevoPresupuesto', () => {
     await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
     expect(cuerpoEnviado(registro)).toEqual({
       cliente: { ...CLIENTE, domicilio: null, email: null, telefono: null },
-      lineas: [{ codigoArticulo: 7 }],
+      lineas: [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }],
     });
   });
 

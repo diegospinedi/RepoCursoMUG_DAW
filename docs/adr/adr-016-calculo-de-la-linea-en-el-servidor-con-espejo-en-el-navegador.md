@@ -42,3 +42,10 @@ capa de aplicación como límite del contrato, igual que `CodigoArticuloMaximo`.
 - Limitación heredada de D-22 de FEAT-002a: por encima de 2^46 centésimos, un `number` del JSON puede llegar con un
   centavo de diferencia, y en ese rango el recálculo en pantalla puede diferir del servidor. Se aceptó porque son
   importes que una óptica no usa, y la pantalla del presupuesto grabado muestra lo que devolvió el servidor.
+
+## Nota de corrección (2026-11-11, CODE · Block 3)
+
+El umbral es 2^46 **pesos** (70.368.744.177.664), no 2^46 centésimos. Por encima de ese valor, y cerca del tope del
+contrato, web y servidor pueden no aceptar los mismos totales, y la web puede leer como ilegible un presupuesto válido
+grabado con importes de ese orden (la comprobación de D-08 compara en centésimos). El usuario decidió mantener el tope
+y aceptar la limitación: D-23 en `docs/ddw/specs/decisions-FEAT-003b.md`.

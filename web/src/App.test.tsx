@@ -312,6 +312,7 @@ const PANTALLAS: Pantalla[] = [
               precioFinal: 1850,
             },
           ],
+          total: 1850,
         }),
       }),
     titulo: 'Presupuesto',

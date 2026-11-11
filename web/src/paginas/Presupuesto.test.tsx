@@ -37,7 +37,7 @@ const LINEA = {
   precioConDescuento: 1850,
   precioFinal: 1850,
 };
-const GRABADO = { numero: 155, fecha: '2026-03-10', estado: 'borrador', cliente: CLIENTE, lineas: [LINEA] };
+const GRABADO = { numero: 155, fecha: '2026-03-10', estado: 'borrador', cliente: CLIENTE, lineas: [LINEA], total: 1850 };
 
 /** Abre el presupuesto 155 con la respuesta indicada (por defecto, el grabado) y espera que se muestre. */
 async function abrir(cuerpo: unknown = GRABADO, estado?: unknown) {
@@ -125,7 +125,7 @@ describe('Presupuesto', () => {
 
   it('Presupuesto_Linea_MuestraLasSieteColumnas', async () => {
     // AC-17 y AC-18: las siete columnas de FR-13, con importes con 2 decimales (NFR-02).
-    await abrir({ ...GRABADO, lineas: [LINEA, { ...LINEA, codigoArticulo: 8, descripcion: 'Lente', precioUnitario: 1234567.5, precioConDescuento: 1234567.5, precioFinal: 1234567.5 }] });
+    await abrir({ ...GRABADO, lineas: [LINEA, { ...LINEA, codigoArticulo: 8, descripcion: 'Lente', precioUnitario: 1234567.5, precioConDescuento: 1234567.5, precioFinal: 1234567.5 }], total: 1236417.5 });
 
     const tabla = screen.getByRole('table', { name: 'Líneas del presupuesto' });
     expect(within(tabla).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([

@@ -260,7 +260,8 @@ export function NuevoPresupuesto() {
     setEnviando(true);
     const resultado = await grabarPresupuesto(
       validacion.datos,
-      enviadas.map((linea) => linea.codigo),
+      // Cantidad 1 y Descuento 0 hasta que la pantalla tenga sus campos (Block 4 de FEAT-003b).
+      enviadas.map((linea) => ({ codigoArticulo: linea.codigo, cantidad: 1, porcentajeDescuento: 0 })),
     );
     envioEnCurso.current = false;
     setEnviando(false);

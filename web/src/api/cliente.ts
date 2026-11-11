@@ -11,7 +11,7 @@
  *   "sin sesión" y avisa al manejador registrado con {@link alPerderLaSesion}.
  */
 
-import { IMPORTE_MAXIMO_SEGURO } from '../configuracion/numeros';
+import { IMPORTE_MAXIMO_SEGURO, sumarCentesimos } from '../configuracion/numeros';
 
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
@@ -568,6 +568,14 @@ export const CAMPO_DOMICILIO = 'domicilio';
 export const CAMPO_EMAIL = 'email';
 export const CAMPO_TELEFONO = 'telefono';
 export const CAMPO_LINEAS = 'lineas';
+/** Los campos de la línea a enviar (FEAT-003b, D-03): la cantidad y el descuento, además del código del artículo. */
+export const CAMPO_CODIGO_ARTICULO = 'codigoArticulo';
+export const CAMPO_CANTIDAD = 'cantidad';
+export const CAMPO_DESCUENTO = 'porcentajeDescuento';
+/** El campo de `errors` de la cantidad de la línea i (D-06): `lineas[i].cantidad`. */
+export const campoCantidad = (indice: number) => `${CAMPO_LINEAS}[${indice}].${CAMPO_CANTIDAD}`;
+/** El campo de `errors` del descuento de la línea i (D-06): `lineas[i].porcentajeDescuento`. */
+export const campoDescuento = (indice: number) => `${CAMPO_LINEAS}[${indice}].${CAMPO_DESCUENTO}`;
 
 /**
  * El cliente que se graba (y el que devuelve la Api). Datos personales (Ley 25.326, D-17): viajan solo en el cuerpo
@@ -605,6 +613,18 @@ export interface PresupuestoGrabado {
   estado: EstadoPresupuesto;
   cliente: DatosCliente;
   lineas: LineaPresupuesto[];
+  /** La suma de los Precios Finales, con IVA incluido (FR-06); la calcula el servidor y no se guarda (D-05). */
+  total: number;
+}
+
+/**
+ * Una línea a grabar (D-03): el código del artículo, la Cantidad y el Porcentaje de Descuento. Nunca precios ni
+ * descripción: los calcula y los copia el servidor (R-01).
+ */
+export interface LineaAGrabar {
+  codigoArticulo: number;
+  cantidad: number;
+  porcentajeDescuento: number;
 }
 
 /** El resultado de grabar un presupuesto: como {@link ResultadoAlta}, un 400 trae todos los campos inválidos. */
@@ -674,8 +694,10 @@ const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
 
 /**
  * Un presupuesto grabado: número entero positivo seguro, fecha `yyyy-MM-dd`, estado `borrador` o `final`, los datos
- * del cliente y las líneas. Cualquier parte ilegible hace ilegible la respuesta entera: la pantalla no muestra
- * importes ni datos falsos.
+ * del cliente, las líneas y el total. Cualquier parte ilegible hace ilegible la respuesta entera: la pantalla no
+ * muestra importes ni datos falsos. El total tiene que ser la suma de los Precios Finales recibidos, comparada en
+ * centésimos con {@link sumarCentesimos} y nunca como suma de flotantes (D-08): 0,1 + 0,2 es 0,3. Los importes se leen
+ * como números JSON, con o sin ceros finales (900 o 900.00; D-14b).
  */
 const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
   if (
@@ -683,7 +705,8 @@ const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
     !esEnteroEntre(cuerpo.numero, 1) ||
     !esFecha(cuerpo.fecha) ||
     !esEstadoPresupuesto(cuerpo.estado) ||
-    !Array.isArray(cuerpo.lineas)
+    !Array.isArray(cuerpo.lineas) ||
+    !esImporte(cuerpo.total)
   ) {
     return undefined;
   }
@@ -699,20 +722,36 @@ const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
     }
     lineas.push(linea);
   }
-  return { numero: cuerpo.numero, fecha: cuerpo.fecha, estado: cuerpo.estado, cliente, lineas };
+  const total = cuerpo.total;
+  if (sumarCentesimos([total]) !== sumarCentesimos(lineas.map((linea) => linea.precioFinal))) {
+    return undefined;
+  }
+  return { numero: cuerpo.numero, fecha: cuerpo.fecha, estado: cuerpo.estado, cliente, lineas, total };
 };
 
 /**
- * Graba un presupuesto nuevo en Borrador (FR-01, FR-08) con el cliente y, por cada línea en orden, solo el código del
- * artículo (D-12): el servidor copia la descripción y el precio del catálogo, así el Precio Unitario no se puede
- * modificar (FR-11). Un 400 devuelve TODOS los campos de `errors` (D-20) y un 413 es el mensaje general del catálogo.
+ * Graba un presupuesto nuevo en Borrador (FR-01, FR-08) con el cliente y, por cada línea en orden, el código del
+ * artículo, la Cantidad y el Porcentaje de Descuento (D-03), y nada más: el servidor copia la descripción y el precio
+ * del catálogo y calcula los importes, así el Precio Unitario no se puede modificar (FR-11) ni el pedido fija precios
+ * (R-01). Un 400 devuelve TODOS los campos de `errors` (D-20), incluidos `lineas[i].cantidad` y
+ * `lineas[i].porcentajeDescuento` (D-06), y un 413 es el mensaje general del catálogo.
  */
-export const grabarPresupuesto = (cliente: DatosCliente, codigos: readonly number[]): Promise<ResultadoAltaPresupuesto> =>
+export const grabarPresupuesto = (
+  cliente: DatosCliente,
+  lineas: readonly LineaAGrabar[],
+): Promise<ResultadoAltaPresupuesto> =>
   grabarConCampos(
     {
       metodo: 'POST',
       ruta: '/api/presupuestos',
-      cuerpo: { cliente, lineas: codigos.map((codigoArticulo) => ({ codigoArticulo })) },
+      cuerpo: {
+        cliente,
+        lineas: lineas.map((linea) => ({
+          [CAMPO_CODIGO_ARTICULO]: linea.codigoArticulo,
+          [CAMPO_CANTIDAD]: linea.cantidad,
+          [CAMPO_DESCUENTO]: linea.porcentajeDescuento,
+        })),
+      },
       mensaje413: MENSAJE_ARTICULO_GRANDE,
     },
     leerPresupuesto,
