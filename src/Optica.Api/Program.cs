@@ -149,6 +149,9 @@ public partial class Program
         // último número y la fecha local del día dentro de su transacción de escritura (ADR-013, D-06, D-07).
         builder.Services.AddScoped<AltaPresupuesto>();
         builder.Services.AddScoped<ObtenerPresupuesto>();
+        // FEAT-003c: la modificación en Borrador y el paso a Final, con versión (D-01) y en su transacción de escritura.
+        builder.Services.AddScoped<ModificarPresupuesto>();
+        builder.Services.AddScoped<PasarPresupuestoAFinal>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

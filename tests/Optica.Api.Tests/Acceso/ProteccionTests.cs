@@ -90,6 +90,9 @@ public sealed class ProteccionTests
             // FEAT-003a: el alta y la consulta del presupuesto llevan datos personales (D-17).
             (HttpMethods.Post, RutaPresupuestos),
             (HttpMethods.Get, RutaPresupuestos + "/{numero:long}"),
+            // FEAT-003c: la modificación y el paso a Final también llevan datos personales.
+            (HttpMethods.Put, RutaPresupuestos + "/{numero:long}"),
+            (HttpMethods.Put, RutaPresupuestos + "/{numero:long}/estado"),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -120,6 +123,22 @@ public sealed class ProteccionTests
             ("POST presupuesto grande", EnviarJsonAsync(
                 cliente, HttpMethod.Post, RutaPresupuestos, CuerpoPresupuesto(codigo, new string('a', 20_000)))),
             ("GET presupuesto", Http.GetAsync(cliente, $"{RutaPresupuestos}/1")),
+            ("PUT presupuesto", EnviarJsonAsync(
+                cliente, HttpMethod.Put, $"{RutaPresupuestos}/1", CuerpoModificacionPresupuesto(codigo))),
+            ("PUT presupuesto texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Put,
+                $"{RutaPresupuestos}/1",
+                new StringContent(CuerpoModificacionPresupuesto(codigo), Encoding.UTF8, "text/plain"))),
+            ("PUT presupuesto grande", EnviarJsonAsync(
+                cliente, HttpMethod.Put, $"{RutaPresupuestos}/1", CuerpoPresupuesto(codigo, new string('a', 20_000)))),
+            ("PUT estado presupuesto", EnviarJsonAsync(
+                cliente, HttpMethod.Put, $"{RutaPresupuestos}/1/estado", "{\"estado\":\"final\",\"version\":0}")),
+            ("PUT estado presupuesto texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Put,
+                $"{RutaPresupuestos}/1/estado",
+                new StringContent("{\"estado\":\"final\",\"version\":0}", Encoding.UTF8, "text/plain"))),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -205,6 +224,11 @@ public sealed class ProteccionTests
         "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"30111222\"},\"lineas\":[{\"codigoArticulo\":"
         + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":0}]"
         + (relleno is null ? string.Empty : ",\"relleno\":\"" + relleno + "\"") + "}";
+
+    /// <summary>Una modificación válida del presupuesto 1 (versión 0, la línea 1), con datos ficticios.</summary>
+    private static string CuerpoModificacionPresupuesto(long codigo) =>
+        "{\"version\":0,\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"99999999\"},"
+        + "\"lineas\":[{\"orden\":1,\"codigoArticulo\":" + codigo + ",\"cantidad\":2,\"porcentajeDescuento\":0}]}";
 
     private static string CuerpoPresupuestoDeBytes(long codigo, int bytes)
     {

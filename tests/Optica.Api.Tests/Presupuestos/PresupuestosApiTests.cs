@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -26,13 +28,23 @@ public sealed class PresupuestosApiTests
     private const string TextoCantidadInvalida = "La cantidad debe ser un número entero mayor a 0";
     private const string TextoDescuentoFueraDeRango = "El descuento debe estar entre 0 y 100";
 
-    private static readonly string[] CamposRespuesta = ["numero", "fecha", "estado", "cliente", "lineas", "total"];
+    private const string TituloConflicto = "No se pudo grabar el presupuesto.";
+    private const string TextoCambiado = "El presupuesto cambió mientras lo editabas. Volvé a abrirlo.";
+    private const string TextoFinal = "El presupuesto está en Final y no se puede modificar.";
+    private const string TextoVersion = "Volvé a abrir el presupuesto para editarlo.";
+    private const string TextoLineaAjena = "La línea no corresponde a este presupuesto.";
+    private const string TextoEstado = "El presupuesto solo puede pasar a Final.";
+    private const string TextoArticuloNoDisponible = "Ese artículo ya no está disponible. Quitá la línea y buscalo de nuevo";
+
+    private static readonly string[] CamposRespuesta =
+        ["numero", "fecha", "estado", "cliente", "lineas", "total", "version"];
+
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
     private static readonly string[] CamposLinea =
     [
         "codigoArticulo", "descripcion", "precioUnitario", "cantidad", "porcentajeDescuento", "precioConDescuento",
-        "precioFinal",
+        "precioFinal", "orden",
     ];
 
     // Errores de lectura y de validación.
@@ -769,7 +781,852 @@ public sealed class PresupuestosApiTests
         }
     }
 
+    // FEAT-003c: modificación en Borrador y paso a Final.
+
+    /// <summary>
+    /// AC-01 (D-06): con el reloj en el 10/03/2026 se da de alta; dos días después (12/03/2026) se modifica y la fecha
+    /// sigue siendo el 10/03/2026, en la respuesta y en el GET. La sesión vence a los 60 minutos: se vuelve a ingresar.
+    /// </summary>
+    [Fact]
+    public async Task Modificar_ConRelojPosterior_ConservaFecha()
+    {
+        var reloj = new FakeTimeProvider(new DateTimeOffset(2026, 3, 10, 15, 0, 0, TimeSpan.Zero));
+        reloj.SetLocalTimeZone(TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires"));
+        using var fabrica = new FabricaApi(servicios =>
+        {
+            servicios.RemoveAll<TimeProvider>();
+            servicios.AddSingleton<TimeProvider>(reloj);
+        });
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        Assert.Equal("2026-03-10", (await LeerAsync(cliente, cookie, numero)).GetProperty("fecha").GetString());
+
+        reloj.Advance(TimeSpan.FromDays(2));
+        var ingreso = await Http.PostJsonAsync(cliente, "/api/acceso/ingresar", Http.CuerpoContrasena(Http.Contrasena));
+        var cookieNueva = Http.Cookie(ingreso);
+        Assert.NotNull(cookieNueva);
+        var respuesta = await PutAsync(
+            cliente, cookieNueva, numero, CuerpoModificacion(0, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("2026-03-10", (await Http.JsonAsync(respuesta)).GetProperty("fecha").GetString());
+        Assert.Equal("2026-03-10", (await LeerAsync(cliente, cookieNueva, numero)).GetProperty("fecha").GetString());
+    }
+
+    /// <summary>
+    /// AC-02: se agrega el Domicilio a un Borrador; 200 con el presupuesto releído (estado borrador, versión 1, mismo
+    /// número) y el GET devuelve lo mismo.
+    /// </summary>
+    [Fact]
+    public async Task Put_ModificarDomicilio_200YGetLoMuestra()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("application/json", respuesta.Content.Headers.ContentType?.MediaType);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposRespuesta, Nombres(json));
+        Assert.Equal(numero, json.GetProperty("numero").GetInt64());
+        Assert.Equal("borrador", json.GetProperty("estado").GetString());
+        Assert.Equal(1, json.GetProperty("version").GetInt64());
+        AfirmarCliente(json, "Ficticiez", "Prueboncia", "99999999", "Calle Ficticia 123", "prueba@example.com", null);
+        AfirmarLinea(Assert.Single(json.GetProperty("lineas").EnumerateArray()), 1, codigo, "Armazón", 1815m);
+        Assert.Equal(json.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>AC-03: se quita una línea y se agrega otra; las líneas quedan renumeradas 1..n y el total recalculado.</summary>
+    [Fact]
+    public async Task Put_AgregarYQuitarLinea_200()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var armazon = await GrabarArticuloAsync(cliente, cookie);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+        var estuche = await GrabarArticuloAsync(cliente, cookie, "Estuche", "EST-1", 500m, 0m);
+        var numero = await AltaAsync(cliente, cookie, armazon, lente);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(lente, 2), LineaJson(estuche, null, 2)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        var lineas = json.GetProperty("lineas");
+        Assert.Equal(2, lineas.GetArrayLength());
+        AfirmarLinea(lineas[0], 1, lente, "Lente bifocal", 1000m);
+        AfirmarLinea(lineas[1], 2, estuche, "Estuche", 500m, 2, 0m, 500m, 1000m);
+        Assert.Equal(2000m, json.GetProperty("total").GetDecimal());
+        Assert.Equal(json.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>AC-04: un Borrador pasa a Final con la versión leída; 200 con estado final y versión 1, y el GET lo muestra.</summary>
+    [Fact]
+    public async Task PutEstado_Final_200()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        var respuesta = await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 0));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposRespuesta, Nombres(json));
+        Assert.Equal("final", json.GetProperty("estado").GetString());
+        Assert.Equal(1, json.GetProperty("version").GetInt64());
+        Assert.Equal(antes.GetProperty("fecha").GetString(), json.GetProperty("fecha").GetString());
+        Assert.Equal(antes.GetProperty("lineas").GetRawText(), json.GetProperty("lineas").GetRawText());
+        Assert.Equal(json.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>AC-07: modificar un Final responde 409 <c>final</c> y no cambia nada, con la versión actual o una vieja.</summary>
+    [Fact]
+    public async Task Put_PresupuestoFinal_409Final()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        Assert.Equal(HttpStatusCode.OK, (await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 0))).StatusCode);
+        var final = await LeerAsync(cliente, cookie, numero);
+
+        foreach (var version in new long[] { 1, 0 })
+        {
+            var respuesta = await PutAsync(
+                cliente, cookie, numero, CuerpoModificacion(version, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1)));
+
+            await AfirmarConflictoAsync(respuesta, "final", TextoFinal);
+        }
+
+        Assert.Equal(final.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>AC-08: un Final no vuelve a Borrador: 409 <c>final</c>; tampoco pasa de nuevo a Final.</summary>
+    [Fact]
+    public async Task PutEstado_BorradorSobreFinal_409Final()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        Assert.Equal(HttpStatusCode.OK, (await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 0))).StatusCode);
+        var final = await LeerAsync(cliente, cookie, numero);
+
+        await AfirmarConflictoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("borrador", 1)), "final", TextoFinal);
+        await AfirmarConflictoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 1)), "final", TextoFinal);
+
+        var leido = await LeerAsync(cliente, cookie, numero);
+        Assert.Equal("final", leido.GetProperty("estado").GetString());
+        Assert.Equal(final.GetRawText(), leido.GetRawText());
+    }
+
+    /// <summary>
+    /// AC-09 (D-02): cambia el precio del artículo en el catálogo; la línea existente conserva el Precio Unitario grabado
+    /// y recalcula con la Cantidad y el Descuento nuevos.
+    /// </summary>
+    [Fact]
+    public async Task Put_LineaExistente_ConservaPrecioUnitarioGrabado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var cambio = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaArticulos}/{codigo}",
+            Json(JsonSerializer.Serialize(new
+            {
+                codigoProveedor = "ABC-1",
+                descripcion = "Armazón nuevo",
+                precioCosto = 2000m,
+                margenUtilidad = 50m,
+                version = 0,
+            })),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, cambio.StatusCode);
+        Assert.NotEqual(1815m, (await Http.JsonAsync(cambio)).GetProperty("precioVenta").GetDecimal());
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 2, 10m)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var linea = (await Http.JsonAsync(respuesta)).GetProperty("lineas")[0];
+        AfirmarLinea(linea, 1, codigo, "Armazón", 1815m, 2, 10m, 1633.50m, 3267m);
+    }
+
+    /// <summary>AC-10 (D-02): con el artículo inactivo, la línea existente se conserva y se puede cambiar su Cantidad.</summary>
+    [Fact]
+    public async Task Put_LineaConArticuloInactivo_ConservaCopia()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        await DesactivarArticuloAsync(cliente, cookie, codigo);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 3)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var linea = (await Http.JsonAsync(respuesta)).GetProperty("lineas")[0];
+        AfirmarLinea(linea, 1, codigo, "Armazón", 1815m, 3, 0m, 1815m, 5445m);
+    }
+
+    /// <summary>D-01: con una versión que ya cambió (otra sesión grabó), 409 <c>cambiado</c> sin escribir.</summary>
+    [Fact]
+    public async Task Put_VersionVieja_409Cambiado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var primera = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1)));
+        Assert.Equal(HttpStatusCode.OK, primera.StatusCode);
+        var grabado = await Http.JsonAsync(primera);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson("Otra Calle 456"), LineaJson(codigo, 1, 5)));
+
+        await AfirmarConflictoAsync(respuesta, "cambiado", TextoCambiado);
+        Assert.Equal(grabado.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>D-01: pasar a Final con una versión que ya cambió, 409 <c>cambiado</c>; sigue en Borrador.</summary>
+    [Fact]
+    public async Task PutEstado_VersionVieja_409Cambiado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 2)))).StatusCode);
+        var grabado = await LeerAsync(cliente, cookie, numero);
+
+        await AfirmarConflictoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 0)), "cambiado", TextoCambiado);
+
+        Assert.Equal(grabado.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>
+    /// Una versión faltante o fuera de 0..2^53−1, 400 en <c>version</c> con el texto fijo; una que no es un entero, el
+    /// cuerpo ilegible en <c>version</c>. Sin escribir, en los dos PUT.
+    /// </summary>
+    [Fact]
+    public async Task Put_VersionFaltante_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        foreach (var version in new long?[] { null, -1, 9_007_199_254_740_992 })
+        {
+            await AfirmarRechazoAsync(
+                await PutAsync(cliente, cookie, numero, CuerpoModificacion(version, ClienteJson(), LineaJson(codigo, 1))),
+                new() { ["version"] = [TextoVersion] });
+            await AfirmarRechazoAsync(
+                await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", version)),
+                new() { ["version"] = [TextoVersion] });
+        }
+
+        var ilegible = await PutAsync(
+            cliente, cookie, numero,
+            "{\"version\":\"Zq7-marcado\",\"cliente\":" + ClienteJson() + ",\"lineas\":[" + LineaJson(codigo, 1) + "]}");
+        await AfirmarRechazoAsync(ilegible, new() { ["version"] = [AccionCuerpoIlegible] });
+        AfirmarSinDetallesDelLector(await ilegible.Content.ReadAsStringAsync(), "Zq7-marcado");
+        var estadoIlegible = await PutEstadoAsync(cliente, cookie, numero, "{\"estado\":\"final\",\"version\":1.5}");
+        await AfirmarRechazoAsync(estadoIlegible, new() { ["version"] = [AccionCuerpoIlegible] });
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>Un <c>estado</c> que no es "final" (ni "borrador"), o ausente, 400 en <c>estado</c>; sin escribir.</summary>
+    [Fact]
+    public async Task PutEstado_EstadoInvalido_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        foreach (var estado in new[] { null, "Zq7-anulado", "FINAL", "" })
+        {
+            var respuesta = await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado(estado, 0));
+
+            await AfirmarRechazoAsync(respuesta, new() { ["estado"] = [TextoEstado] });
+            Assert.DoesNotContain("Zq7", await respuesta.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+
+        await AfirmarRechazoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, "{\"estado\":1,\"version\":0}"),
+            new() { ["estado"] = [AccionCuerpoIlegible] });
+        await AfirmarRechazoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, "esto no es json"),
+            new() { ["estado"] = [AccionCuerpoIlegible] });
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>
+    /// D-03: un <c>orden</c> repetido, menor que 1, inexistente o de una línea con otro código, 400 en <c>lineas[i]</c>
+    /// con "La línea no corresponde a este presupuesto."; un <c>orden</c> ilegible, en <c>lineas[i].orden</c>. Sin escribir.
+    /// </summary>
+    [Fact]
+    public async Task Put_LineaAjena_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var armazon = await GrabarArticuloAsync(cliente, cookie);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+        var numero = await AltaAsync(cliente, cookie, armazon, lente);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        // Repetido y menor que 1: antes de leer la base.
+        await AfirmarRechazoAsync(
+            await PutAsync(cliente, cookie, numero, CuerpoModificacion(
+                0, ClienteJson(), LineaJson(armazon, 1), LineaJson(armazon, 1), LineaJson(lente, 0))),
+            new() { ["lineas[1]"] = [TextoLineaAjena], ["lineas[2]"] = [TextoLineaAjena] });
+        // Inexistente y con otro código: después de comparar la versión.
+        await AfirmarRechazoAsync(
+            await PutAsync(cliente, cookie, numero, CuerpoModificacion(
+                0, ClienteJson(), LineaJson(armazon, 1), LineaJson(armazon, 2), LineaJson(lente, 3))),
+            new() { ["lineas[1]"] = [TextoLineaAjena], ["lineas[2]"] = [TextoLineaAjena] });
+        await AfirmarRechazoAsync(
+            await PutAsync(cliente, cookie, numero,
+                "{\"version\":0,\"cliente\":" + ClienteJson()
+                + ",\"lineas\":[{\"orden\":\"x\",\"codigoArticulo\":" + armazon + ",\"cantidad\":1,\"porcentajeDescuento\":0}]}"),
+            new() { ["lineas[0].orden"] = [AccionCuerpoIlegible] });
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>D-10: la versión se compara antes que el <c>orden</c>: con una versión vieja y un <c>orden</c> inexistente, 409.</summary>
+    [Fact]
+    public async Task Put_OrdenDeVersionVieja_409Cambiado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 2)))).StatusCode);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 5)));
+
+        await AfirmarConflictoAsync(respuesta, "cambiado", TextoCambiado);
+    }
+
+    /// <summary>D-10: <c>estado</c> "borrador" sobre un Borrador es inválido (400 en <c>estado</c>), no un conflicto.</summary>
+    [Fact]
+    public async Task PutEstado_BorradorSobreBorrador_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        await AfirmarRechazoAsync(
+            await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("borrador", 0)),
+            new() { ["estado"] = [TextoEstado] });
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>D-10: cada línea del alta y de la consulta trae su <c>orden</c> 1..n, al final de sus columnas.</summary>
+    [Fact]
+    public async Task Get_LineasTraenOrden()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var armazon = await GrabarArticuloAsync(cliente, cookie);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+
+        var alta = await PostAsync(
+            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "99999999", null, null, null, lente, armazon, lente));
+
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        foreach (var json in new[] { await Http.JsonAsync(alta), await LeerAsync(cliente, cookie, 1) })
+        {
+            Assert.Equal(0, json.GetProperty("version").GetInt64());
+            var lineas = json.GetProperty("lineas").EnumerateArray().ToList();
+            Assert.Equal([1, 2, 3], lineas.Select(linea => linea.GetProperty("orden").GetInt32()));
+            Assert.Equal([lente, armazon, lente], lineas.Select(linea => linea.GetProperty("codigoArticulo").GetInt64()));
+            Assert.All(lineas, linea => Assert.Equal(CamposLinea, Nombres(linea)));
+        }
+    }
+
+    /// <summary>Una línea nueva con un artículo inactivo, 400 en esa línea como en el alta; sin escribir.</summary>
+    [Fact]
+    public async Task Put_ArticuloNuevoInactivo_400()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var armazon = await GrabarArticuloAsync(cliente, cookie);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
+        var numero = await AltaAsync(cliente, cookie, armazon);
+        await DesactivarArticuloAsync(cliente, cookie, lente);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(armazon, 1), LineaJson(lente)));
+
+        await AfirmarRechazoAsync(respuesta, new() { ["lineas[1]"] = [TextoArticuloNoDisponible] });
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>Datos inválidos del cliente y de las líneas: 400 con todos los campos y los textos del alta; sin escribir.</summary>
+    [Fact]
+    public async Task Put_DatosInvalidos_400PorCampo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+        var clienteInvalido = JsonSerializer.Serialize(new
+        {
+            apellido = "Ficticiez",
+            nombre = (string?)null,
+            dni = "123",
+            email = "zq7@",
+            domicilio = (string?)null,
+        });
+
+        var respuesta = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, clienteInvalido, LineaJson(codigo, 1, 0, 101m)));
+
+        await AfirmarRechazoAsync(
+            respuesta,
+            new()
+            {
+                ["nombre"] = ["Ingresá el nombre del cliente"],
+                ["dni"] = ["El DNI debe tener 7 u 8 dígitos"],
+                ["email"] = ["El email debe tener el formato usuario@dominio.extensión"],
+                ["lineas[0].cantidad"] = [TextoCantidadInvalida],
+                ["lineas[0].porcentajeDescuento"] = [TextoDescuentoFueraDeRango],
+            });
+        Assert.DoesNotContain("zq7", await respuesta.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        await AfirmarRechazoAsync(
+            await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, ClienteJson())),
+            new() { ["lineas"] = ["Agregá al menos una línea al presupuesto"] });
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>Un presupuesto inexistente: 404 con el título fijo y sin detalles, en los dos PUT.</summary>
+    [Fact]
+    public async Task Put_Inexistente_404()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+
+        foreach (var respuesta in new[]
+        {
+            await PutAsync(cliente, cookie, 99, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo))),
+            await PutEstadoAsync(cliente, cookie, 99, CuerpoEstado("final", 0)),
+        })
+        {
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+            var json = await Http.JsonAsync(respuesta);
+            Assert.Equal(TituloNoEncontrado, json.GetProperty("title").GetString());
+            Assert.False(json.TryGetProperty("detail", out _));
+            Assert.False(json.TryGetProperty("errors", out _));
+        }
+
+        await AfirmarSinPresupuestoAsync(cliente, cookie, 99);
+    }
+
+    /// <summary>Sin sesión, los dos PUT responden 401 sin cuerpo y no cambian nada.</summary>
+    [Fact]
+    public async Task Put_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        foreach (var respuesta in new[]
+        {
+            await Http.EnviarAsync(
+                cliente, HttpMethod.Put, $"{Ruta}/{numero}",
+                Json(CuerpoModificacion(0, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1)))),
+            await Http.EnviarAsync(cliente, HttpMethod.Put, $"{Ruta}/{numero}/estado", Json(CuerpoEstado("final", 0))),
+        })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+        // Control: el 401 lo dio la sesión, no una ruta inexistente; con sesión, los mismos pedidos se atienden.
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1)))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK, (await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 1))).StatusCode);
+    }
+
+    /// <summary>
+    /// Ley 25.326: los 409 traen solo el título, el texto fijo y el <c>motivo</c>; no repiten el cliente, las líneas ni la
+    /// versión enviados. Datos ficticios con marcadores.
+    /// </summary>
+    [Fact]
+    public async Task Put_Errores409_NoRepitenDatos()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var marcado = JsonSerializer.Serialize(new
+        {
+            apellido = "Zq7Apellido",
+            nombre = "Zq7Nombre",
+            dni = "99.999.999",
+            domicilio = "Zq7 Calle Ficticia 123",
+            email = "zq7@example.com",
+            telefono = "011-5555-0199",
+        });
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1)))).StatusCode);
+
+        var cambiado = await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, marcado, LineaJson(codigo, 1, 7531, 12.34m)));
+        await AfirmarConflictoAsync(cambiado, "cambiado", TextoCambiado);
+        Assert.Equal(HttpStatusCode.OK, (await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 1))).StatusCode);
+        var final = await PutAsync(cliente, cookie, numero, CuerpoModificacion(2, marcado, LineaJson(codigo, 1, 7531, 12.34m)));
+        await AfirmarConflictoAsync(final, "final", TextoFinal);
+
+        foreach (var respuesta in new[] { cambiado, final })
+        {
+            var json = await Http.JsonAsync(respuesta);
+            Assert.All(
+                Nombres(json),
+                nombre => Assert.Contains(nombre, new[] { "type", "title", "status", "detail", "motivo", "traceId" }));
+            var texto = json.GetRawText();
+            foreach (var dato in new[] { "Zq7", "zq7", "99999999", "99.999.999", "5555", "example.com", "7531", "12.34" })
+            {
+                Assert.DoesNotContain(dato, texto, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ley 25.326: con el registro en Trace, ninguna línea de una modificación grabada, rechazada (400 y 409) ni de un paso
+    /// a Final contiene los datos del cliente enviados. Datos ficticios con marcadores.
+    /// </summary>
+    [Fact]
+    public async Task Registro_ModificacionYPasoAFinal_SinDatosPersonales()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var marcado = JsonSerializer.Serialize(new
+        {
+            apellido = "Zq7Apellido",
+            nombre = "Zq7Nombre",
+            dni = "99.999.999",
+            domicilio = "Zq7 Calle Ficticia 123",
+            email = "zq7@example.com",
+            telefono = "011-5555-0199",
+        });
+        var invalido = marcado.Replace("99.999.999", "ZZMARCA", StringComparison.Ordinal);
+
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, marcado, LineaJson(codigo, 1)))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await PutAsync(cliente, cookie, numero, CuerpoModificacion(1, invalido, LineaJson(codigo, 1)))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, marcado, LineaJson(codigo, 1)))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", 1))).StatusCode);
+
+        var lineas = fabrica.Registro.Lineas;
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        Assert.Contains(lineas, l => l.Mensaje.Contains("PresupuestosController", StringComparison.Ordinal));
+        foreach (var secreto in new[] { "Zq7", "zq7", "99999999", "99.999.999", "5555-0199", "example.com", "ZZMARCA" })
+        {
+            var conElDato = lineas.Where(l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal))
+                .Select(l => $"{l.Categoria} ({l.Nivel})")
+                .ToList();
+            Assert.True(conElDato.Count == 0, $"\"{secreto}\" llegó al log en: {string.Join(", ", conElDato)}");
+        }
+    }
+
+    /// <summary>
+    /// R-02: con sesión, el PUT de modificación sin <c>Content-Type: application/json</c> (texto plano o ninguno) responde
+    /// 415 sin cuerpo y no cambia nada.
+    /// </summary>
+    [Fact]
+    public async Task Put_SinJson_415()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+        var cuerpo = CuerpoModificacion(0, ClienteJson("Calle Ficticia 123"), LineaJson(codigo, 1));
+
+        await AfirmarSinJsonAsync(cliente, cookie, $"{Ruta}/{numero}", cuerpo);
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>R-02: con sesión, el PUT de estado sin JSON responde 415 sin cuerpo y el presupuesto sigue en Borrador.</summary>
+    [Fact]
+    public async Task PutEstado_SinJson_415()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        await AfirmarSinJsonAsync(cliente, cookie, $"{Ruta}/{numero}/estado", CuerpoEstado("final", 0));
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+    }
+
+    /// <summary>
+    /// D-16: con sesión, un PUT de modificación de más de 16 KB responde 413, con <c>Content-Length</c> y en partes, sin
+    /// cambiar nada; uno de 16 KB justos se atiende.
+    /// </summary>
+    [Fact]
+    public async Task Put_DemasiadoGrande_413()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+        string Cuerpo(int bytes) => ConRelleno(CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 2)), bytes);
+
+        await AfirmarDemasiadoGrandeAsync(cliente, cookie, $"{Ruta}/{numero}", Cuerpo(16 * 1024 + 1));
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+
+        var justo = await PutAsync(cliente, cookie, numero, Cuerpo(16 * 1024));
+        Assert.Equal(HttpStatusCode.OK, justo.StatusCode);
+    }
+
+    /// <summary>D-16: con sesión, un PUT de estado de más de 16 KB responde 413 y el presupuesto sigue en Borrador.</summary>
+    [Fact]
+    public async Task PutEstado_DemasiadoGrande_413()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        await AfirmarDemasiadoGrandeAsync(
+            cliente, cookie, $"{Ruta}/{numero}/estado", ConRelleno(CuerpoEstado("final", 0), 16 * 1024 + 1));
+
+        Assert.Equal(antes.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
+        var justo = await PutEstadoAsync(cliente, cookie, numero, ConRelleno(CuerpoEstado("final", 0), 16 * 1024));
+        Assert.Equal(HttpStatusCode.OK, justo.StatusCode);
+    }
+
+    /// <summary>
+    /// AC-09 con el recálculo real del catálogo (FEAT-002c): el múltiplo de redondeo pasa a 50 y el artículo de 1.815,00
+    /// queda en 1.850,00 exactos; el presupuesto ya grabado sigue con 1.815,00, por GET, sin modificarlo y después de
+    /// modificar su Cantidad.
+    /// </summary>
+    [Fact]
+    public async Task Get_TrasRecalculoDelCatalogo_ConservaPrecioUnitario()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+
+        // Monotributo: el precio de venta es costo × (100 + margen) / 100 = 1.815,00, redondeado hacia arriba a 50.
+        var configuracion =
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"monotributo\",\"multiploRedondeo\":50,\"topeIdentificacion\":1}";
+        var grabacion = await Http.PostJsonAsync(cliente, "/api/configuracion", configuracion, cookie);
+        Assert.Equal(HttpStatusCode.OK, grabacion.StatusCode);
+        Assert.Equal(1, (await Http.JsonAsync(grabacion)).GetProperty("preciosCambiados").GetInt32());
+        var articulo = await Http.JsonAsync(await Http.GetAsync(cliente, $"{RutaArticulos}/{codigo}", cookie));
+        Assert.Equal(1850.00m, articulo.GetProperty("precioVenta").GetDecimal());
+
+        AfirmarLinea((await LeerAsync(cliente, cookie, numero)).GetProperty("lineas")[0], 1, codigo, "Armazón", 1815m);
+        var modificado = await PutAsync(
+            cliente, cookie, numero, CuerpoModificacion(0, ClienteJson(), LineaJson(codigo, 1, 2)));
+        Assert.Equal(HttpStatusCode.OK, modificado.StatusCode);
+        AfirmarLinea(
+            (await LeerAsync(cliente, cookie, numero)).GetProperty("lineas")[0],
+            1, codigo, "Armazón", 1815m, 2, 0m, 1815m, 3630m);
+    }
+
+    /// <summary>
+    /// AC-10: desactivar el artículo no cambia un Borrador ya grabado: el GET, sin modificarlo, devuelve el mismo
+    /// presupuesto, con el mismo Código, Descripción y Precio Unitario.
+    /// </summary>
+    [Fact]
+    public async Task Get_TrasDesactivarArticulo_LineaSinCambios()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        var antes = await LeerAsync(cliente, cookie, numero);
+
+        await DesactivarArticuloAsync(cliente, cookie, codigo);
+
+        var despues = await LeerAsync(cliente, cookie, numero);
+        AfirmarLinea(despues.GetProperty("lineas")[0], 1, codigo, "Armazón", 1815m);
+        Assert.Equal(antes.GetRawText(), despues.GetRawText());
+    }
+
     // Ayudas.
+
+    /// <summary>Agrega al objeto JSON una propiedad que se ignora, hasta que ocupe <paramref name="bytes"/> en UTF-8.</summary>
+    private static string ConRelleno(string cuerpo, int bytes)
+    {
+        var sinRelleno = cuerpo[..^1] + ",\"relleno\":\"\"}";
+        var faltan = bytes - Encoding.UTF8.GetByteCount(sinRelleno);
+        Assert.True(faltan >= 0, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var resultado = cuerpo[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(resultado));
+        return resultado;
+    }
+
+    /// <summary>Texto plano, ningún tipo, y ningún tipo ni cuerpo: 415 sin cuerpo.</summary>
+    private static async Task AfirmarSinJsonAsync(HttpClient cliente, string cookie, string ruta, string cuerpo)
+    {
+        foreach (var contenido in new HttpContent?[]
+        {
+            new StringContent(cuerpo, Encoding.UTF8, "text/plain"),
+            new Http.ContenidoSinLargo(cuerpo, null),
+            null,
+        })
+        {
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Put, ruta, contenido, cookie);
+
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>Con <c>Content-Length</c> y en partes (sin él): 413, sin datos del pedido en la respuesta.</summary>
+    private static async Task AfirmarDemasiadoGrandeAsync(HttpClient cliente, string cookie, string ruta, string cuerpo)
+    {
+        foreach (var contenido in new HttpContent[]
+        {
+            new StringContent(cuerpo, Encoding.UTF8, "application/json"),
+            new Http.ContenidoSinLargo(cuerpo, "application/json"),
+        })
+        {
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Put, ruta, contenido, cookie);
+
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, respuesta.StatusCode);
+            var texto = await respuesta.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("99.999.999", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("99999999", texto, StringComparison.Ordinal);
+        }
+    }
+
+    private static StringContent Json(string cuerpo) => new(cuerpo, Encoding.UTF8, "application/json");
+
+    /// <summary>Un cliente ficticio válido (DNI 99.999.999, correo de example.com) como JSON.</summary>
+    private static string ClienteJson(string? domicilio = null) =>
+        JsonSerializer.Serialize(new
+        {
+            apellido = "Ficticiez",
+            nombre = "Prueboncia",
+            dni = "99.999.999",
+            domicilio,
+            email = "prueba@example.com",
+            telefono = (string?)null,
+        });
+
+    private static string LineaJson(long codigo, int? orden = null, int cantidad = 1, decimal descuento = 0m) =>
+        JsonSerializer.Serialize(new { orden, codigoArticulo = codigo, cantidad, porcentajeDescuento = descuento });
+
+    private static string CuerpoModificacion(long? version, string cliente, params string[] lineas) =>
+        "{" + (version is { } valor ? "\"version\":" + valor.ToString(CultureInfo.InvariantCulture) + "," : string.Empty)
+        + "\"cliente\":" + cliente + ",\"lineas\":[" + string.Join(",", lineas) + "]}";
+
+    private static string CuerpoEstado(string? estado, long? version) => JsonSerializer.Serialize(new { estado, version });
+
+    private static Task<HttpResponseMessage> PutAsync(HttpClient cliente, string cookie, long numero, string cuerpo) =>
+        Http.EnviarAsync(cliente, HttpMethod.Put, $"{Ruta}/{numero}", Json(cuerpo), cookie);
+
+    private static Task<HttpResponseMessage> PutEstadoAsync(HttpClient cliente, string cookie, long numero, string cuerpo) =>
+        Http.EnviarAsync(cliente, HttpMethod.Put, $"{Ruta}/{numero}/estado", Json(cuerpo), cookie);
+
+    /// <summary>Da de alta un presupuesto con el cliente ficticio y una línea por código, y devuelve su número.</summary>
+    private static async Task<long> AltaAsync(HttpClient cliente, string cookie, params long[] codigos)
+    {
+        var respuesta = await PostAsync(
+            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "99.999.999", null, "prueba@example.com", null, codigos));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        return (await Http.JsonAsync(respuesta)).GetProperty("numero").GetInt64();
+    }
+
+    private static async Task DesactivarArticuloAsync(HttpClient cliente, string cookie, long codigo)
+    {
+        var respuesta = await Http.EnviarAsync(
+            cliente, HttpMethod.Put, $"{RutaArticulos}/{codigo}/estado", Json("{\"activo\":false}"), cookie);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>409 con ProblemDetails: <c>title</c> fijo, el texto del caso de uso y el <c>motivo</c> (D-05).</summary>
+    private static async Task AfirmarConflictoAsync(HttpResponseMessage respuesta, string motivo, string detalle)
+    {
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(409, json.GetProperty("status").GetInt32());
+        Assert.Equal(TituloConflicto, json.GetProperty("title").GetString());
+        Assert.Equal(detalle, json.GetProperty("detail").GetString());
+        Assert.Equal(motivo, json.GetProperty("motivo").GetString());
+        Assert.False(json.TryGetProperty("errors", out _));
+    }
 
     private static string Cuerpo(
         string? apellido, string? nombre, string? dni, string? domicilio, string? email, string? telefono,
@@ -865,6 +1722,18 @@ public sealed class PresupuestosApiTests
     /// <summary>Una línea con Cantidad 1, Descuento 0 y los tres precios iguales al de venta del artículo.</summary>
     private static void AfirmarLinea(JsonElement linea, long codigo, string descripcion, decimal precio) =>
         AfirmarLinea(linea, codigo, descripcion, precio, 1, 0m, precio, precio);
+
+    /// <summary>Como la de cuatro datos, y además el <c>orden</c> de la línea (D-10 de FEAT-003c).</summary>
+    private static void AfirmarLinea(JsonElement linea, int orden, long codigo, string descripcion, decimal precio) =>
+        AfirmarLinea(linea, orden, codigo, descripcion, precio, 1, 0m, precio, precio);
+
+    private static void AfirmarLinea(
+        JsonElement linea, int orden, long codigo, string descripcion, decimal precio, int cantidad, decimal descuento,
+        decimal precioConDescuento, decimal precioFinal)
+    {
+        Assert.Equal(orden, linea.GetProperty("orden").GetInt32());
+        AfirmarLinea(linea, codigo, descripcion, precio, cantidad, descuento, precioConDescuento, precioFinal);
+    }
 
     private static void AfirmarLinea(
         JsonElement linea, long codigo, string descripcion, decimal precio, int cantidad, decimal descuento,

@@ -34,7 +34,44 @@ public class ObtenerPresupuestoTests
         Assert.Equal(guardado.Fecha, leido.Fecha);
         Assert.Equal("borrador", leido.Estado);
         Assert.Equal(new ClienteGrabado("Gómez", "Luis", "30111222", null, null, null), leido.Cliente);
-        Assert.Equal([new LineaGrabada(1, "Lente orgánico", 100m, 1, 0m, 100m, 100m)], leido.Lineas);
+        Assert.Equal([new LineaGrabada(1, "Lente orgánico", 100m, 1, 0m, 100m, 100m, 1)], leido.Lineas);
+        Assert.Equal(0, leido.Version);
+    }
+
+    /// <summary>
+    /// FEAT-003c (D-01, D-10): la respuesta trae la versión del dominio, para la concurrencia optimista, y el
+    /// <c>orden</c> de cada línea, 1..n en el orden grabado.
+    /// </summary>
+    [Fact]
+    public async Task Obtener_TraeVersionYOrden()
+    {
+        _unidad.Guardados.Add(new Presupuesto(
+            3,
+            new DateOnly(2026, 3, 10),
+            EstadoPresupuesto.Borrador,
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, "prueba@example.com", null),
+            [
+                new LineaPresupuesto(2, "Lente bifocal", 1000m, 1, 0m, 1000m, 1000m),
+                new LineaPresupuesto(1, "Paño", 10m, 1, 0m, 10m, 10m),
+            ],
+            version: 7));
+
+        var leido = await new ObtenerPresupuesto(_unidad).EjecutarAsync(3);
+
+        Assert.NotNull(leido);
+        Assert.Equal(7, leido.Version);
+        Assert.Equal([1, 2], leido.Lineas.Select(linea => linea.Orden));
+        Assert.Equal([2L, 1L], leido.Lineas.Select(linea => linea.CodigoArticulo));
+    }
+
+    /// <summary><c>Version</c> es obligatoria al construir un <see cref="PresupuestoGrabado"/>, como <c>Total</c>.</summary>
+    [Fact]
+    public void PresupuestoGrabado_VersionEsObligatoria()
+    {
+        var version = typeof(PresupuestoGrabado).GetProperty(nameof(PresupuestoGrabado.Version));
+
+        Assert.NotNull(version);
+        Assert.True(version.IsDefined(typeof(System.Runtime.CompilerServices.RequiredMemberAttribute), inherit: false));
     }
 
     /// <summary>
@@ -65,8 +102,8 @@ public class ObtenerPresupuestoTests
             guardado.Total.ToString(System.Globalization.CultureInfo.InvariantCulture),
             leido.Total.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal(
-            [new LineaGrabada(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m),
-                new LineaGrabada(2, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m)],
+            [new LineaGrabada(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m, 1),
+                new LineaGrabada(2, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m, 2)],
             leido.Lineas);
     }
 

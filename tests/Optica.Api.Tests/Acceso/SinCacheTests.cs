@@ -83,6 +83,35 @@ public sealed class SinCacheTests : IDisposable
         var consulta = await Http.GetAsync(cliente, $"{RutaPresupuestos}/{numero}", cookie);
         Assert.Equal(HttpStatusCode.OK, consulta.StatusCode);
         AfirmarNoStore(consulta, "GET /api/presupuestos/{numero}");
+
+        // FEAT-003c: la modificación y el paso a Final devuelven el presupuesto con los datos del cliente.
+        var modificacion = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}",
+            new StringContent(CuerpoModificacion(codigo), Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, modificacion.StatusCode);
+        AfirmarNoStore(modificacion, "PUT /api/presupuestos/{numero}");
+
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}/estado",
+            new StringContent("{\"estado\":\"final\",\"version\":1}", Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+        AfirmarNoStore(final, "PUT /api/presupuestos/{numero}/estado");
+
+        // El 409 también: un Final no se modifica.
+        var conflicto = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}",
+            new StringContent(CuerpoModificacion(codigo), Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.Conflict, conflicto.StatusCode);
+        AfirmarNoStore(conflicto, "409 de un presupuesto en Final");
     }
 
     /// <summary>
@@ -169,7 +198,7 @@ public sealed class SinCacheTests : IDisposable
             AllowAutoRedirect = false,
         });
 
-        foreach (var ruta in new[] { "/", "/presupuestos/nuevo" })
+        foreach (var ruta in new[] { "/", "/presupuestos/nuevo", "/presupuestos/1/editar" })
         {
             var respuesta = await Http.GetAsync(cliente, ruta);
 
@@ -206,6 +235,15 @@ public sealed class SinCacheTests : IDisposable
             cliente = new { apellido = "Ficticio", nombre = "Ana", dni = "30111222" },
             lineas = new[] { new { codigoArticulo = codigo, cantidad = 1, porcentajeDescuento = 0 } },
             relleno,
+        });
+
+    /// <summary>La modificación del presupuesto recién dado de alta: versión 0 y su línea 1, con datos ficticios.</summary>
+    private static string CuerpoModificacion(long codigo) =>
+        JsonSerializer.Serialize(new
+        {
+            version = 0,
+            cliente = new { apellido = "Ficticio", nombre = "Ana", dni = "99999999" },
+            lineas = new[] { new { orden = 1, codigoArticulo = codigo, cantidad = 2, porcentajeDescuento = 0 } },
         });
 
     private static Task<HttpResponseMessage> IngresarAsync(HttpClient cliente, string contrasena) =>
