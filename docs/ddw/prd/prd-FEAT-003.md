@@ -18,7 +18,9 @@
 
 AC-01 a AC-38 vienen de `prd-DISC-001-04.md` (PRD 04 de DISC-001). En DEFINE no se agregaron criterios
 globales; FEAT-003a suma un criterio local sin número global (su AC-18), que valida la regla de líneas
-con Cantidad 1 y Porcentaje de Descuento 0 decidida por el usuario el 2026-11-06.
+con Cantidad 1 y Porcentaje de Descuento 0 decidida por el usuario el 2026-11-06. FEAT-003b suma otro criterio
+local (su AC-09): el tope de 9.999 unidades por línea, decidido por el usuario el 2026-11-11, con lo que esa parte
+queda con 9 AC (8 globales y 1 local).
 
 Los AC de esta tabla son los números globales, iguales a los de `prd-DISC-001-04.md`. Cada sub-PRD
 numera sus criterios desde AC-01 y cita junto a cada uno su número global (por ejemplo,
