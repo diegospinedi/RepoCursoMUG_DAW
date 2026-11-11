@@ -336,7 +336,7 @@ describe('reglas de la línea: cantidad, descuento y cálculo', () => {
     expect(validarCantidad(texto)).toEqual({ valor: Number(texto.trim()) });
   });
 
-  it.each(['0', '-1', '2,5', '2.5', '', '   ', 'tres', '1e3', '+3', '1.000', '٣'])(
+  it.each(['0', '-1', '2,5', '2.5', '', '   ', 'tres', '1e3', '+3', '٣'])(
     'validarCantidad_0_-1_2,5_vacía: inválida — "%s"',
     (texto) => {
       expect(validarCantidad(texto)).toEqual({ error: MENSAJE_CANTIDAD_INVALIDA });
@@ -345,6 +345,57 @@ describe('reglas de la línea: cantidad, descuento y cálculo', () => {
 
   it.each(['10000', '99999', '10000000000', '000010000'])('validarCantidad_10000: rechazada — "%s"', (texto) => {
     expect(validarCantidad(texto)).toEqual({ error: MENSAJE_CANTIDAD_MAXIMA });
+  });
+
+  describe('validarCantidad_PuntoDeMiles', () => {
+    // D-29: un entero con punto de miles bien formado (primer grupo de 1 a 3 dígitos, después grupos de exactamente 3).
+    it.each([
+      ['1.000', 1000],
+      ['9.999', 9999],
+      [' 1.000 ', 1000],
+    ])('"%s" vale %d', (texto, valor) => {
+      expect(validarCantidad(texto)).toEqual({ valor });
+    });
+
+    it.each(['10.000', '1.000.000', '99.999', `1${'.000'.repeat(40)}`])(
+      '"%s" da el máximo',
+      (texto) => {
+        expect(validarCantidad(texto)).toEqual({ error: MENSAJE_CANTIDAD_MAXIMA });
+      },
+    );
+
+    it.each([
+      '1.00',
+      '10.0000',
+      '.100',
+      '1..000',
+      '1.000.',
+      '1000.000',
+      '1,000',
+      '-3',
+      '+1.000',
+      '-1.000',
+      '1 000',
+      '1. 000',
+      '0.000',
+      // Con punto, el primer grupo no empieza con 0; sin punto, "007" sigue valiendo 7 (D-25).
+      '0.001',
+      '001.000',
+      ' 001.000 ',
+      '000.010.000',
+      '١.٠٠٠',
+    ])('"%s" es inválida', (texto) => {
+      expect(validarCantidad(texto)).toEqual({ error: MENSAJE_CANTIDAD_INVALIDA });
+    });
+
+    it('un texto largo mal agrupado se resuelve sin demora', () => {
+      // Lineal en el largo: la expresión del punto de miles no tiene retroceso exponencial. El texto es inválido, así
+      // que se rechaza en la expresión y nunca llega a BigInt.
+      const largo = `${'1.000'.repeat(20_000)}x`;
+      const inicio = performance.now();
+      expect(validarCantidad(largo)).toEqual({ error: MENSAJE_CANTIDAD_INVALIDA });
+      expect(performance.now() - inicio).toBeLessThan(1_000);
+    });
   });
 
   it.each([

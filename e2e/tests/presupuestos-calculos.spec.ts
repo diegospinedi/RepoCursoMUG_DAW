@@ -15,8 +15,7 @@ import { expect, test, type APIRequestContext, type Locator, type Page } from '@
  * Los números se escriben como los escribiría la operadora (coma decimal) y los importes se leen como los muestra la
  * pantalla ("2.700,00"), con el símbolo en el encabezado de la columna (D-34 de FEAT-003a).
  *
- * Datos personales: el cliente es ficticio, con un DNI que no puede ser de nadie (99.999.999) y un email de un dominio
- * reservado para ejemplos.
+ * Datos personales: el cliente es ficticio, con un DNI que no puede ser de nadie (99.999.999).
  */
 
 /** Contraseña de prueba de esta base, no de nadie. */
@@ -340,8 +339,8 @@ test('AC-09: cantidad 10.000 rechazada junto al campo', async ({ page }) => {
   await sinError(cantidad(page, 1));
   await expect(precioFinal(page, 1)).toHaveText('9.999.000,00');
 
-  // AC-09: 10.000, escrita como la escribe en el campo de cantidad (sin separador de miles).
-  await cantidad(page, 1).fill('10000');
+  // AC-09: la operadora escribe 10.000, con punto de miles (D-29).
+  await cantidad(page, 1).fill('10.000');
   await rechazadoJuntoAlCampo(page, cantidad(page, 1), MENSAJE_CANTIDAD_MAXIMA);
   await expect(precioFinal(page, 1)).toHaveText(SIN_IMPORTE);
   await expect(celdaTotal(page)).toHaveText(SIN_IMPORTE);

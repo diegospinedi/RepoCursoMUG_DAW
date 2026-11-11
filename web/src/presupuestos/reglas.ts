@@ -211,21 +211,29 @@ const DESCUENTO_DECIMALES_MAXIMOS = 2;
 const DESCUENTO_COMPLETO = 10_000n;
 
 const SOLO_DIGITOS = /^[0-9]+$/;
+/**
+ * Punto de miles bien formado (D-29): un primer grupo de 1 a 3 dígitos que no empieza con 0 y después grupos de
+ * exactamente 3 ("0.001" y "001.000" no lo son). Anclada y sin cuantificadores anidados ambiguos (el punto separa los
+ * grupos), así que se evalúa en tiempo lineal.
+ */
+const CON_PUNTO_DE_MILES = /^[1-9][0-9]{0,2}(?:\.[0-9]{3})+$/;
 
 /** Un campo de la línea: el valor a enviar o el mensaje a mostrar junto al campo. */
 export type CampoLinea = { valor: number } | { error: string };
 
 /**
- * La Cantidad escrita (FR-02): solo dígitos ASCII, sin signo, coma ni punto, que formen un entero de 1 a
- * {@link CANTIDAD_MAXIMA}. Se recortan los espacios de los extremos. Un entero de solo dígitos mayor al máximo, por
- * largo que sea, informa el máximo (como D-22 en el servidor).
+ * La Cantidad escrita (FR-02): un entero de dígitos ASCII, sin separador o con punto de miles bien formado ("1.000" es
+ * 1000, D-29), de 1 a {@link CANTIDAD_MAXIMA}. Se recortan los espacios de los extremos; sin punto se aceptan ceros a
+ * la izquierda ("007", D-25), con punto el primer grupo no empieza con 0. Un punto mal agrupado, la coma, el signo o
+ * el exponente son inválidos. Un entero mayor al máximo, por largo que sea, informa el máximo (como D-22 en el
+ * servidor).
  */
 export function validarCantidad(texto: string): CampoLinea {
   const limpio = texto.trim();
-  if (!SOLO_DIGITOS.test(limpio)) {
+  if (!SOLO_DIGITOS.test(limpio) && !CON_PUNTO_DE_MILES.test(limpio)) {
     return { error: MENSAJE_CANTIDAD_INVALIDA };
   }
-  const cantidad = BigInt(limpio);
+  const cantidad = BigInt(limpio.replaceAll('.', ''));
   if (cantidad < BigInt(CANTIDAD_MINIMA)) {
     return { error: MENSAJE_CANTIDAD_INVALIDA };
   }

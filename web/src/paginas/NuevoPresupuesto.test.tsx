@@ -770,6 +770,35 @@ describe('NuevoPresupuesto — cantidad, descuento y cálculos (FEAT-003b)', () 
     expect(preciosDe(1)).toEqual(['1.000,00', '9.999.000,00']);
   });
 
+  it('cantidad con punto de miles: "10.000" da el máximo y "1.000" se envía como 1000', async () => {
+    // AC-09 tal como lo escribe la operadora, con punto de miles (D-29).
+    const registro = await conLineas(LENTE);
+    escribir(cantidadDe(1), '10.000');
+
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA);
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('true');
+    expect(preciosDe(1)).toEqual([SIN_PRECIO, SIN_PRECIO]);
+    expect(celdaTotal().textContent).toBe(SIN_PRECIO);
+    grabar();
+    await waitFor(() => expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD_MAXIMA));
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    // Un punto mal agrupado sigue siendo el texto de AC-02.
+    escribir(cantidadDe(1), '1.00');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBe(MENSAJE_CANTIDAD);
+
+    escribir(cantidadDe(1), '1.000');
+    expect(mensajeJuntoAlCampo(cantidadDe(1))).toBeNull();
+    expect(cantidadDe(1).getAttribute('aria-invalid')).toBe('false');
+    expect(preciosDe(1)).toEqual(['1.000,00', '1.000.000,00']);
+    expect(celdaTotal().textContent).toBe('1.000.000,00');
+
+    // Se envía el número, no el texto escrito.
+    grabar();
+    await screen.findByText('Presupuesto N.º 155 grabado. Estado: Borrador.');
+    expect(cuerpoEnviado(registro)).toMatchObject({ lineas: [{ codigoArticulo: 12, cantidad: 1000, porcentajeDescuento: 0 }] });
+  });
+
   it.each([
     ['-1', MENSAJE_DESCUENTO],
     ['100,01', MENSAJE_DESCUENTO],
