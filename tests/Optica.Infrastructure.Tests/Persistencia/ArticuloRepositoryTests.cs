@@ -358,7 +358,7 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.EndsWith("_Presupuestos", migraciones[^1], StringComparison.Ordinal);
+        Assert.EndsWith("_CierrePresupuestos", migraciones[^1], StringComparison.Ordinal);
         var catalogo = Assert.Single(migraciones, m => m.EndsWith("_Catalogo", StringComparison.Ordinal));
 
         // Una base de FEAT-002a con artículos cargados.

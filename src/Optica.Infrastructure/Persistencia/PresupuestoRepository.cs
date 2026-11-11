@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Optica.Domain.Presupuestos;
 
 namespace Optica.Infrastructure.Persistencia;
@@ -17,6 +18,29 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
 {
     private const string MensajeFilaInvalida = "El presupuesto guardado no es válido.";
     private const string MensajePresupuestoInvalido = "El presupuesto a grabar no tiene número, cliente o líneas.";
+    private const string MensajeOtroPresupuesto = "El presupuesto modificado no es el mismo que el original.";
+    private const string MensajeNoFinal = "Solo se registra el paso a Final de un presupuesto en Final.";
+    private const string MensajeVersionOriginal = "La versión leída del presupuesto no es válida.";
+    private const string MensajeAltaNoBorrador = "Un presupuesto nuevo se graba en Borrador.";
+
+    private const string MensajeEntradaConOtrosCambios =
+        "El presupuesto ya tiene otros cambios registrados en el contexto.";
+
+    /// <summary>Las columnas que escribe <see cref="CambiarEstado"/>: una entrada seguida solo puede traer estas modificadas.</summary>
+    private static readonly HashSet<string> ColumnasDeCambiarEstado =
+        new([nameof(PresupuestoFila.Estado), nameof(PresupuestoFila.Version)], StringComparer.Ordinal);
+
+    /// <summary>
+    /// Las columnas que escribe <see cref="Actualizar"/>, los seis datos del cliente y la versión; nunca el estado ni la
+    /// fecha.
+    /// </summary>
+    private static readonly HashSet<string> ColumnasDeActualizar = new(
+        [
+            nameof(PresupuestoFila.Apellido), nameof(PresupuestoFila.Nombre), nameof(PresupuestoFila.Dni),
+            nameof(PresupuestoFila.Domicilio), nameof(PresupuestoFila.Email), nameof(PresupuestoFila.Telefono),
+            nameof(PresupuestoFila.Version),
+        ],
+        StringComparer.Ordinal);
 
     private const string EstadoBorrador = "borrador";
     private const string EstadoFinal = "final";
@@ -34,14 +58,21 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="presupuesto"/> es null.</exception>
     /// <exception cref="ArgumentException">
-    /// El presupuesto no tiene número, cliente o líneas: no salió de sus constructores. El mensaje no lleva valores.
+    /// El presupuesto no tiene número, cliente o líneas: no salió de sus constructores; o no está en Borrador: un Final no
+    /// se graba directo, se graba en Borrador y pasa a Final con <see cref="CambiarEstado"/> (AGENTS.md). Los mensajes no
+    /// llevan valores.
     /// </exception>
     public void Agregar(Presupuesto presupuesto)
     {
         ArgumentNullException.ThrowIfNull(presupuesto);
-        if (presupuesto.Numero < 1 || presupuesto.Cliente is null || presupuesto.Lineas is not { Count: > 0 } lineas)
+        if (presupuesto.Numero < 1 || presupuesto.Cliente is null || presupuesto.Lineas is not { Count: > 0 })
         {
             throw new ArgumentException(MensajePresupuestoInvalido, nameof(presupuesto));
+        }
+
+        if (presupuesto.Estado != EstadoPresupuesto.Borrador)
+        {
+            throw new ArgumentException(MensajeAltaNoBorrador, nameof(presupuesto));
         }
 
         var cliente = presupuesto.Cliente;
@@ -56,18 +87,8 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
             Domicilio = cliente.Domicilio,
             Email = cliente.Email,
             Telefono = cliente.Telefono,
-            Lineas = [.. lineas.Select((linea, indice) => new LineaPresupuestoFila
-            {
-                PresupuestoNumero = presupuesto.Numero,
-                Orden = indice + 1L,
-                CodigoArticulo = linea.CodigoArticulo,
-                Descripcion = linea.Descripcion,
-                PrecioUnitario = linea.PrecioUnitario,
-                PrecioConDescuento = linea.PrecioConDescuento,
-                PrecioFinal = linea.PrecioFinal,
-                Cantidad = linea.Cantidad,
-                PorcentajeDescuento = linea.PorcentajeDescuento,
-            })],
+            Version = presupuesto.Version,
+            Lineas = FilasDeLineas(presupuesto),
         });
     }
 
@@ -92,6 +113,181 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
         return fila is null ? null : AEntidad(fila);
     }
 
+    /// <summary>
+    /// Deja la modificación en el contexto compartido, en un único <c>SaveChanges</c> al confirmar (D-10): adjunta la fila
+    /// con <paramref name="versionOriginal"/> como valor original del token, escribe el cliente y la versión + 1, marca
+    /// como borradas las líneas de <paramref name="original"/> y agrega las de <paramref name="modificado"/> con
+    /// <c>Orden</c> 1..n. Nunca usa <c>ExecuteDelete</c> ni <c>ExecuteUpdate</c>. Si otra escritura confirmó en el medio,
+    /// la confirmación falla sin escribir encabezado ni líneas: con <see cref="Optica.Application.Comun.MotivoConflicto"/>
+    /// <c>Concurrencia</c> si el presupuesto sigue en Borrador (el <c>UPDATE ... WHERE Version</c> no encuentra la fila),
+    /// y con <c>RegistroCerrado</c> si otra sesión lo pasó a Final, porque los comandos de las líneas se filtran solo por
+    /// clave y el trigger de cierre aborta antes (D-14). <see cref="Presupuesto.Version"/> no se usa.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">Alguno de los dos presupuestos es null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Los dos presupuestos no tienen el mismo número, o <paramref name="versionOriginal"/> es negativa o la máxima (la
+    /// siguiente no entraría en la columna). Los mensajes son fijos y no llevan valores.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// El contexto ya sigue ese presupuesto con cambios fuera de los datos del cliente y la versión (por ejemplo, el
+    /// estado de un <see cref="CambiarEstado"/> anterior), o como alta o baja. El mensaje es fijo.
+    /// </exception>
+    public void Actualizar(Presupuesto original, Presupuesto modificado, long versionOriginal)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(modificado);
+        if (modificado.Numero != original.Numero)
+        {
+            throw new ArgumentException(MensajeOtroPresupuesto, nameof(modificado));
+        }
+
+        ValidarVersionOriginal(versionOriginal);
+
+        var entrada = AdjuntarEncabezado(original, versionOriginal, ColumnasDeActualizar);
+        var cliente = modificado.Cliente;
+        Modificar(entrada.Property(p => p.Apellido), cliente.Apellido);
+        Modificar(entrada.Property(p => p.Nombre), cliente.Nombre);
+        Modificar(entrada.Property(p => p.Dni), cliente.Dni);
+        Modificar(entrada.Property(p => p.Domicilio), cliente.Domicilio);
+        Modificar(entrada.Property(p => p.Email), cliente.Email);
+        Modificar(entrada.Property(p => p.Telefono), cliente.Telefono);
+
+        // Las líneas grabadas se borran y las nuevas se agregan; EF convierte en UPDATE el par borrada/agregada que comparte
+        // clave (PresupuestoNumero, Orden).
+        var lineas = contexto.Set<LineaPresupuestoFila>();
+        foreach (var fila in FilasDeLineas(original))
+        {
+            var seguida = lineas.Local.FindEntryUntyped([fila.PresupuestoNumero, fila.Orden]);
+            if (seguida is null)
+            {
+                lineas.Attach(fila).State = EntityState.Deleted;
+            }
+            else
+            {
+                seguida.State = EntityState.Deleted;
+            }
+        }
+
+        lineas.AddRange(FilasDeLineas(modificado));
+    }
+
+    /// <summary>
+    /// Deja el paso a Final en el contexto compartido: adjunta solo la fila del encabezado y marca modificados únicamente
+    /// <c>Estado</c> y <c>Version</c> (<c>UPDATE Presupuesto SET Estado, Version WHERE Numero AND Version</c>), sin
+    /// comandos sobre las líneas, así ningún trigger de cierre lo rechaza sea cual sea el orden de EF (D-10). Si la versión
+    /// guardada ya no es <paramref name="versionOriginal"/>, la unidad de trabajo lo informa como conflicto de
+    /// concurrencia.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="presupuesto"/> es null.</exception>
+    /// <exception cref="ArgumentException">
+    /// El presupuesto no está en Final (este método no hace la transición: la hizo el dominio), o
+    /// <paramref name="versionOriginal"/> es negativa o la máxima. Los mensajes son fijos y no llevan valores.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// El contexto ya sigue ese presupuesto con cambios en otras columnas, o como alta o baja: reutilizar la entrada
+    /// escribiría más que <c>Estado</c> y <c>Version</c>. El mensaje es fijo.
+    /// </exception>
+    public void CambiarEstado(Presupuesto presupuesto, long versionOriginal)
+    {
+        ArgumentNullException.ThrowIfNull(presupuesto);
+        if (presupuesto.Estado != EstadoPresupuesto.Final)
+        {
+            throw new ArgumentException(MensajeNoFinal, nameof(presupuesto));
+        }
+
+        ValidarVersionOriginal(versionOriginal);
+
+        var entrada = AdjuntarEncabezado(presupuesto, versionOriginal, ColumnasDeCambiarEstado);
+        Modificar(entrada.Property(p => p.Estado), EstadoFinal);
+    }
+
+    private static void ValidarVersionOriginal(long versionOriginal)
+    {
+        if (versionOriginal is < 0 or >= Presupuesto.VersionMaxima)
+        {
+            throw new ArgumentException(MensajeVersionOriginal, nameof(versionOriginal));
+        }
+    }
+
+    /// <summary>
+    /// La entrada del encabezado, la que el contexto ya sigue o una adjuntada sin líneas, con <paramref name="versionOriginal"/>
+    /// como valor original del token y la siguiente como valor nuevo. Las demás columnas quedan sin modificar. Una entrada
+    /// seguida solo se reutiliza si sus columnas modificadas están entre <paramref name="columnasPermitidas"/>, las que
+    /// el método que llama escribe.
+    /// </summary>
+    private EntityEntry<PresupuestoFila> AdjuntarEncabezado(
+        Presupuesto presupuesto, long versionOriginal, IReadOnlySet<string> columnasPermitidas)
+    {
+        var cliente = presupuesto.Cliente;
+        var seguida = contexto.Presupuestos.Local.FindEntry(presupuesto.Numero);
+        seguida?.DetectChanges();
+        if (seguida is not null && !SinOtrosCambios(seguida, columnasPermitidas))
+        {
+            // Reutilizarla escribiría también esos cambios: CambiarEstado dejaría de ser solo Estado y Version, y
+            // Actualizar escribiría un Estado o una Fecha que no le corresponden. Sin valores.
+            throw new InvalidOperationException(MensajeEntradaConOtrosCambios);
+        }
+
+        var entrada = seguida
+            ?? contexto.Presupuestos.Attach(new PresupuestoFila
+            {
+                Numero = presupuesto.Numero,
+                Fecha = presupuesto.Fecha,
+                Estado = TextoDe(presupuesto.Estado),
+                Apellido = cliente.Apellido,
+                Nombre = cliente.Nombre,
+                Dni = cliente.Dni,
+                Domicilio = cliente.Domicilio,
+                Email = cliente.Email,
+                Telefono = cliente.Telefono,
+                Version = versionOriginal,
+            });
+
+        // El valor original es el leído, no el que tenga la entrada: el contexto podría seguir una versión vieja.
+        var version = entrada.Property(p => p.Version);
+        version.OriginalValue = versionOriginal;
+        version.CurrentValue = versionOriginal + 1;
+        version.IsModified = true;
+        return entrada;
+    }
+
+    /// <summary>
+    /// Verdadero si la entrada seguida está sin cambios, o modificada solo en <paramref name="columnasPermitidas"/>: sobre
+    /// ella, el <c>UPDATE</c> no escribe más que lo que registra el método que llama. Agregada o borrada, nunca.
+    /// </summary>
+    private static bool SinOtrosCambios(EntityEntry<PresupuestoFila> entrada, IReadOnlySet<string> columnasPermitidas) =>
+        entrada.State switch
+        {
+            EntityState.Unchanged => true,
+            EntityState.Modified => entrada.Properties
+                .Where(propiedad => propiedad.IsModified)
+                .All(propiedad => columnasPermitidas.Contains(propiedad.Metadata.Name)),
+            _ => false,
+        };
+
+    private static void Modificar<T>(PropertyEntry<PresupuestoFila, T> propiedad, T valor)
+    {
+        propiedad.CurrentValue = valor;
+        propiedad.IsModified = true;
+    }
+
+    /// <summary>Las filas de las líneas del presupuesto, con <c>Orden</c> 1..n en el orden de la lista (D-03).</summary>
+    private static List<LineaPresupuestoFila> FilasDeLineas(Presupuesto presupuesto) =>
+    [
+        .. presupuesto.Lineas.Select((linea, indice) => new LineaPresupuestoFila
+        {
+            PresupuestoNumero = presupuesto.Numero,
+            Orden = indice + 1L,
+            CodigoArticulo = linea.CodigoArticulo,
+            Descripcion = linea.Descripcion,
+            PrecioUnitario = linea.PrecioUnitario,
+            PrecioConDescuento = linea.PrecioConDescuento,
+            PrecioFinal = linea.PrecioFinal,
+            Cantidad = linea.Cantidad,
+            PorcentajeDescuento = linea.PorcentajeDescuento,
+        }),
+    ];
+
     private static string TextoDe(EstadoPresupuesto estado) => estado switch
     {
         EstadoPresupuesto.Borrador => EstadoBorrador,
@@ -115,6 +311,15 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
             _ => throw new InvalidOperationException(MensajeFilaInvalida),
         };
 
+        // El orden de la Api es la posición + 1 de la línea (D-03): con huecos, ese orden no identificaría la línea.
+        for (var indice = 0; indice < fila.Lineas.Count; indice++)
+        {
+            if (fila.Lineas[indice].Orden != indice + 1L)
+            {
+                throw new InvalidOperationException(MensajeFilaInvalida);
+            }
+        }
+
         Presupuesto presupuesto;
         try
         {
@@ -126,7 +331,7 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
             }
 
             presupuesto = new Presupuesto(
-                fila.Numero, fila.Fecha, estado, cliente, [.. fila.Lineas.Select(ALinea)], version: 0);
+                fila.Numero, fila.Fecha, estado, cliente, [.. fila.Lineas.Select(ALinea)], fila.Version);
         }
         catch (ArgumentException error)
         {
