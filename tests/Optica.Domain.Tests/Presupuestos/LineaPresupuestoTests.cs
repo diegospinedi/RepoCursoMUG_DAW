@@ -250,4 +250,67 @@ public class LineaPresupuestoTests
             Assert.DoesNotContain(valor.Replace('.', ','), error.Message, StringComparison.Ordinal);
         }
     }
+
+    /// <summary>
+    /// AC-09, D-02: la línea grabada con el artículo a $1.815,00 conserva ese Precio Unitario aunque el catálogo ya
+    /// lo tenga a $1.850,00; la nueva Cantidad y el descuento se calculan sobre el precio grabado.
+    /// </summary>
+    [Fact]
+    public void ConCantidadYDescuento_ConservaPrecioUnitarioGrabado()
+    {
+        var grabada = LineaPresupuesto.DesdeArticulo(ArticuloCon(1815m), 1, 0m).Linea!;
+
+        // Aunque el catálogo pase a $1.850,00, ConCantidadYDescuento no recibe el artículo: solo puede usar el Precio
+        // Unitario grabado en la línea.
+        var resultado = grabada.ConCantidadYDescuento(3, 10m);
+
+        Assert.True(resultado.EsValida);
+        var linea = resultado.Linea;
+        Assert.Equal(7, linea.CodigoArticulo);
+        Assert.Equal(Descripcion, linea.Descripcion);
+        Assert.Equal(1815.00m, linea.PrecioUnitario);
+        Assert.Equal(3, linea.Cantidad);
+        Assert.Equal(10m, linea.PorcentajeDescuento);
+
+        // 1.815,00 × 0,90 = 1.633,50; × 3 = 4.900,50.
+        Assert.Equal(1633.50m, linea.PrecioConDescuento);
+        Assert.Equal(4900.50m, linea.PrecioFinal);
+
+        // La línea original no cambia.
+        Assert.Equal(1, grabada.Cantidad);
+        Assert.Equal(0m, grabada.PorcentajeDescuento);
+        Assert.Equal(1815.00m, grabada.PrecioFinal);
+
+        // La cantidad y el descuento siguen las reglas de CalculoLinea.
+        Assert.Equal("cantidad", Assert.Throws<ArgumentException>(() => grabada.ConCantidadYDescuento(0, 0m)).ParamName);
+        Assert.Equal(
+            "cantidad", Assert.Throws<ArgumentException>(() => grabada.ConCantidadYDescuento(10_000, 0m)).ParamName);
+
+        // Cada caso de descuento rompe una sola regla: 100,01 solo el rango; 10,555 solo la escala.
+        Assert.Equal(
+            "porcentajeDescuento",
+            Assert.Throws<ArgumentException>(() => grabada.ConCantidadYDescuento(1, 100.01m)).ParamName);
+        Assert.Equal(
+            "porcentajeDescuento",
+            Assert.Throws<ArgumentException>(() => grabada.ConCantidadYDescuento(1, 10.555m)).ParamName);
+    }
+
+    [Fact]
+    public void ConCantidadYDescuento_ImporteExcedido_Rechazado()
+    {
+        var grabada = new LineaPresupuesto(7, Descripcion, ImporteMaximo, 1, 0m, ImporteMaximo, ImporteMaximo);
+
+        // Justo en el límite del tipo: se acepta.
+        var enElLimite = grabada.ConCantidadYDescuento(1, 0m);
+        Assert.True(enElLimite.EsValida);
+        Assert.Equal(ImporteMaximo, enElLimite.Linea.PrecioFinal);
+
+        var resultado = grabada.ConCantidadYDescuento(2, 0m);
+
+        Assert.True(resultado.EsImporteExcedido);
+        Assert.False(resultado.EsValida);
+        Assert.False(resultado.EsInactivo);
+        Assert.False(resultado.EsPrecioNegativo);
+        Assert.Null(resultado.Linea);
+    }
 }

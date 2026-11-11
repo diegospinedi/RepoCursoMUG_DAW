@@ -126,7 +126,7 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
             }
 
             presupuesto = new Presupuesto(
-                fila.Numero, fila.Fecha, estado, cliente, [.. fila.Lineas.Select(ALinea)]);
+                fila.Numero, fila.Fecha, estado, cliente, [.. fila.Lineas.Select(ALinea)], version: 0);
         }
         catch (ArgumentException error)
         {

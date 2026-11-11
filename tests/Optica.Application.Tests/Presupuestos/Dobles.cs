@@ -40,7 +40,8 @@ internal sealed class PresupuestosEnMemoria : IPresupuestoRepository, IUnidadDeT
             new DateOnly(2026, 1, 5),
             estado,
             new ClientePresupuesto("Gómez", "Luis", "30111222", null, null, null),
-            [new LineaPresupuesto(1, "Lente orgánico", 100m, 1, 0m, 100m, 100m)]);
+            [new LineaPresupuesto(1, "Lente orgánico", 100m, 1, 0m, 100m, 100m)],
+            version: 0);
         Guardados.Add(presupuesto);
         return presupuesto;
     }

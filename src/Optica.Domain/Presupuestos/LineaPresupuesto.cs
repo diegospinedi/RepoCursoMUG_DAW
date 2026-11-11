@@ -104,14 +104,39 @@ public sealed class LineaPresupuesto
             return ResultadoLinea.PrecioNegativo;
         }
 
-        // La cantidad y el descuento se validan antes de calcular; el constructor los vuelve a validar como invariante.
         // El precio de venta ya cumple las reglas de importe por ser de un Articulo (2 decimales, dentro del tipo) y
         // acá no es negativo.
+        return Calcular(codigo, articulo.Descripcion, articulo.PrecioVenta, cantidad, porcentajeDescuento);
+    }
+
+    /// <summary>
+    /// La misma línea con otra Cantidad y otro Porcentaje de Descuento: conserva el código, la descripción y el Precio
+    /// Unitario grabados, sin consultar el catálogo (FR-07, D-02), y recalcula los precios con
+    /// <see cref="CalculoLinea"/>. Precio Final por encima de <see cref="ReglasImporte.ImporteMaximo"/>:
+    /// <see cref="ResultadoLinea.ImporteExcedido"/>. No cambia esta línea.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// La cantidad no está entre 1 y 9.999 o el descuento no está entre 0 y 100 con hasta 2 decimales: la capa de
+    /// aplicación los valida antes. El mensaje nombra el campo y no incluye el valor recibido.
+    /// </exception>
+    public ResultadoLinea ConCantidadYDescuento(int cantidad, decimal porcentajeDescuento) =>
+        // El Precio Unitario ya cumple las reglas de importe: lo validó el constructor.
+        Calcular(CodigoArticulo, Descripcion, PrecioUnitario, cantidad, porcentajeDescuento);
+
+    /// <summary>
+    /// Valida la Cantidad y el descuento, calcula los precios con <see cref="CalculoLinea"/> sobre el Precio Unitario
+    /// recibido, rechaza un Precio Final por encima de <see cref="ReglasImporte.ImporteMaximo"/> y arma la línea. El
+    /// Precio Unitario ya llega validado por quien llama (2 decimales, no negativo, dentro del tipo).
+    /// </summary>
+    /// <exception cref="ArgumentException">La cantidad o el descuento no son válidos.</exception>
+    private static ResultadoLinea Calcular(
+        long codigoArticulo, string descripcion, decimal precioUnitario, int cantidad, decimal porcentajeDescuento)
+    {
+        // La cantidad y el descuento se validan antes de calcular; el constructor los vuelve a validar como invariante.
         CalculoLinea.ValidarCantidad(cantidad);
         CalculoLinea.ValidarDescuento(porcentajeDescuento);
 
-        var precio = articulo.PrecioVenta;
-        var precioConDescuento = CalculoLinea.CalcularPrecioConDescuento(precio, porcentajeDescuento);
+        var precioConDescuento = CalculoLinea.CalcularPrecioConDescuento(precioUnitario, porcentajeDescuento);
         var precioFinal = CalculoLinea.CalcularPrecioFinal(precioConDescuento, cantidad);
         if (precioFinal > ReglasImporte.ImporteMaximo)
         {
@@ -119,7 +144,8 @@ public sealed class LineaPresupuesto
         }
 
         return ResultadoLinea.Valida(new LineaPresupuesto(
-            codigo, articulo.Descripcion, precio, cantidad, porcentajeDescuento, precioConDescuento, precioFinal));
+            codigoArticulo, descripcion, precioUnitario, cantidad, porcentajeDescuento, precioConDescuento,
+            precioFinal));
     }
 
     // Ya recortada, así el largo se mide sobre el texto guardado.

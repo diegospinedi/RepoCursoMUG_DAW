@@ -400,7 +400,7 @@ public partial class PresupuestoRepositoryTests
         // AC-12: el presupuesto nuevo queda en Borrador. El estado Final se guarda como 'final' (D-19).
         await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
         await GrabarPresupuesto(baseTemporal,
-            new Presupuesto(2, Fecha, EstadoPresupuesto.Final, ClienteCompleto(), [Linea(articulo)]));
+            new Presupuesto(2, Fecha, EstadoPresupuesto.Final, ClienteCompleto(), [Linea(articulo)], version: 0));
 
         Assert.Equal([["borrador"], ["final"]], Filas(cadena, "SELECT Estado FROM Presupuesto ORDER BY Numero"));
         var lector = new PresupuestoRepository(baseTemporal.CrearContexto());

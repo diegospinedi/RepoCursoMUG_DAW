@@ -52,7 +52,8 @@ public class ObtenerPresupuestoTests
             [
                 new LineaPresupuesto(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m),
                 new LineaPresupuesto(2, "Lente bifocal", 1000m, 3, 10m, 900.00m, 2700.00m),
-            ]);
+            ],
+            version: 0);
         _unidad.Guardados.Add(guardado);
 
         var leido = await new ObtenerPresupuesto(_unidad).EjecutarAsync(9);
