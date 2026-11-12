@@ -28,6 +28,12 @@ export const MENSAJE_ARTICULO_NO_ENCONTRADO = 'No se encontró el artículo.';
 export const MENSAJE_ARTICULO_INACTIVO = 'Este artículo está inactivo. Reactivalo para editarlo.';
 export const MENSAJE_ARTICULO_CAMBIADO = 'El artículo cambió mientras lo editabas. Volvé a abrirlo.';
 export const MENSAJE_LISTADO_CAMBIADO = 'El artículo cambió. Volvé a cargar el listado.';
+/**
+ * Textos propios de los 409 del presupuesto según su `motivo` (FEAT-003c, D-07): nunca el `detail` del servidor. Viven
+ * acá, como los de los artículos, para que este archivo no importe valores de las reglas (que ya lo importan a él).
+ */
+export const MENSAJE_PRESUPUESTO_CAMBIADO = 'El presupuesto cambió mientras lo editabas. Volvé a abrirlo.';
+export const MENSAJE_PRESUPUESTO_FINAL = 'El presupuesto está en Final y no se puede modificar.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
@@ -89,8 +95,12 @@ export interface PaginaArticulos {
   total: number;
 }
 
-/** Los motivos de un 409 de los artículos (D-19). */
-export type MotivoConflicto = 'inactivo' | 'cambiado';
+/** Los motivos de un 409: los de los artículos (D-19) y `final` del presupuesto (FEAT-003c, D-05). */
+export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final';
+
+const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final'];
+
+const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
 
 /** El resultado de grabar un artículo: como {@link ResultadoGrabacion}, un 400 trae todos los campos inválidos. */
 export type ResultadoAlta = Resultado<ArticuloGrabado> | { tipo: 'campos'; errores: ErrorDeCampo[] };
@@ -275,7 +285,7 @@ async function traducirError(
  */
 function conflictoConMotivo(cuerpo: unknown, motivos: Partial<Record<MotivoConflicto, string>>): Fallo {
   const motivo = esObjeto(cuerpo) ? cuerpo.motivo : undefined;
-  if (motivo === 'inactivo' || motivo === 'cambiado') {
+  if (esMotivoConflicto(motivo)) {
     const mensaje = motivos[motivo];
     if (mensaje !== undefined) {
       return { tipo: 'conflicto', motivo, mensaje };
@@ -576,6 +586,11 @@ export const CAMPO_DESCUENTO = 'porcentajeDescuento';
 export const campoCantidad = (indice: number) => `${CAMPO_LINEAS}[${indice}].${CAMPO_CANTIDAD}`;
 /** El campo de `errors` del descuento de la línea i (D-06): `lineas[i].porcentajeDescuento`. */
 export const campoDescuento = (indice: number) => `${CAMPO_LINEAS}[${indice}].${CAMPO_DESCUENTO}`;
+/** El `orden` de la línea grabada en la modificación (FEAT-003c, D-03), y su campo de `errors`: `lineas[i].orden`. */
+export const CAMPO_ORDEN = 'orden';
+export const campoOrden = (indice: number) => `${CAMPO_LINEAS}[${indice}].${CAMPO_ORDEN}`;
+/** El campo del cuerpo y de `errors` de `PUT /api/presupuestos/{numero}/estado` (FEAT-003c). */
+export const CAMPO_ESTADO = 'estado';
 
 /**
  * El cliente que se graba (y el que devuelve la Api). Datos personales (Ley 25.326, D-17): viajan solo en el cuerpo
@@ -603,9 +618,14 @@ export interface LineaPresupuesto {
   porcentajeDescuento: number;
   precioConDescuento: number;
   precioFinal: number;
+  /** La posición de la línea + 1 (FEAT-003c, D-03): identifica la línea grabada en una modificación. */
+  orden: number;
 }
 
-/** Lo que devuelven `POST /api/presupuestos` (201) y `GET /api/presupuestos/{numero}` (200). */
+/**
+ * Lo que devuelven `POST /api/presupuestos` (201), `GET /api/presupuestos/{numero}` (200) y los dos `PUT` de
+ * FEAT-003c (200).
+ */
 export interface PresupuestoGrabado {
   numero: number;
   /** `yyyy-MM-dd`, la fecha local del día en que se grabó (D-06). */
@@ -615,13 +635,17 @@ export interface PresupuestoGrabado {
   lineas: LineaPresupuesto[];
   /** La suma de los Precios Finales, con IVA incluido (FR-06); la calcula el servidor y no se guarda (D-05). */
   total: number;
+  /** Entero de 0 a 2^53 − 1 (FEAT-003c, D-01): la modificación y el paso a Final la envían de vuelta. */
+  version: number;
 }
 
 /**
  * Una línea a grabar (D-03): el código del artículo, la Cantidad y el Porcentaje de Descuento. Nunca precios ni
- * descripción: los calcula y los copia el servidor (R-01).
+ * descripción: los calcula y los copia el servidor (R-01). En una modificación, la línea ya grabada lleva su `orden`
+ * y la nueva no lo lleva (FEAT-003c, D-03); el alta nunca lo envía.
  */
 export interface LineaAGrabar {
+  orden?: number;
   codigoArticulo: number;
   cantidad: number;
   porcentajeDescuento: number;
@@ -670,7 +694,10 @@ const leerCliente: Lector<DatosCliente> = (cuerpo) =>
       }
     : undefined;
 
-/** Una línea: las siete columnas, con los importes dentro de {@link IMPORTE_MAXIMO_SEGURO}. */
+/**
+ * Una línea: las siete columnas, con los importes dentro de {@link IMPORTE_MAXIMO_SEGURO}, y su `orden`, un entero
+ * de 1 en adelante (FEAT-003c); sin él, la línea es ilegible.
+ */
 const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
   esObjeto(cuerpo) &&
   esEnteroEntre(cuerpo.codigoArticulo, 1) &&
@@ -680,7 +707,8 @@ const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
   Number.isSafeInteger(cuerpo.cantidad) &&
   esNumero(cuerpo.porcentajeDescuento) &&
   esImporte(cuerpo.precioConDescuento) &&
-  esImporte(cuerpo.precioFinal)
+  esImporte(cuerpo.precioFinal) &&
+  esEnteroEntre(cuerpo.orden, 1)
     ? {
         codigoArticulo: cuerpo.codigoArticulo,
         descripcion: cuerpo.descripcion,
@@ -689,6 +717,7 @@ const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
         porcentajeDescuento: cuerpo.porcentajeDescuento,
         precioConDescuento: cuerpo.precioConDescuento,
         precioFinal: cuerpo.precioFinal,
+        orden: cuerpo.orden,
       }
     : undefined;
 
@@ -697,7 +726,8 @@ const leerLinea: Lector<LineaPresupuesto> = (cuerpo) =>
  * del cliente, las líneas y el total. Cualquier parte ilegible hace ilegible la respuesta entera: la pantalla no
  * muestra importes ni datos falsos. El total tiene que ser la suma de los Precios Finales recibidos, comparada en
  * centésimos con {@link sumarCentesimos} y nunca como suma de flotantes (D-08): 0,1 + 0,2 es 0,3. Los importes se leen
- * como números JSON, con o sin ceros finales (900 o 900.00; D-14b).
+ * como números JSON, con o sin ceros finales (900 o 900.00; D-14b). La versión (FEAT-003c) es obligatoria: sin ella
+ * la pantalla no podría modificar ni pasar a Final, así que su falta hace ilegible la respuesta.
  */
 const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
   if (
@@ -706,7 +736,8 @@ const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
     !esFecha(cuerpo.fecha) ||
     !esEstadoPresupuesto(cuerpo.estado) ||
     !Array.isArray(cuerpo.lineas) ||
-    !esImporte(cuerpo.total)
+    !esImporte(cuerpo.total) ||
+    !esVersion(cuerpo.version)
   ) {
     return undefined;
   }
@@ -726,8 +757,26 @@ const leerPresupuesto: Lector<PresupuestoGrabado> = (cuerpo) => {
   if (sumarCentesimos([total]) !== sumarCentesimos(lineas.map((linea) => linea.precioFinal))) {
     return undefined;
   }
-  return { numero: cuerpo.numero, fecha: cuerpo.fecha, estado: cuerpo.estado, cliente, lineas, total };
+  return {
+    numero: cuerpo.numero,
+    fecha: cuerpo.fecha,
+    estado: cuerpo.estado,
+    cliente,
+    lineas,
+    total,
+    version: cuerpo.version,
+  };
 };
+
+/** Por línea, el código, la cantidad y el descuento (D-03); con `conOrden`, también el `orden` de la grabada. */
+function lineasDelCuerpo(lineas: readonly LineaAGrabar[], conOrden: boolean) {
+  return lineas.map((linea) => ({
+    ...(conOrden && linea.orden !== undefined ? { [CAMPO_ORDEN]: linea.orden } : {}),
+    [CAMPO_CODIGO_ARTICULO]: linea.codigoArticulo,
+    [CAMPO_CANTIDAD]: linea.cantidad,
+    [CAMPO_DESCUENTO]: linea.porcentajeDescuento,
+  }));
+}
 
 /**
  * Graba un presupuesto nuevo en Borrador (FR-01, FR-08) con el cliente y, por cada línea en orden, el código del
@@ -744,14 +793,7 @@ export const grabarPresupuesto = (
     {
       metodo: 'POST',
       ruta: '/api/presupuestos',
-      cuerpo: {
-        cliente,
-        lineas: lineas.map((linea) => ({
-          [CAMPO_CODIGO_ARTICULO]: linea.codigoArticulo,
-          [CAMPO_CANTIDAD]: linea.cantidad,
-          [CAMPO_DESCUENTO]: linea.porcentajeDescuento,
-        })),
-      },
+      cuerpo: { cliente, lineas: lineasDelCuerpo(lineas, false) },
       mensaje413: MENSAJE_ARTICULO_GRANDE,
     },
     leerPresupuesto,
@@ -766,6 +808,65 @@ export const consultarPresupuesto = (numero: number): Promise<Resultado<Presupue
     ? pedir(
         { metodo: 'GET', ruta: `/api/presupuestos/${numero}`, mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO },
         leerPresupuesto,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/** Los textos de los 409 del presupuesto según su `motivo` (D-07): nunca el `detail` del servidor. */
+const MOTIVOS_409_PRESUPUESTO: Partial<Record<MotivoConflicto, string>> = {
+  cambiado: MENSAJE_PRESUPUESTO_CAMBIADO,
+  final: MENSAJE_PRESUPUESTO_FINAL,
+};
+
+/**
+ * Modifica un presupuesto en Borrador (FEAT-003c, FR-02, FR-03) con la versión que leyó la pantalla (D-01) y devuelve
+ * lo grabado, releído, con la versión nueva. Cada línea grabada va con su `orden` y cada línea nueva sin él (D-03);
+ * nunca precios ni descripción. Como {@link grabarPresupuesto}: un 400 trae todos los campos (incluidos `version` y
+ * `lineas[i].orden`) y un 413 es el mensaje general del catálogo. Un 409 trae su motivo, `cambiado` o `final`, con el
+ * texto propio (D-07); un 404, "No se encontró el presupuesto.". Un número que no puede existir no se envía.
+ *
+ * Datos personales (D-17): viajan solo en el cuerpo JSON.
+ */
+export const modificarPresupuesto = (
+  numero: number,
+  cliente: DatosCliente,
+  lineas: readonly LineaAGrabar[],
+  version: number,
+): Promise<ResultadoAltaPresupuesto> =>
+  esEnteroEntre(numero, 1)
+    ? grabarConCampos(
+        {
+          metodo: 'PUT',
+          ruta: `/api/presupuestos/${numero}`,
+          cuerpo: { [CAMPO_VERSION]: version, cliente, lineas: lineasDelCuerpo(lineas, true) },
+          motivos409: MOTIVOS_409_PRESUPUESTO,
+          mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+          mensaje413: MENSAJE_ARTICULO_GRANDE,
+        },
+        leerPresupuesto,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/**
+ * Pasa un presupuesto en Borrador a Final (FEAT-003c, FR-04, FR-05) con la versión que muestra la pantalla (D-01) y
+ * devuelve el presupuesto releído. Un 409 trae su motivo, `cambiado` o `final`, con el texto propio (D-07). El cuerpo
+ * es fijo, así que un 400 o un 413 son el mensaje general de pedido rechazado; un 404, "No se encontró el
+ * presupuesto.". Un número que no puede existir no se envía.
+ */
+export const pasarPresupuestoAFinal = (numero: number, version: number): Promise<Resultado<PresupuestoGrabado>> =>
+  esEnteroEntre(numero, 1)
+    ? pedir(
+        {
+          metodo: 'PUT',
+          ruta: `/api/presupuestos/${numero}/estado`,
+          cuerpo: { [CAMPO_ESTADO]: 'final', [CAMPO_VERSION]: version },
+          motivos409: MOTIVOS_409_PRESUPUESTO,
+          mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+          mensaje413: MENSAJE_PEDIDO_RECHAZADO,
+        },
+        leerPresupuesto,
+      ).then((resultado) =>
+        // Un 400 del cuerpo fijo no tiene un campo en la pantalla.
+        resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
       )
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
 

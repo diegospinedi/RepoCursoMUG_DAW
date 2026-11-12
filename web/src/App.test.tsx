@@ -42,6 +42,8 @@ describe('App', () => {
     ['/presupuestos/nuevo', 'Nuevo presupuesto'],
     // El alta tampoco es el presupuesto número "nuevo".
     ['/presupuestos/155', 'Presupuesto'],
+    // La modificación no es el presupuesto número 155 (FEAT-003c).
+    ['/presupuestos/155/editar', 'Modificar presupuesto'],
   ])('App_Ruta%s_MuestraSuPantalla', async (ruta, titulo) => {
     servidorFalso({ 'GET /api/sesion': vacia(204) });
 
@@ -107,6 +109,35 @@ interface Pantalla {
   /** Lo que hace la persona para llegar a ese estado de la pantalla (por ejemplo, un ingreso bloqueado). */
   interactuar?: () => Promise<void>;
 }
+
+/** El presupuesto 155 en Borrador, con datos ficticios (D-17), su versión y el `orden` de la línea (FEAT-003c). */
+const PRESUPUESTO_155 = {
+  numero: 155,
+  fecha: '2026-03-10',
+  estado: 'borrador',
+  cliente: {
+    apellido: 'Pérez',
+    nombre: 'Ana',
+    dni: '99999999',
+    domicilio: 'Calle Falsa 123',
+    email: 'ana@example.com',
+    telefono: '11 5555-0000',
+  },
+  lineas: [
+    {
+      codigoArticulo: 1,
+      descripcion: 'Armazón metálico',
+      precioUnitario: 1850,
+      cantidad: 1,
+      porcentajeDescuento: 0,
+      precioConDescuento: 1850,
+      precioFinal: 1850,
+      orden: 1,
+    },
+  ],
+  total: 1850,
+  version: 3,
+};
 
 const PANTALLAS: Pantalla[] = [
   {
@@ -287,38 +318,29 @@ const PANTALLAS: Pantalla[] = [
     ruta: '/presupuestos/:numero',
     url: '/presupuestos/155',
     descripcion: 'presupuesto grabado con la confirmación',
-    preparar: () =>
-      servidorFalso({
-        'GET /api/presupuestos/155': json(200, {
-          numero: 155,
-          fecha: '2026-03-10',
-          estado: 'borrador',
-          cliente: {
-            apellido: 'Pérez',
-            nombre: 'Ana',
-            dni: '23456789',
-            domicilio: 'Calle Falsa 123',
-            email: 'ana@mail.com',
-            telefono: '11 5555-0000',
-          },
-          lineas: [
-            {
-              codigoArticulo: 1,
-              descripcion: 'Armazón metálico',
-              precioUnitario: 1850,
-              cantidad: 1,
-              porcentajeDescuento: 0,
-              precioConDescuento: 1850,
-              precioFinal: 1850,
-            },
-          ],
-          total: 1850,
-        }),
-      }),
+    preparar: () => servidorFalso({ 'GET /api/presupuestos/155': json(200, PRESUPUESTO_155) }),
     titulo: 'Presupuesto',
     estadoNavegacion: { mensaje: 'Presupuesto N.º 155 grabado. Estado: Borrador.' },
     interactuar: async () => {
       expect(await screen.findByText('10/03/2026')).toBeTruthy();
+      // El diálogo de confirmación del paso a Final (FEAT-003c) también se revisa.
+      fireEvent.click(screen.getByRole('button', { name: 'Pasar a Final' }));
+      expect(await screen.findByRole('dialog')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos/:numero/editar',
+    url: '/presupuestos/155/editar',
+    descripcion: 'modificación de un presupuesto en Borrador con un conflicto',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/presupuestos/155': json(200, PRESUPUESTO_155),
+        'PUT /api/presupuestos/155': json(409, { title: 'No se pudo grabar el presupuesto.', motivo: 'cambiado' }),
+      }),
+    titulo: 'Modificar presupuesto',
+    interactuar: async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Grabar' }));
+      expect(await screen.findByText('El presupuesto cambió mientras lo editabas. Volvé a abrirlo.')).toBeTruthy();
     },
   },
 ];

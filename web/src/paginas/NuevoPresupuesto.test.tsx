@@ -79,6 +79,7 @@ const LINEA_GRABADA = {
   porcentajeDescuento: 0,
   precioConDescuento: 1850,
   precioFinal: 1850,
+  orden: 1,
 };
 const GRABADO = {
   numero: 155,
@@ -87,6 +88,7 @@ const GRABADO = {
   cliente: { ...CLIENTE, dni: '99999999' },
   lineas: [LINEA_GRABADA],
   total: 1850,
+  version: 0,
 };
 
 const conSesion = { 'GET /api/sesion': vacia(204) };

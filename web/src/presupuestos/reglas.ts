@@ -49,8 +49,31 @@ export const LINEAS_MAXIMAS = 100;
 
 const LARGO_EXTENSION_MINIMO = 2;
 
-/** La confirmación del alta (D-24), que nombra el estado (AC-12). */
+/** La confirmación del alta (D-24), que nombra el estado (AC-12); también la del grabado de una modificación (D-07). */
 export const mensajeConfirmacion = (numero: number) => `Presupuesto N.º ${numero} grabado. Estado: Borrador.`;
+
+/*
+ * Textos de la modificación y del paso a Final (FEAT-003c, D-07). Los de los 409 (`cambiado` y `final`, este también
+ * para la pantalla de modificación abierta sobre un Final) se definen en el cliente de la Api, que los usa al traducir
+ * la respuesta, y se reexportan acá: el cliente no importa valores de este archivo.
+ */
+export { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../api/cliente';
+/** El texto del diálogo de confirmación del paso a Final (FR-04). */
+export const TEXTO_CONFIRMAR_FINAL = 'Una vez en Final, el presupuesto no se puede modificar.';
+/** La confirmación del paso a Final. */
+export const mensajePasadoAFinal = (numero: number) => `Presupuesto N.º ${numero} pasado a Final.`;
+
+/**
+ * El número de presupuesto de una ruta, si es un entero positivo escrito sin ceros a la izquierda y dentro de los
+ * enteros seguros; si no, `null` (no puede existir y no se consulta).
+ */
+export function numeroDeLaRuta(texto: string | undefined): number | null {
+  if (texto === undefined || !/^[1-9][0-9]*$/.test(texto)) {
+    return null;
+  }
+  const numero = Number(texto);
+  return Number.isSafeInteger(numero) ? numero : null;
+}
 
 /** Lo que hay escrito en el formulario. */
 export interface TextosCliente {
