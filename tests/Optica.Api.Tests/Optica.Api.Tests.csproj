@@ -23,6 +23,8 @@
   <ItemGroup>
     <!-- La siembra de 10.000 artículos, compartida con Optica.Infrastructure.Tests (D-15). -->
     <Compile Include="..\Compartido\SiembraCatalogo.cs" Link="Compartido\SiembraCatalogo.cs" />
+    <!-- El encuentro forzado de dos altas, compartido con Optica.Infrastructure.Tests (D-04 de FEAT-003d). -->
+    <Compile Include="..\Compartido\EncuentroDeAltas.cs" Link="Compartido\EncuentroDeAltas.cs" />
   </ItemGroup>
 
   <ItemGroup>

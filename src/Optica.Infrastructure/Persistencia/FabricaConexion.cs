@@ -36,6 +36,10 @@ public sealed class FabricaConexion
             Mode = SqliteOpenMode.ReadWriteCreate,
             // Las FK se piden en la cadena para cualquier conexión, pase o no por EF Core.
             ForeignKeys = true,
+            // ADR-013 y NFR-01 de FEAT-003d: la escritura se toma con BEGIN IMMEDIATE y, si la base está ocupada,
+            // Microsoft.Data.Sqlite lo reintenta hasta este tiempo (en segundos). Es su valor por defecto, declarado
+            // explícito; vencido, el SQLITE_BUSY se propaga y no se graba nada.
+            DefaultTimeout = 30,
         }.ToString();
     }
 
