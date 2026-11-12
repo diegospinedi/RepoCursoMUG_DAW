@@ -34,8 +34,8 @@ cumplan en Chrome y en Edge.
 - NFR-01: El sistema debe admitir 2 sesiones grabando presupuestos al mismo tiempo sin que ninguna
   reciba un error de bloqueo de la base de datos. [FEAT-003 NFR-01; PRD-001 RNF-13]
 - NFR-02: Todos los criterios de aceptación de FEAT-003a, FEAT-003b, FEAT-003c y de este documento deben
-  cumplirse en Chrome y en Edge, en su versión estable vigente y en la inmediata anterior
-  (4 combinaciones). [FEAT-003 NFR-02; PRD-001 RNF-03]
+  cumplirse en Chrome y en Edge, en su versión estable vigente (2 combinaciones). [FEAT-003 NFR-02;
+  PRD-001 RNF-03, reducido a la versión estable por decisión del usuario del 2026-11-12]
 - NFR-03: El sistema debe admitir hasta 10.000 presupuestos grabados. [FEAT-003 NFR-04; PRD-001 RNF-01]
 
 ## Acceptance Criteria
@@ -43,8 +43,9 @@ cumplan en Chrome y en Edge.
   THE sistema SHALL grabar los dos con números distintos y consecutivos, sin que ninguna sesión reciba un
   error de bloqueo de la base. [PRD-001 AC-63]
 - AC-02 (NFR-02; FEAT-003 AC-37): WHEN se ejecutan los criterios de FEAT-003a, FEAT-003b, FEAT-003c y de
-  este documento en Chrome y en Edge, en su versión estable vigente y en la inmediata anterior, THE
-  sistema SHALL cumplirlos en las 4 combinaciones. [PRD-001 AC-56]
+  este documento en Chrome y en Edge, en su versión estable vigente, THE sistema SHALL cumplirlos en
+  las 2 combinaciones. [PRD-001 AC-56, reducido a la versión estable por decisión del usuario del
+  2026-11-12]
 - AC-03 (NFR-03; FEAT-003 AC-38): WHEN la base tiene 10.000 presupuestos grabados, THE sistema SHALL
   permitir grabar uno nuevo, modificar uno en Borrador y pasar uno a Final con los mismos resultados que
   en los AC de FEAT-003a, FEAT-003b, FEAT-003c y en AC-01 de este documento.
@@ -69,6 +70,8 @@ cumplan en Chrome y en Edge.
 - Descuento global sobre el total del presupuesto.
 - Copiar o duplicar un presupuesto existente.
 - Control de stock, cobros, señas y medios de pago. [PRD-001 Fuera de Alcance]
+- Versión inmediata anterior de Chrome y de Edge: queda fuera de esta versión por decisión del usuario
+  del 2026-11-12; los criterios se cumplen en la versión estable vigente de cada navegador.
 
 ## Risks and Mitigations
 - Riesgo: dos grabaciones simultáneas reciben el mismo número o una falla por bloqueo de SQLite.
@@ -76,8 +79,13 @@ cumplan en Chrome y en Edge.
   decide en la spec.
 - Riesgo: con 10.000 presupuestos la asignación del número o la grabación cambian de resultado.
   Mitigación: AC-03 repite con ese volumen los criterios de FEAT-003a, FEAT-003b, FEAT-003c y AC-01.
-- Riesgo: un criterio que pasa en un navegador falla en otro. Mitigación: AC-02 los ejecuta en las 4
-  combinaciones de Chrome y Edge.
+- Riesgo: un criterio que pasa en un navegador falla en otro. Mitigación: AC-02 los ejecuta en las 2
+  combinaciones de Chrome y Edge estables.
+- Riesgo: una versión anterior de Chrome o de Edge que siga instalada en una PC del local se comporta
+  distinto. Aceptado por el usuario (2026-11-12): solo se verifica la versión estable vigente.
+- Riesgo: la base sigue ocupada más allá del tiempo de espera y la grabación falla. Sin criterio de
+  falla propio (W-PRD-04 aceptado por el usuario el 2026-11-12): NFR-01 exige que con 2 sesiones no
+  haya error de bloqueo y la spec fija el tiempo de espera.
 
 ## Dependencies
 - FEAT-003a: alta y numeración de los presupuestos (FEAT-003 FR-06).
