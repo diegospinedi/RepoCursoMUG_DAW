@@ -26,6 +26,30 @@ public static class ValidacionPresupuesto
     public const string CampoTelefono = "telefono";
     public const string CampoLineas = "lineas";
 
+    /// <summary>La versión leída del presupuesto, en la modificación y en el paso a Final (D-01 de FEAT-003c).</summary>
+    public const string CampoVersion = "version";
+
+    /// <summary>El estado pedido en el paso a Final (D-05 de FEAT-003c).</summary>
+    public const string CampoEstado = "estado";
+
+    /// <summary>Versión faltante o fuera de 0 a <see cref="Presupuesto.VersionMaxima"/> (D-07 de FEAT-003c).</summary>
+    public const string AccionVersionInvalida = "Volvé a abrir el presupuesto para editarlo.";
+
+    /// <summary>
+    /// Un <c>estado</c> que no es <see cref="PresupuestoGrabado.EstadoFinal"/>, o "borrador" sobre un Borrador
+    /// (D-05, D-10 de FEAT-003c).
+    /// </summary>
+    public const string AccionEstadoInvalido = "El presupuesto solo puede pasar a Final.";
+
+    /// <summary>Un <c>orden</c> repetido, menor que 1, inexistente o de una línea con otro código (D-03 de FEAT-003c).</summary>
+    public const string AccionLineaAjena = "La línea no corresponde a este presupuesto.";
+
+    /// <summary>El <c>detail</c> del 409 <c>cambiado</c>: otra sesión grabó el presupuesto (D-01, D-07 de FEAT-003c).</summary>
+    public const string DetalleCambiado = "El presupuesto cambió mientras lo editabas. Volvé a abrirlo.";
+
+    /// <summary>El <c>detail</c> del 409 <c>final</c>: un presupuesto en Final no se modifica (FR-05, D-07 de FEAT-003c).</summary>
+    public const string DetalleFinal = "El presupuesto está en Final y no se puede modificar.";
+
     public const string AccionApellidoFaltante = "Ingresá el apellido del cliente";
     public const string AccionNombreFaltante = "Ingresá el nombre del cliente";
 
@@ -155,7 +179,90 @@ public static class ValidacionPresupuesto
     /// <c>lineas[i].porcentajeDescuento</c> (D-02). Un cliente ausente cuenta como seis datos ausentes, y una línea
     /// ausente, como sus tres datos ausentes. Vacío si los datos se pueden grabar.
     /// </summary>
-    public static IReadOnlyList<ErrorValidacion> Validar(DatosPresupuesto datos)
+    public static IReadOnlyList<ErrorValidacion> Validar(DatosPresupuesto datos) => ValidarDatos(datos, conOrden: false);
+
+    /// <summary>
+    /// El error de una versión faltante o fuera de 0 a <see cref="Presupuesto.VersionMaxima"/>, en <c>version</c>
+    /// (D-01, D-07 de FEAT-003c); null si es válida.
+    /// </summary>
+    public static ErrorValidacion? ValidarVersion(long? version) =>
+        version is >= 0 and <= Presupuesto.VersionMaxima ? null : new ErrorValidacion(CampoVersion, AccionVersionInvalida);
+
+    /// <summary>
+    /// Un <c>estado</c> que no se puede pedir: cualquiera distinto de "final", o "borrador" sobre un Borrador (D-10 de
+    /// FEAT-003c).
+    /// </summary>
+    public static ErrorValidacion EstadoInvalido { get; } = new(CampoEstado, AccionEstadoInvalido);
+
+    /// <summary>El error de la línea <paramref name="indice"/> cuyo <c>orden</c> no corresponde al presupuesto (D-03).</summary>
+    public static ErrorValidacion LineaAjena(int indice) => new(CampoLinea(indice), AccionLineaAjena);
+
+    /// <summary>
+    /// La validación de la modificación sin leer la base (FEAT-003c, D-10): primero la versión, después el cliente y las
+    /// líneas con las reglas y los textos del alta (<see cref="Validar(DatosPresupuesto)"/>) y, en cada línea, la forma
+    /// de su <c>orden</c>: si lo trae, tiene que ser al menos 1 y no repetir el de una línea anterior; si no, va
+    /// <see cref="AccionLineaAjena"/> en <c>lineas[i]</c>, salvo que esa línea ya tenga un error en ese campo. Que el
+    /// <c>orden</c> exista y tenga el mismo código lo decide <see cref="LineaGrabadaDe"/>, después de comparar la versión.
+    /// Vacío si los datos se pueden grabar.
+    /// </summary>
+    public static IReadOnlyList<ErrorValidacion> ValidarModificacion(DatosPresupuesto datos, long? version)
+    {
+        ArgumentNullException.ThrowIfNull(datos);
+        var errores = new List<ErrorValidacion>();
+        if (ValidarVersion(version) is { } errorVersion)
+        {
+            errores.Add(errorVersion);
+        }
+
+        errores.AddRange(ValidarDatos(datos, conOrden: true));
+        return errores;
+    }
+
+    /// <summary>
+    /// La validación del paso a Final sin leer la base (FEAT-003c, D-05, D-10): un <c>estado</c> que no es "final" ni
+    /// "borrador" (comparado tal cual, en minúsculas) es <see cref="EstadoInvalido"/>, y después la versión. "borrador"
+    /// pasa esta validación: si es un error (400) o un presupuesto en Final (409) lo decide el caso de uso según el estado
+    /// leído. Vacío si se puede seguir.
+    /// </summary>
+    public static IReadOnlyList<ErrorValidacion> ValidarPasoAFinal(string? estado, long? version)
+    {
+        var errores = new List<ErrorValidacion>();
+        if (estado is not (PresupuestoGrabado.EstadoFinal or PresupuestoGrabado.EstadoBorrador))
+        {
+            errores.Add(EstadoInvalido);
+        }
+
+        if (ValidarVersion(version) is { } errorVersion)
+        {
+            errores.Add(errorVersion);
+        }
+
+        return errores;
+    }
+
+    /// <summary>
+    /// La validación semántica del <c>orden</c> (D-03), contra las líneas grabadas que leyó el caso de uso dentro de su
+    /// transacción: la línea grabada en la posición <paramref name="orden"/> − 1 si existe y tiene el mismo
+    /// <paramref name="codigoArticulo"/>; si no, null (una línea ajena).
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="grabadas"/> es null.</exception>
+    public static LineaPresupuesto? LineaGrabadaDe(int orden, long codigoArticulo, IReadOnlyList<LineaPresupuesto> grabadas)
+    {
+        ArgumentNullException.ThrowIfNull(grabadas);
+        if (orden < 1 || orden > grabadas.Count)
+        {
+            return null;
+        }
+
+        var grabada = grabadas[orden - 1];
+        return grabada.CodigoArticulo == codigoArticulo ? grabada : null;
+    }
+
+    /// <summary>
+    /// <see cref="Validar(DatosPresupuesto)"/>; con <paramref name="conOrden"/>, además la forma del <c>orden</c> de cada
+    /// línea (solo la modificación: el alta no lo usa).
+    /// </summary>
+    private static List<ErrorValidacion> ValidarDatos(DatosPresupuesto datos, bool conOrden)
     {
         ArgumentNullException.ThrowIfNull(datos);
         var cliente = datos.Cliente;
@@ -176,9 +283,22 @@ public static class ValidacionPresupuesto
         }
         else
         {
+            var ordenes = new HashSet<int>();
             for (var indice = 0; indice < lineas.Count; indice++)
             {
+                var cantidadAntes = errores.Count;
                 ValidarLinea(lineas[indice], indice, errores);
+                if (conOrden && lineas[indice]?.Orden is { } orden)
+                {
+                    // Solo la primera aparición de un orden es la línea grabada; las repetidas son ajenas (D-03).
+                    var repetido = !ordenes.Add(orden);
+                    var campo = CampoLinea(indice);
+                    var yaTieneError = errores.Skip(cantidadAntes).Any(error => error.Campo == campo);
+                    if ((orden < 1 || repetido) && !yaTieneError)
+                    {
+                        errores.Add(LineaAjena(indice));
+                    }
+                }
             }
         }
 

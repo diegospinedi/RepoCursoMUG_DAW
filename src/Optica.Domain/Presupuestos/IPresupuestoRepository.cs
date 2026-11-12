@@ -11,9 +11,30 @@ public interface IPresupuestoRepository
     /// </summary>
     Task<long?> ObtenerUltimoNumeroAsync(CancellationToken cancelacion = default);
 
-    /// <summary>Registra el alta del presupuesto con sus líneas; se guarda al confirmar la unidad de trabajo.</summary>
+    /// <summary>
+    /// Registra el alta del presupuesto con sus líneas; se guarda al confirmar la unidad de trabajo. Solo un Borrador: un
+    /// Final no se graba directo, se graba en Borrador y pasa a Final con <see cref="CambiarEstado"/> (AGENTS.md).
+    /// </summary>
+    /// <exception cref="ArgumentException">El presupuesto no está en Borrador. El mensaje no lleva valores.</exception>
     void Agregar(Presupuesto presupuesto);
 
     /// <summary>El presupuesto con ese número, con su cliente y sus líneas, o null si no existe.</summary>
     Task<Presupuesto?> ObtenerAsync(long numero, CancellationToken cancelacion = default);
+
+    /// <summary>
+    /// Registra la modificación de un Borrador: el cliente y las líneas de <paramref name="modificado"/> reemplazan a los
+    /// de <paramref name="original"/>, y la versión pasa a <paramref name="versionOriginal"/> + 1. Se guarda al confirmar
+    /// la unidad de trabajo. Si la versión guardada ya no es <paramref name="versionOriginal"/>, la confirmación falla sin
+    /// escribir nada (D-01): con motivo de concurrencia si el presupuesto sigue en Borrador, y de registro cerrado si otra
+    /// sesión lo pasó a Final, porque los comandos de las líneas se filtran solo por clave y el trigger de cierre los
+    /// rechaza antes (D-14).
+    /// </summary>
+    void Actualizar(Presupuesto original, Presupuesto modificado, long versionOriginal);
+
+    /// <summary>
+    /// Registra el paso a Final de <paramref name="presupuesto"/> (ya pasado a Final en el dominio): solo cambian el estado
+    /// y la versión, que pasa a <paramref name="versionOriginal"/> + 1; las líneas no se tocan. Se guarda al confirmar la
+    /// unidad de trabajo, con el mismo control de versión que <see cref="Actualizar"/>.
+    /// </summary>
+    void CambiarEstado(Presupuesto presupuesto, long versionOriginal);
 }

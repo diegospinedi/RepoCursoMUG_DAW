@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Optica.Application.Comun;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
+using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Infrastructure.Tests.Persistencia;
@@ -320,6 +321,86 @@ public class UnidadDeTrabajoTests
         Assert.Equal(ConfiguracionInicial, Assert.Single(Filas(cadena, SelectConfiguracion)));
         Assert.Empty(contexto.ChangeTracker.Entries());
         Assert.Null(contexto.Database.CurrentTransaction);
+    }
+
+    [Fact]
+    public async Task Confirmar_TriggerRegistroCerrado_ConflictoSinCausa()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        await GrabarAsync(baseTemporal, "ABC-1");
+        var articulo = (await new ArticuloRepository(baseTemporal.CrearContexto()).ObtenerPorClaveAsync("ABC-1"))!;
+        var linea = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m).Linea!;
+        await GrabarPresupuestoAsync(baseTemporal, 1, linea);
+        await GrabarPresupuestoAsync(baseTemporal, 2, linea);
+
+        // El 1 pasa a Final, como en la aplicación (AGENTS.md).
+        var cierre = baseTemporal.CrearContexto();
+        var repositorioCierre = new PresupuestoRepository(cierre);
+        var borrador = (await repositorioCierre.ObtenerAsync(1))!;
+        repositorioCierre.CambiarEstado(borrador.PasarAFinal(), borrador.Version);
+        await new UnidadDeTrabajoEf(cierre).ConfirmarAsync();
+        var encabezados = Filas(cadena, SelectPresupuestos);
+        var lineas = Filas(cadena, SelectLineas);
+
+        // Un camino que saltea el dominio y el caso de uso modifica el Final con la versión correcta: el trigger lo
+        // rechaza y la unidad de trabajo lo informa como registro cerrado, sin causa (ADR-017).
+        var contexto = baseTemporal.CrearContexto();
+        var unidad = new UnidadDeTrabajoEf(contexto);
+        var repositorio = new PresupuestoRepository(contexto);
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(() => unidad.EjecutarEnTransaccionAsync<int>(
+            async cancelacion =>
+            {
+                var final = (await repositorio.ObtenerAsync(1, cancelacion))!;
+                var modificado = new Presupuesto(
+                    1, final.Fecha, EstadoPresupuesto.Borrador, ClienteDistintivo(), [linea, linea], final.Version);
+                repositorio.Actualizar(final, modificado, final.Version);
+                await unidad.ConfirmarAsync(cancelacion);
+                return 0;
+            }));
+
+        Assert.Equal(MotivoConflicto.RegistroCerrado, error.Motivo);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("Quimerez", error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("99999999", error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("quimerez@example.com", error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("registro_cerrado", error.Message, StringComparison.Ordinal);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Null(contexto.Database.CurrentTransaction);
+        Assert.Equal(encabezados, Filas(cadena, SelectPresupuestos));
+        Assert.Equal(lineas, Filas(cadena, SelectLineas));
+
+        // Otro trigger (la fecha de un Borrador) usa el mismo código extendido y otro texto: no es un registro cerrado,
+        // se propaga como error.
+        var otroContexto = baseTemporal.CrearContexto();
+        var fila = otroContexto.Presupuestos.Find(2L)!;
+        fila.Fecha = new DateOnly(2026, 3, 11);
+        var otroError = await Assert.ThrowsAsync<DbUpdateException>(() => new UnidadDeTrabajoEf(otroContexto).ConfirmarAsync());
+        var sqlite = Assert.IsType<SqliteException>(otroError.InnerException);
+        Assert.Equal(1811, sqlite.SqliteExtendedErrorCode);
+        Assert.Contains("'presupuesto_fecha_numero'", sqlite.Message, StringComparison.Ordinal);
+        Assert.Empty(otroContexto.ChangeTracker.Entries());
+        Assert.Equal(encabezados, Filas(cadena, SelectPresupuestos));
+    }
+
+    private const string SelectPresupuestos =
+        "SELECT Numero, Fecha, Estado, Apellido, Nombre, Dni, Version FROM Presupuesto ORDER BY Numero";
+
+    private const string SelectLineas =
+        "SELECT PresupuestoNumero, Orden, Cantidad, PrecioFinalCentavos FROM LineaPresupuesto " +
+        "ORDER BY PresupuestoNumero, Orden";
+
+    /// <summary>Cliente ficticio con valores distintivos, para buscarlos en los mensajes; DNI y email inventados.</summary>
+    private static ClientePresupuesto ClienteDistintivo() =>
+        new("Quimerez", "Distintiva", "99999999", null, "quimerez@example.com", null);
+
+    private static async Task GrabarPresupuestoAsync(BaseTemporal baseTemporal, long numero, LineaPresupuesto linea)
+    {
+        var contexto = baseTemporal.CrearContexto();
+        new PresupuestoRepository(contexto).Agregar(Presupuesto.Nuevo(
+            numero, new DateOnly(2026, 3, 10), new ClientePresupuesto("Ficticiez", "Prueboncia", "99999998", null, null, null),
+            [linea]));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
     }
 
     /// <summary>Un contexto como el de la infraestructura, con un interceptor de transacciones agregado.</summary>

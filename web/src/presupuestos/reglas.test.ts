@@ -38,6 +38,11 @@ import {
   MENSAJE_SIN_LINEAS,
   MENSAJE_TELEFONO_LARGO,
   mensajeConfirmacion,
+  mensajePasadoAFinal,
+  MENSAJE_PRESUPUESTO_CAMBIADO,
+  MENSAJE_PRESUPUESTO_FINAL,
+  numeroDeLaRuta,
+  TEXTO_CONFIRMAR_FINAL,
   normalizarDni,
   tieneFormatoDeEmail,
   validarCliente,
@@ -88,6 +93,31 @@ describe('reglas del presupuesto', () => {
     ]);
     expect(LARGO_MAXIMO_TELEFONO).toBe(30);
     expect(LINEAS_MAXIMAS).toBe(100);
+  });
+
+  it('Textos_DeLaEdicionYElPasoAFinal_ComoD07', () => {
+    // FEAT-003c, D-07: los textos de la pantalla, nunca los del servidor.
+    expect(MENSAJE_PRESUPUESTO_CAMBIADO).toBe('El presupuesto cambió mientras lo editabas. Volvé a abrirlo.');
+    expect(MENSAJE_PRESUPUESTO_FINAL).toBe('El presupuesto está en Final y no se puede modificar.');
+    expect(TEXTO_CONFIRMAR_FINAL).toBe('Una vez en Final, el presupuesto no se puede modificar.');
+    expect(mensajePasadoAFinal(155)).toBe('Presupuesto N.º 155 pasado a Final.');
+    // El grabado en Borrador de la modificación reusa la confirmación del alta.
+    expect(mensajeConfirmacion(155)).toBe('Presupuesto N.º 155 grabado. Estado: Borrador.');
+  });
+
+  it.each([
+    ['155', 155],
+    ['1', 1],
+    ['9007199254740991', Number.MAX_SAFE_INTEGER],
+    [undefined, null],
+    ['abc', null],
+    ['0', null],
+    ['007', null],
+    ['-1', null],
+    ['1.5', null],
+    ['9007199254740992', null],
+  ])('numeroDeLaRuta_%s', (texto, esperado) => {
+    expect(numeroDeLaRuta(texto)).toBe(esperado);
   });
 
   it('Valido_DevuelveLosTextosRecortados', () => {

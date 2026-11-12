@@ -32,7 +32,11 @@ import {
   MENSAJE_PEDIDO_RECHAZADO,
   MENSAJE_SIN_CONEXION,
   salir,
+  campoOrden,
+  modificarPresupuesto,
+  pasarPresupuestoAFinal,
 } from './cliente';
+import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
 afterEach(() => alPerderLaSesion(null));
 
@@ -799,6 +803,7 @@ describe('cliente de la Api: presupuestos', () => {
     porcentajeDescuento: 0,
     precioConDescuento: 1850,
     precioFinal: 1850,
+    orden: 1,
   };
   const GRABADO = {
     numero: 155,
@@ -807,6 +812,7 @@ describe('cliente de la Api: presupuestos', () => {
     cliente: { ...CLIENTE, dni: '99999999' },
     lineas: [LINEA],
     total: 1850,
+    version: 3,
   };
   /** Una línea a enviar con la cantidad y el descuento de una línea nueva. */
   const UNA = [{ codigoArticulo: 7, cantidad: 1, porcentajeDescuento: 0 }];
@@ -1067,5 +1073,206 @@ describe('cliente de la Api: presupuestos', () => {
     servidorFalso({ 'GET /api/presupuestos/155': json(200, enElLimite) });
 
     expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: enElLimite });
+  });
+});
+
+describe('cliente de la Api: modificación y paso a Final del presupuesto (FEAT-003c)', () => {
+  /** Datos ficticios (D-17). */
+  const CLIENTE = {
+    apellido: 'Pérez',
+    nombre: 'Ana',
+    dni: '99999999',
+    domicilio: 'Calle Falsa 123',
+    email: 'ana@example.com',
+    telefono: '11 5555-0000',
+  };
+  const LINEA = {
+    codigoArticulo: 7,
+    descripcion: 'Armazón metálico',
+    precioUnitario: 1850,
+    cantidad: 1,
+    porcentajeDescuento: 0,
+    precioConDescuento: 1850,
+    precioFinal: 1850,
+    orden: 1,
+  };
+  const GRABADO = {
+    numero: 155,
+    fecha: '2026-03-10',
+    estado: 'borrador',
+    cliente: CLIENTE,
+    lineas: [LINEA],
+    total: 1850,
+    version: 3,
+  };
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const NO_ENCONTRADO = { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+  /** Un 409 de la Api con un `detail` que la pantalla nunca muestra (D-07). */
+  const conflicto = (motivo: string) =>
+    json(409, { status: 409, title: 'No se pudo grabar el presupuesto.', detail: 'Texto del servidor.', motivo });
+
+  it.each([
+    ['versión ausente', { ...GRABADO, version: undefined }],
+    ['versión nula', { ...GRABADO, version: null }],
+    ['versión de texto', { ...GRABADO, version: '3' }],
+    ['versión negativa', { ...GRABADO, version: -1 }],
+    ['versión no entera', { ...GRABADO, version: 3.5 }],
+    ['versión sobre el máximo seguro', { ...GRABADO, version: Number.MAX_SAFE_INTEGER + 1 }],
+  ])('leerPresupuesto_SinVersion_ErrorDeLectura (%s)', async (_caso, cuerpo) => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, cuerpo),
+      'POST /api/presupuestos': json(201, cuerpo),
+      'PUT /api/presupuestos/155': json(200, cuerpo),
+      'PUT /api/presupuestos/155/estado': json(200, cuerpo),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+    expect(await grabarPresupuesto(CLIENTE, [])).toEqual(ILEGIBLE);
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual(ILEGIBLE);
+    expect(await pasarPresupuestoAFinal(155, 3)).toEqual(ILEGIBLE);
+  });
+
+  it.each([
+    ['orden ausente', { ...LINEA, orden: undefined }],
+    ['orden nulo', { ...LINEA, orden: null }],
+    ['orden cero', { ...LINEA, orden: 0 }],
+    ['orden de texto', { ...LINEA, orden: '1' }],
+    ['orden no entero', { ...LINEA, orden: 1.5 }],
+  ])('leerPresupuesto_LineaSinOrden_ErrorDeLectura (%s)', async (_caso, linea) => {
+    const cuerpo = { ...GRABADO, lineas: [LINEA, { ...linea }], total: 3700 };
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, cuerpo),
+      'PUT /api/presupuestos/155': json(200, cuerpo),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual(ILEGIBLE);
+  });
+
+  it('leerPresupuesto_VersionYOrden_LosLee', async () => {
+    const cuerpo = {
+      ...GRABADO,
+      lineas: [LINEA, { ...LINEA, orden: 2 }],
+      total: 3700,
+      version: Number.MAX_SAFE_INTEGER,
+    };
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: cuerpo });
+  });
+
+  it('modificarPresupuesto_EnviaVersionClienteYOrdenSoloEnLasGrabadas', async () => {
+    const servidor = servidorFalso({ 'PUT /api/presupuestos/155': json(200, { ...GRABADO, version: 4 }) });
+    const lineas = [
+      { orden: 2, codigoArticulo: 7, cantidad: 3, porcentajeDescuento: 10 },
+      { codigoArticulo: 9, cantidad: 1, porcentajeDescuento: 0 },
+    ];
+
+    expect(await modificarPresupuesto(155, CLIENTE, lineas, 3)).toEqual({
+      tipo: 'ok',
+      datos: { ...GRABADO, version: 4 },
+    });
+    const [pedido] = servidor.pedidosA('PUT', '/api/presupuestos/155');
+    const cuerpo = JSON.parse(String(pedido?.init?.body)) as { lineas: object[] };
+    expect(cuerpo).toEqual({ version: 3, cliente: CLIENTE, lineas });
+    // D-03: la línea nueva va sin `orden`, ni siquiera nulo.
+    expect('orden' in cuerpo.lineas[1]!).toBe(false);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('modificarPresupuesto_NoEnviaCamposAjenosDeLaLinea', async () => {
+    const servidor = servidorFalso({ 'PUT /api/presupuestos/155': json(200, GRABADO) });
+    const conPrecios = { orden: 1, codigoArticulo: 7, cantidad: 2, porcentajeDescuento: 5, precioUnitario: 1 };
+
+    await modificarPresupuesto(155, CLIENTE, [conPrecios], 3);
+    const [pedido] = servidor.pedidosA('PUT', '/api/presupuestos/155');
+    expect(JSON.parse(String(pedido?.init?.body)).lineas).toEqual([
+      { orden: 1, codigoArticulo: 7, cantidad: 2, porcentajeDescuento: 5 },
+    ]);
+  });
+
+  it.each([
+    ['cambiado', MENSAJE_PRESUPUESTO_CAMBIADO],
+    ['final', MENSAJE_PRESUPUESTO_FINAL],
+  ])('modificarPresupuesto_409%s_TextoPropio', async (motivo, mensaje) => {
+    servidorFalso({ 'PUT /api/presupuestos/155': conflicto(motivo) });
+
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual({ tipo: 'conflicto', motivo, mensaje });
+  });
+
+  it.each(['inactivo', 'otro', undefined])('modificarPresupuesto_409MotivoAjeno_%s_Ilegible', async (motivo) => {
+    servidorFalso({ 'PUT /api/presupuestos/155': conflicto(motivo as string) });
+
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual(ILEGIBLE);
+  });
+
+  it('modificarPresupuesto_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      'PUT /api/presupuestos/155': json(400, {
+        errors: {
+          version: ['Volvé a abrir el presupuesto para editarlo.'],
+          'lineas[0].orden': ['La línea no corresponde a este presupuesto.'],
+        },
+      }),
+    });
+
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'version', mensaje: 'Volvé a abrir el presupuesto para editarlo.' },
+        { campo: 'lineas[0].orden', mensaje: 'La línea no corresponde a este presupuesto.' },
+      ],
+    });
+    expect(campoOrden(0)).toBe('lineas[0].orden');
+  });
+
+  it('modificarPresupuesto_404YNumeroInvalido_NoEncontrado', async () => {
+    const servidor = servidorFalso({ 'PUT /api/presupuestos/9': vacia(404) });
+
+    expect(await modificarPresupuesto(9, CLIENTE, [], 3)).toEqual(NO_ENCONTRADO);
+    expect(await modificarPresupuesto(0, CLIENTE, [], 3)).toEqual(NO_ENCONTRADO);
+    expect(servidor.llamadas.map((l) => l.ruta)).toEqual(['/api/presupuestos/9']);
+  });
+
+  it('modificarPresupuesto_413_MensajeGeneral', async () => {
+    servidorFalso({ 'PUT /api/presupuestos/155': vacia(413) });
+
+    expect(await modificarPresupuesto(155, CLIENTE, [], 3)).toEqual({ tipo: 'general', mensaje: MENSAJE_ARTICULO_GRANDE });
+  });
+
+  it('pasarPresupuestoAFinal_EnviaEstadoFinalYVersion', async () => {
+    const final = { ...GRABADO, estado: 'final', version: 4 };
+    const servidor = servidorFalso({ 'PUT /api/presupuestos/155/estado': json(200, final) });
+
+    expect(await pasarPresupuestoAFinal(155, 3)).toEqual({ tipo: 'ok', datos: final });
+    const [pedido] = servidor.pedidosA('PUT', '/api/presupuestos/155/estado');
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ estado: 'final', version: 3 });
+  });
+
+  it.each([
+    ['cambiado', MENSAJE_PRESUPUESTO_CAMBIADO],
+    ['final', MENSAJE_PRESUPUESTO_FINAL],
+  ])('pasarPresupuestoAFinal_409%s_TextoPropio', async (motivo, mensaje) => {
+    servidorFalso({ 'PUT /api/presupuestos/155/estado': conflicto(motivo) });
+
+    expect(await pasarPresupuestoAFinal(155, 3)).toEqual({ tipo: 'conflicto', motivo, mensaje });
+  });
+
+  it.each([
+    ['400', problema(400, 'estado', 'El presupuesto solo puede pasar a Final.'), MENSAJE_PEDIDO_RECHAZADO],
+    ['404', vacia(404), MENSAJE_PRESUPUESTO_NO_ENCONTRADO],
+    ['413', vacia(413), MENSAJE_PEDIDO_RECHAZADO],
+  ])('pasarPresupuestoAFinal_%s_MensajeGeneral', async (_caso, respuesta, mensaje) => {
+    servidorFalso({ 'PUT /api/presupuestos/155/estado': respuesta });
+
+    expect(await pasarPresupuestoAFinal(155, 3)).toEqual({ tipo: 'general', mensaje });
+  });
+
+  it('pasarPresupuestoAFinal_NumeroInvalido_NoEnvia', async () => {
+    const servidor = servidorFalso({});
+
+    expect(await pasarPresupuestoAFinal(-1, 3)).toEqual(NO_ENCONTRADO);
+    expect(servidor.llamadas).toEqual([]);
   });
 });

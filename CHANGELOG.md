@@ -52,6 +52,14 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - `POST /api/presupuestos` recibe por línea código, cantidad y descuento (ignora precios enviados) y responde los errores junto a cada campo (`lineas[i].cantidad`, `lineas[i].porcentajeDescuento`); el alta y `GET /api/presupuestos/{numero}` devuelven `total`. Un importe de línea o un total por encima de 90.071.992.547.409,91 se rechaza con su mensaje. Sin cambios en la base.
   - Pantalla de alta con un mensaje por campo, la fila "Total (IVA incluido)" al pie de la tabla y el foco en el primer campo con error al grabar.
   - Pruebas de punta a punta de cantidad, descuento y total en Chrome y Edge.
+- [FEAT-003c] Modificación en Borrador y paso a Final irreversible del presupuesto:
+  - Pantalla `/presupuestos/{numero}/editar` para modificar un presupuesto en Borrador (datos del cliente, cantidades, descuentos, líneas agregadas o quitadas), con el mismo formulario del alta. La fecha y el número no cambian nunca.
+  - Las líneas ya grabadas conservan Código, Descripción y Precio Unitario aunque el artículo se recalcule o se desactive; solo una línea nueva toma el precio actual del catálogo y no admite un artículo inactivo.
+  - Botón "Pasar a Final" con confirmación ("Una vez en Final, el presupuesto no se puede modificar."); cancelar no envía nada.
+  - Un presupuesto en Final no se modifica, no vuelve a Borrador y no se borra: lo rechazan el dominio, la Api (409 con motivo `final`) y triggers de SQLite (migración `CierrePresupuestos`, ADR-017).
+  - Una modificación hecha en otra pestaña no se pisa: columna `Version` con concurrencia optimista, 409 con motivo `cambiado` y la pantalla pide volver a abrir el presupuesto.
+  - `PUT /api/presupuestos/{numero}` y `PUT /api/presupuestos/{numero}/estado`; `GET /api/presupuestos/{numero}` devuelve `version` y el `orden` de cada línea.
+  - Pruebas de punta a punta de los 10 criterios en Chrome y Edge.
 - [FEAT-004] Análisis estático de la web con oxlint 1.92.0 (en lugar de ESLint, que con typescript-eslint no soporta TypeScript 7):
   - `npm run lint` en `web/` revisa la aplicación y sus pruebas con las reglas equivalentes a la plantilla de Vite (corrección, hooks de React, exportaciones para recarga en caliente y reglas de TypeScript), sin admitir avisos (`--max-warnings 0`) e ignorando `dist/` y `coverage/`.
   - `npm run test:lint` con 8 pruebas que fijan la configuración; el comando quedó declarado en la sección "Stack" de `AGENTS.md`.

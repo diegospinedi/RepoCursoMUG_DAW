@@ -29,13 +29,14 @@ public sealed record DatosPresupuesto(DatosCliente? Cliente, IReadOnlyList<Datos
 
 /// <summary>
 /// Una línea tal como llega: el código autonumérico del artículo, la Cantidad y el Porcentaje de Descuento (FR-01 a
-/// FR-03). <see cref="ValidacionPresupuesto.Validar"/> los valida, un error por campo.
+/// FR-03). <see cref="ValidacionPresupuesto.Validar"/> los valida, un error por campo. En la modificación (FEAT-003c,
+/// D-03), <see cref="Orden"/> identifica la línea ya grabada que se conserva; sin él, la línea es nueva. El alta lo ignora.
 /// </summary>
 /// <remarks>
 /// <see cref="object.ToString"/> no muestra ningún valor (<c>DatosLinea { }</c>), como los demás datos del pedido: las
 /// condiciones comerciales de la venta tampoco van al log (D-17).
 /// </remarks>
-public sealed record DatosLinea(long? CodigoArticulo, int? Cantidad, decimal? PorcentajeDescuento)
+public sealed record DatosLinea(long? CodigoArticulo, int? Cantidad, decimal? PorcentajeDescuento, int? Orden = null)
 {
     private bool PrintMembers(System.Text.StringBuilder constructor) => false;
 }
@@ -51,7 +52,12 @@ public sealed record ClienteGrabado(
         cliente.Apellido, cliente.Nombre, cliente.Dni, cliente.Domicilio, cliente.Email, cliente.Telefono);
 }
 
-/// <summary>Una línea grabada con las siete columnas de FR-13.</summary>
+/// <summary>
+/// Una línea grabada con las siete columnas de FR-13 y su <see cref="Orden"/>: la posición + 1 en el presupuesto, 1..n,
+/// que la modificación usa para identificarla (D-03, D-10 de FEAT-003c). <see cref="Orden"/> va al final, así un
+/// llamador que conocía las siete columnas no corre los argumentos; la Api lo escribe como <c>orden</c>, al final de la
+/// línea.
+/// </summary>
 public sealed record LineaGrabada(
     long CodigoArticulo,
     string Descripcion,
@@ -59,16 +65,19 @@ public sealed record LineaGrabada(
     int Cantidad,
     decimal PorcentajeDescuento,
     decimal PrecioConDescuento,
-    decimal PrecioFinal)
+    decimal PrecioFinal,
+    int Orden)
 {
-    internal static LineaGrabada Desde(LineaPresupuesto linea) => new(
+    /// <param name="indice">La posición de la línea en el presupuesto, desde 0.</param>
+    internal static LineaGrabada Desde(LineaPresupuesto linea, int indice) => new(
         linea.CodigoArticulo,
         linea.Descripcion,
         linea.PrecioUnitario,
         linea.Cantidad,
         linea.PorcentajeDescuento,
         linea.PrecioConDescuento,
-        linea.PrecioFinal);
+        linea.PrecioFinal,
+        indice + 1);
 }
 
 /// <summary>
@@ -98,6 +107,13 @@ public sealed record PresupuestoGrabado(
     /// </summary>
     public required decimal Total { get; init; }
 
+    /// <summary>
+    /// La versión del presupuesto para la concurrencia optimista (D-01 de FEAT-003c): la pantalla la envía al modificar
+    /// o pasar a Final. Es <see cref="Presupuesto.Version"/> del dominio, copiada por <see cref="Desde"/>, y
+    /// <c>required</c> como <see cref="Total"/>. La Api la escribe como <c>version</c>, después de <c>total</c>.
+    /// </summary>
+    public required long Version { get; init; }
+
     /// <summary>El texto del estado.</summary>
     /// <exception cref="InvalidOperationException">El estado no tiene texto asignado (cerrado por defecto).</exception>
     public static string TextoDelEstado(EstadoPresupuesto estado) => estado switch
@@ -115,6 +131,7 @@ public sealed record PresupuestoGrabado(
         [.. presupuesto.Lineas.Select(LineaGrabada.Desde)])
     {
         Total = presupuesto.Total,
+        Version = presupuesto.Version,
     };
 }
 
@@ -186,15 +203,9 @@ public sealed class AltaPresupuesto(
         }
 
         // La validación ya aceptó el cliente: existe, con apellido, nombre y DNI.
-        var datosCliente = datos.Cliente!;
-        var cliente = new ClientePresupuesto(
-            datosCliente.Apellido!, datosCliente.Nombre!, datosCliente.Dni!, datosCliente.Domicilio,
-            datosCliente.Email, datosCliente.Telefono);
+        var cliente = ArmadoLineas.Cliente(datos.Cliente!);
         // La validación ya aceptó cada línea: existe, con código, cantidad y descuento válidos.
-        var lineas = datos.Lineas!
-            .Select(linea => new LineaPedida(linea!.CodigoArticulo!.Value, linea.Cantidad!.Value,
-                linea.PorcentajeDescuento!.Value))
-            .ToList();
+        var lineas = ArmadoLineas.Pedidas(datos.Lineas!);
 
         // ADR-013 y D-07: los artículos, el último número y la fecha se leen en la misma transacción de escritura que
         // graba, así ninguna otra grabación confirma entre la lectura del número y la del presupuesto.
@@ -219,31 +230,15 @@ public sealed class AltaPresupuesto(
         var errores = new List<ErrorValidacion>();
         for (var indice = 0; indice < pedidas.Count; indice++)
         {
-            var pedida = pedidas[indice];
-            var articulo = await articulos.ObtenerAsync(pedida.CodigoArticulo, operacion);
-            if (articulo is null)
+            // Los topes de importe se controlan juntos, después (D-11).
+            var nueva = await ArmadoLineas.LineaNuevaAsync(articulos, pedidas[indice], indice, operacion);
+            if (nueva.Error is { } error)
             {
-                errores.Add(ValidacionPresupuesto.ArticuloNoDisponible(indice));
-                continue;
-            }
-
-            var resultado = LineaPresupuesto.DesdeArticulo(articulo, pedida.Cantidad, pedida.PorcentajeDescuento);
-            if (resultado.EsValida || resultado.EsImporteExcedido)
-            {
-                // Los topes de importe se controlan juntos, después (D-11).
-                resultados.Add(resultado);
-            }
-            else if (resultado.EsPrecioNegativo)
-            {
-                errores.Add(ValidacionPresupuesto.PrecioNegativo(indice));
-            }
-            else if (resultado.EsInactivo)
-            {
-                errores.Add(ValidacionPresupuesto.ArticuloNoDisponible(indice));
+                errores.Add(error);
             }
             else
             {
-                throw new UnreachableException("Rechazo de línea sin error asignado.");
+                resultados.Add(nueva.Resultado ?? throw new UnreachableException("Línea nueva sin resultado ni error."));
             }
         }
 
@@ -264,38 +259,13 @@ public sealed class AltaPresupuesto(
         var numero = NumeracionPresupuesto.Siguiente(await presupuestos.ObtenerUltimoNumeroAsync(operacion));
         // D-06: la fecha calendario de la PC, no la UTC.
         var fecha = DateOnly.FromDateTime(reloj.GetLocalNow().DateTime);
-        presupuestos.Agregar(Presupuesto.Nuevo(numero, fecha, cliente, LineasValidas(resultados)));
+        presupuestos.Agregar(Presupuesto.Nuevo(numero, fecha, cliente, ArmadoLineas.LineasValidas(resultados)));
 
         // D-07 y D-30: un conflicto o cualquier otra falla al confirmar se propaga sin atenderla ni envolverla.
         await unidadDeTrabajo.ConfirmarAsync(operacion);
         return new Desenlace(numero, null);
     }
 
-    /// <summary>Las líneas de los resultados, en orden. Sin errores, ControlarTopes ya aceptó todas como válidas.</summary>
-    /// <exception cref="UnreachableException">Algún resultado no tiene línea: el control previo no se hizo.</exception>
-    private static List<LineaPresupuesto> LineasValidas(IReadOnlyList<ResultadoLinea> resultados)
-    {
-        var lineas = new List<LineaPresupuesto>(resultados.Count);
-        foreach (var resultado in resultados)
-        {
-            if (!resultado.EsValida)
-            {
-                throw new UnreachableException("Línea rechazada después de controlar los topes.");
-            }
-
-            lineas.Add(resultado.Linea);
-        }
-
-        return lineas;
-    }
-
     /// <summary>El número grabado, o el rechazo de alguna línea (sin grabar nada).</summary>
     private sealed record Desenlace(long Numero, ResultadoAltaPresupuesto? Rechazo);
-
-    /// <summary>Una línea ya validada por <see cref="ValidacionPresupuesto.Validar"/>, sin el artículo leído.</summary>
-    /// <remarks>Sin valores en <see cref="object.ToString"/>, como <see cref="DatosLinea"/> (D-17).</remarks>
-    private sealed record LineaPedida(long CodigoArticulo, int Cantidad, decimal PorcentajeDescuento)
-    {
-        private bool PrintMembers(System.Text.StringBuilder constructor) => false;
-    }
 }

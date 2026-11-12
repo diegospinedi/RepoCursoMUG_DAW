@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Optica.Api.Controllers;
+using Optica.Api.Errores;
 using Optica.Application.Comun;
 using Optica.Application.Presupuestos;
 
@@ -20,6 +21,73 @@ public sealed class CierrePorDefectoPresupuestosTests
         var controller = Crear();
 
         Assert.Throws<InvalidOperationException>(() => controller.ResponderAlta(null));
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderModificacion(null));
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderPasoAFinal(null));
+    }
+
+    /// <summary>
+    /// FEAT-003c: los traductores de la modificación y del paso a Final responden cada resultado previsto: inválido 400,
+    /// no encontrado 404, final y cambiado 409 con su <c>motivo</c> y el texto fijo de la aplicación.
+    /// </summary>
+    [Fact]
+    public void ResponderEdicion_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+        var traductores = new Func<ResultadoEdicionPresupuesto?, IActionResult>[]
+        {
+            controller.ResponderModificacion, controller.ResponderPasoAFinal,
+        };
+
+        foreach (var traducir in traductores)
+        {
+            var invalido = Assert.IsType<ObjectResult>(traducir(ResultadoEdicionPresupuesto.Invalido(
+                [new ErrorValidacion(ValidacionPresupuesto.CampoVersion, ValidacionPresupuesto.AccionVersionInvalida)])));
+            Assert.Equal(StatusCodes.Status400BadRequest, invalido.StatusCode);
+
+            var noEncontrado = Assert.IsType<ObjectResult>(traducir(ResultadoEdicionPresupuesto.NoEncontrado));
+            Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+
+            foreach (var (resultado, motivo, detalle) in new[]
+            {
+                (ResultadoEdicionPresupuesto.Final, "final", ValidacionPresupuesto.DetalleFinal),
+                (ResultadoEdicionPresupuesto.Cambiado, "cambiado", ValidacionPresupuesto.DetalleCambiado),
+            })
+            {
+                var conflicto = Assert.IsType<ObjectResult>(traducir(resultado));
+                Assert.Equal(StatusCodes.Status409Conflict, conflicto.StatusCode);
+                var problema = Assert.IsType<ProblemDetails>(conflicto.Value);
+                Assert.Equal("No se pudo grabar el presupuesto.", problema.Title);
+                Assert.Equal(detalle, problema.Detail);
+                Assert.Equal(motivo, problema.Extensions["motivo"]);
+            }
+        }
+
+        Assert.Equal("El presupuesto cambió mientras lo editabas. Volvé a abrirlo.", ValidacionPresupuesto.DetalleCambiado);
+        Assert.Equal("El presupuesto está en Final y no se puede modificar.", ValidacionPresupuesto.DetalleFinal);
+    }
+
+    /// <summary>El helper del 409 de presupuestos solo acepta sus dos motivos; el de artículos sigue con los suyos.</summary>
+    [Fact]
+    public void ConflictoPresupuesto_MotivoAjeno_Lanza()
+    {
+        var controller = Crear();
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto("inactivo", "Texto."));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo(RespuestasValidacion.MotivoFinal, "Texto."));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto(RespuestasValidacion.MotivoFinal, " "));
+    }
+
+    /// <summary>FEAT-003c: <c>version</c> y <c>lineas[i].orden</c> tienen su propio campo en un error de lectura.</summary>
+    [Theory]
+    [InlineData("$.version", "version")]
+    [InlineData("Version", "version")]
+    [InlineData("$.lineas[2].orden", "lineas[2].orden")]
+    [InlineData("$.Lineas[0].Orden", "lineas[0].orden")]
+    [InlineData("$.lineas[100].orden", "lineas")]
+    [InlineData("$.versionX", null)]
+    public void CampoDeLaClave_VersionYOrden(string clave, string? campo)
+    {
+        Assert.Equal(campo, PresupuestosController.CampoDeLaClave(clave));
     }
 
     [Fact]
@@ -109,6 +177,12 @@ public sealed class CierrePorDefectoPresupuestosTests
             new SolicitudPresupuesto(cliente, [new SolicitudLinea(987654321, 7531, 12.34m)]).ToString(),
             new DatosLinea(987654321, 7531, 12.34m).ToString(),
             new DatosPresupuesto(null, [new DatosLinea(987654321, 7531, 12.34m)]).ToString(),
+            // FEAT-003c: la línea con orden y las solicitudes de modificación y de estado.
+            new SolicitudLinea(987654321, 7531, 12.34m, 7531).ToString(),
+            new SolicitudModificacionPresupuesto(987654321, cliente, [new SolicitudLinea(987654321, 7531, 12.34m, 7531)])
+                .ToString(),
+            new SolicitudEstadoPresupuesto("Zq7-estado", 987654321).ToString(),
+            new DatosLinea(987654321, 7531, 12.34m, 7531).ToString(),
         };
 
         foreach (var texto in textos)
@@ -129,7 +203,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

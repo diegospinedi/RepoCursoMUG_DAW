@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Optica.Domain.Acceso;
+using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Api.Tests;
@@ -341,6 +342,103 @@ public sealed class RegistroTests
             FabricaApi.LiberarConexiones(directorio);
             Directory.Delete(directorio, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Alerta de datos (Ley 25.326, D-12 de FEAT-003c): el trigger <c>presupuesto_fecha_numero</c> rechaza cambiar la
+    /// fecha y sale como una <c>DbUpdateException</c> sin traducir, cuyas <c>Entries</c> llevan los datos del cliente. Se
+    /// fuerza con un repositorio que, además de la modificación, cambia la fecha; la Api responde el 500 genérico, y
+    /// ningún dato del cliente (los grabados ni los enviados) llega a la respuesta ni al log, en ningún nivel, ni queda
+    /// una excepción adjunta por encima de Debug. Datos ficticios con marcadores.
+    /// </summary>
+    [Fact]
+    public async Task Log_TriggerDeFechaDelPresupuesto_SinDatosDelCliente()
+    {
+        using var fabrica = new FabricaApi(servicios =>
+        {
+            servicios.RemoveAll<IPresupuestoRepository>();
+            servicios.AddScoped<IPresupuestoRepository, RepositorioQueCambiaLaFecha>();
+        });
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var articulo = await Http.PostJsonAsync(
+            cliente,
+            "/api/articulos",
+            "{\"codigoProveedor\":\"ABC-1\",\"descripcion\":\"Armazón\",\"precioCosto\":1210,\"margenUtilidad\":50}",
+            cookie);
+        Assert.Equal(HttpStatusCode.Created, articulo.StatusCode);
+        var codigo = (await Http.JsonAsync(articulo)).GetProperty("codigo").GetInt64();
+        var alta = await Http.PostJsonAsync(
+            cliente,
+            "/api/presupuestos",
+            "{\"cliente\":" + ClienteMarcado("Zq7Alta") + ",\"lineas\":[{\"codigoArticulo\":" + codigo
+            + ",\"cantidad\":1,\"porcentajeDescuento\":0}]}",
+            cookie);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        var respuesta = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            "/api/presupuestos/1",
+            new StringContent(
+                "{\"version\":0,\"cliente\":" + ClienteMarcado("Zq7Modif") + ",\"lineas\":[{\"orden\":1,\"codigoArticulo\":"
+                + codigo + ",\"cantidad\":2,\"porcentajeDescuento\":0}]}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+            cookie);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        var lineas = fabrica.Registro.Lineas;
+        // Control: el rechazo fue el del trigger, y el error propio quedó registrado sin el texto de la excepción.
+        Assert.Contains(lineas, l => l.Excepcion?.ToString().Contains("presupuesto_fecha_numero", StringComparison.Ordinal) == true);
+        Assert.Contains(lineas, l => l.TextoCompleto.Contains(nameof(SqliteException), StringComparison.Ordinal));
+        Assert.Contains(
+            lineas,
+            l => l.Nivel == LogLevel.Error && l.Mensaje.Contains("/api/presupuestos/1", StringComparison.Ordinal));
+        var textoRespuesta = await respuesta.Content.ReadAsStringAsync();
+        foreach (var dato in new[] { "Zq7", "99999999", "99.999.999", "example.com", "5555-0199" })
+        {
+            Assert.DoesNotContain(dato, textoRespuesta, StringComparison.Ordinal);
+            var conElDato = lineas.Where(l => l.TextoCompleto.Contains(dato, StringComparison.Ordinal))
+                .Select(l => $"{l.Categoria} ({l.Nivel})")
+                .ToList();
+            Assert.True(conElDato.Count == 0, $"\"{dato}\" llegó al log en: {string.Join(", ", conElDato)}");
+        }
+
+        Assert.DoesNotContain(lineas, l => l.Nivel > LogLevel.Debug && l.Excepcion is not null);
+    }
+
+    private static string ClienteMarcado(string marca) =>
+        "{\"apellido\":\"" + marca + "Apellido\",\"nombre\":\"" + marca + "Nombre\",\"dni\":\"99.999.999\","
+        + "\"domicilio\":\"" + marca + " Calle Ficticia 123\",\"email\":\"" + marca.ToLowerInvariant()
+        + "@example.com\",\"telefono\":\"011-5555-0199\"}";
+
+    /// <summary>
+    /// El repositorio real, salvo que la modificación también cambia la fecha del encabezado: así el trigger
+    /// <c>presupuesto_fecha_numero</c> rechaza el UPDATE al confirmar.
+    /// </summary>
+    private sealed class RepositorioQueCambiaLaFecha(OpticaDbContext contexto) : IPresupuestoRepository
+    {
+        private readonly PresupuestoRepository _real = new(contexto);
+
+        public Task<long?> ObtenerUltimoNumeroAsync(CancellationToken cancelacion = default) =>
+            _real.ObtenerUltimoNumeroAsync(cancelacion);
+
+        public void Agregar(Presupuesto presupuesto) => _real.Agregar(presupuesto);
+
+        public Task<Presupuesto?> ObtenerAsync(long numero, CancellationToken cancelacion = default) =>
+            _real.ObtenerAsync(numero, cancelacion);
+
+        public void Actualizar(Presupuesto original, Presupuesto modificado, long versionOriginal)
+        {
+            _real.Actualizar(original, modificado, versionOriginal);
+            var fila = contexto.ChangeTracker.Entries<PresupuestoFila>().Single(e => e.Entity.Numero == modificado.Numero);
+            fila.Property(p => p.Fecha).CurrentValue = fila.Entity.Fecha.AddDays(1);
+            fila.Property(p => p.Fecha).IsModified = true;
+        }
+
+        public void CambiarEstado(Presupuesto presupuesto, long versionOriginal) =>
+            _real.CambiarEstado(presupuesto, versionOriginal);
     }
 
     private static void AfirmarSinContrasenas(FabricaApi fabrica)

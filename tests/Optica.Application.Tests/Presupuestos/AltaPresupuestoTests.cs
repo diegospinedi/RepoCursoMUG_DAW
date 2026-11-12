@@ -268,7 +268,8 @@ public class AltaPresupuestoTests
         var grabado = resultado.Presupuesto;
         Assert.Equal(1, grabado.Numero);
         Assert.Equal(new ClienteGrabado(Apellido, Nombre, Dni, Domicilio, Email, Telefono), grabado.Cliente);
-        Assert.Equal([new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m)], grabado.Lineas);
+        Assert.Equal([new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m, 1)], grabado.Lineas);
+        Assert.Equal(0, grabado.Version);
 
         var guardado = Assert.Single(_unidad.Guardados);
         Assert.Equal(1, guardado.Numero);
@@ -355,9 +356,9 @@ public class AltaPresupuestoTests
         Assert.True(resultado.EsGrabado);
         Assert.Equal(
             [
-                new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m),
-                new LineaGrabada(16, "Lente orgánico", 1234.56m, 1, 0m, 1234.56m, 1234.56m),
-                new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m),
+                new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m, 1),
+                new LineaGrabada(16, "Lente orgánico", 1234.56m, 1, 0m, 1234.56m, 1234.56m, 2),
+                new LineaGrabada(15, "Armazón de acetato", 1850m, 1, 0m, 1850m, 1850m, 3),
             ],
             resultado.Presupuesto.Lineas);
         var linea = Assert.Single(_unidad.Guardados).Lineas[0];
@@ -423,7 +424,7 @@ public class AltaPresupuestoTests
 
         Assert.True(resultado.EsGrabado);
         var linea = Assert.Single(resultado.Presupuesto.Lineas);
-        Assert.Equal(new LineaGrabada(20, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m), linea);
+        Assert.Equal(new LineaGrabada(20, "Lente bifocal", 1000m, 3, 10m, 900m, 2700m, 1), linea);
         Assert.Equal("900.00", linea.PrecioConDescuento.ToString(CultureInfo.InvariantCulture));
         Assert.Equal("2700.00", linea.PrecioFinal.ToString(CultureInfo.InvariantCulture));
         var guardada = Assert.Single(Assert.Single(_unidad.Guardados).Lineas);
@@ -558,7 +559,7 @@ public class AltaPresupuestoTests
         object?[] registrados =
         [
             datos, datos.Cliente, cliente, new PresupuestoGrabado(1, new DateOnly(2026, 3, 10),
-                PresupuestoGrabado.EstadoBorrador, cliente, []) { Total = 0m },
+                PresupuestoGrabado.EstadoBorrador, cliente, []) { Total = 0m, Version = 0 },
             grabado, grabado.Presupuesto, grabado.Presupuesto?.Cliente, invalido, leido, leido?.Cliente,
         ];
         foreach (var registrado in registrados)

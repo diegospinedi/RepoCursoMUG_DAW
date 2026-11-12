@@ -249,6 +249,10 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                     b.Property<string>("Telefono")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Numero");
 
                     b.ToTable("Presupuesto", null, t =>
@@ -270,6 +274,8 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("CK_Presupuesto_Numero", "\"Numero\" >= 1");
 
                             t.HasCheckConstraint("CK_Presupuesto_Telefono", "length(\"Telefono\") <= 30");
+
+                            t.HasCheckConstraint("CK_Presupuesto_Version", "\"Version\" BETWEEN 0 AND 9007199254740991");
                         });
                 });
 

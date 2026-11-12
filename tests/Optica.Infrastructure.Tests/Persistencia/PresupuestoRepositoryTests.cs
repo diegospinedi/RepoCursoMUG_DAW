@@ -55,7 +55,10 @@ public partial class PresupuestoRepositoryTests
         "UPDATE Presupuesto SET Dni = '2345678A'",
         "UPDATE Presupuesto SET Estado = 'anulado'",
         "UPDATE Presupuesto SET Estado = 'Borrador'",
-        "UPDATE Presupuesto SET Fecha = '2026-02-30'",
+        // TR_Presupuesto_FechaYNumeroFijos rechaza el UPDATE de la fecha (FEAT-003c): la fila se vuelve a insertar.
+        "CREATE TEMP TABLE p AS SELECT * FROM Presupuesto; CREATE TEMP TABLE l AS SELECT * FROM LineaPresupuesto; " +
+        "DELETE FROM LineaPresupuesto; DELETE FROM Presupuesto; UPDATE p SET Fecha = '2026-02-30'; " +
+        "INSERT INTO Presupuesto SELECT * FROM p; INSERT INTO LineaPresupuesto SELECT * FROM l",
         "UPDATE Presupuesto SET Apellido = ' Ficticiez Quimera'",
         "UPDATE Presupuesto SET Nombre = ''",
         "UPDATE Presupuesto SET Email = 'prueboncia-sin-arroba'",
@@ -220,6 +223,8 @@ public partial class PresupuestoRepositoryTests
         { "Presupuesto", "Domicilio", new string('d', 201), "CK_Presupuesto_Domicilio" },
         { "Presupuesto", "Email", new string('e', 255), "CK_Presupuesto_Email" },
         { "Presupuesto", "Telefono", new string('1', 31), "CK_Presupuesto_Telefono" },
+        { "Presupuesto", "Version", -1L, "CK_Presupuesto_Version" },
+        { "Presupuesto", "Version", 9_007_199_254_740_992L, "CK_Presupuesto_Version" },
         { "LineaPresupuesto", "Cantidad", 0L, "CK_LineaPresupuesto_Cantidad" },
         { "LineaPresupuesto", "PrecioUnitarioCentavos", -1L, "CK_LineaPresupuesto_PrecioUnitarioCentavos" },
         { "LineaPresupuesto", "PrecioConDescuentoCentavos", -1L, "CK_LineaPresupuesto_PrecioConDescuentoCentavos" },
@@ -397,10 +402,10 @@ public partial class PresupuestoRepositoryTests
         var cadena = CadenaDe(baseTemporal);
         var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
 
-        // AC-12: el presupuesto nuevo queda en Borrador. El estado Final se guarda como 'final' (D-19).
+        // AC-12: el presupuesto nuevo queda en Borrador. El estado Final se guarda como 'final' (D-19); se graba en
+        // Borrador y después pasa a Final, como en la aplicación (AGENTS.md).
         await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
-        await GrabarPresupuesto(baseTemporal,
-            new Presupuesto(2, Fecha, EstadoPresupuesto.Final, ClienteCompleto(), [Linea(articulo)]));
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(2, Fecha, ClienteCompleto(), [Linea(articulo)]));
 
         Assert.Equal([["borrador"], ["final"]], Filas(cadena, "SELECT Estado FROM Presupuesto ORDER BY Numero"));
         var lector = new PresupuestoRepository(baseTemporal.CrearContexto());
@@ -529,9 +534,10 @@ public partial class PresupuestoRepositoryTests
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
         var migraciones = contexto.Database.GetMigrations().ToList();
-        var presupuestos = migraciones[^1];
+        Assert.EndsWith("_CierrePresupuestos", migraciones[^1], StringComparison.Ordinal);
+        var presupuestos = migraciones[^2];
         Assert.EndsWith("_Presupuestos", presupuestos, StringComparison.Ordinal);
-        var anterior = migraciones[^2];
+        var anterior = migraciones[^3];
         Assert.EndsWith("_CatalogoActivo", anterior, StringComparison.Ordinal);
 
         // ADR-012: el Up solo crea tablas e índices nuevos, nada sobre Articulo; el Down borra las líneas y después
@@ -586,11 +592,12 @@ public partial class PresupuestoRepositoryTests
         using var baseTemporal = new BaseTemporal();
         var cadena = CadenaDe(baseTemporal);
 
-        // "nombre tipo notnull pk default", por nombre. Sin DEFAULT: el repositorio asigna todas las columnas.
+        // "nombre tipo notnull pk default", por nombre. Sin DEFAULT: el repositorio asigna todas las columnas. Version
+        // (FEAT-003c) lleva DEFAULT 0 solo por el ADD COLUMN, para las filas que ya estaban (D-21 de FEAT-002b).
         Assert.Equal(
             [
                 "Apellido TEXT 1 0 ", "Dni TEXT 1 0 ", "Domicilio TEXT 0 0 ", "Email TEXT 0 0 ", "Estado TEXT 1 0 ",
-                "Fecha TEXT 1 0 ", "Nombre TEXT 1 0 ", "Numero INTEGER 1 1 ", "Telefono TEXT 0 0 ",
+                "Fecha TEXT 1 0 ", "Nombre TEXT 1 0 ", "Numero INTEGER 1 1 ", "Telefono TEXT 0 0 ", "Version INTEGER 1 0 0",
             ],
             Columnas(cadena, "Presupuesto"));
         Assert.Equal(
@@ -605,7 +612,11 @@ public partial class PresupuestoRepositoryTests
         var sqlPresupuesto = SqlTabla(cadena, "Presupuesto");
         var sqlLinea = SqlTabla(cadena, "LineaPresupuesto");
         Assert.DoesNotContain("AUTOINCREMENT", sqlPresupuesto, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("DEFAULT", sqlPresupuesto, StringComparison.OrdinalIgnoreCase);
+        // El único DEFAULT de Presupuesto es el de Version, agregada con ADD COLUMN al final (ADR-012).
+        Assert.Equal(1, Regex.Count(sqlPresupuesto, "DEFAULT", RegexOptions.IgnoreCase));
+        Assert.Contains(
+            ", \"Version\" INTEGER NOT NULL DEFAULT 0 CONSTRAINT \"CK_Presupuesto_Version\" CHECK",
+            sqlPresupuesto, StringComparison.Ordinal);
         Assert.DoesNotContain("DEFAULT", sqlLinea, StringComparison.OrdinalIgnoreCase);
 
         // Un CHECK con nombre por columna, con la expresión de la spec.
@@ -620,6 +631,7 @@ public partial class PresupuestoRepositoryTests
                 ("CK_Presupuesto_Nombre", "length(\"Nombre\") BETWEEN 1 AND 100"),
                 ("CK_Presupuesto_Numero", "\"Numero\" >= 1"),
                 ("CK_Presupuesto_Telefono", "length(\"Telefono\") <= 30"),
+                ("CK_Presupuesto_Version", "\"Version\" BETWEEN 0 AND 9007199254740991"),
             ],
             Checks(sqlPresupuesto));
         Assert.Equal(
@@ -646,15 +658,689 @@ public partial class PresupuestoRepositoryTests
         Assert.Empty(Filas(cadena, "SELECT * FROM pragma_foreign_key_list('Presupuesto')"));
         Assert.Equal([["1"]], Filas(cadena, "PRAGMA foreign_keys"));
 
-        // El índice de la clave foránea al catálogo, no único; sin triggers (llegan con FEAT-003c).
+        // El índice de la clave foránea al catálogo, no único.
         Assert.Equal([["IX_LineaPresupuesto_CodigoArticulo", "0"]],
             Filas(cadena,
                 "SELECT name, \"unique\" FROM pragma_index_list('LineaPresupuesto') WHERE name LIKE 'IX%'"));
         Assert.Equal([["CodigoArticulo"]],
             Filas(cadena, "SELECT name FROM pragma_index_info('IX_LineaPresupuesto_CodigoArticulo')"));
         Assert.Empty(Filas(cadena, "SELECT name FROM pragma_index_list('Presupuesto') WHERE name LIKE 'IX%'"));
-        Assert.Empty(Filas(cadena,
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN ('Presupuesto', 'LineaPresupuesto')"));
+
+        // Los seis triggers de cierre de FEAT-003c (ADR-017), sobre la tabla que protege cada uno.
+        Assert.Equal(TriggersDeCierre, Triggers(cadena));
+    }
+
+    /// <summary>Los triggers de cierre de la migración <c>CierrePresupuestos</c>, como (tabla, nombre), ordenados.</summary>
+    private static readonly List<string[]> TriggersDeCierre =
+    [
+        ["LineaPresupuesto", "TR_LineaPresupuesto_FinalDelete"],
+        ["LineaPresupuesto", "TR_LineaPresupuesto_FinalInsert"],
+        ["LineaPresupuesto", "TR_LineaPresupuesto_FinalUpdate"],
+        ["Presupuesto", "TR_Presupuesto_FechaYNumeroFijos"],
+        ["Presupuesto", "TR_Presupuesto_FinalInmutable"],
+        ["Presupuesto", "TR_Presupuesto_FinalNoSeBorra"],
+    ];
+
+    private static List<string[]> Triggers(string cadena) =>
+        Filas(cadena,
+            "SELECT tbl_name, name FROM sqlite_master WHERE type = 'trigger' " +
+            "AND tbl_name IN ('Presupuesto', 'LineaPresupuesto') ORDER BY tbl_name, name");
+
+    // ---- FEAT-003c: modificación, paso a Final, triggers de cierre y migración CierrePresupuestos ----
+
+    private const int SqliteRestriccionTrigger = 1811; // SQLITE_CONSTRAINT_TRIGGER
+
+    private const string SelectEncabezado =
+        "SELECT Numero, Fecha, Estado, Apellido, Nombre, Dni, Domicilio, Email, Telefono, Version FROM Presupuesto " +
+        "ORDER BY Numero";
+
+    private const string MensajeEntradaConOtrosCambios =
+        "El presupuesto ya tiene otros cambios registrados en el contexto.";
+
+    // Otro cliente ficticio, para la modificación: DNI y email claramente inventados.
+    private const string OtroApellido = "Otroapellido";
+    private const string OtroNombre = "Otronombre";
+    private const string OtroDni = "99999998";
+    private const string OtroEmail = "otro.cliente@example.com";
+
+    [Fact]
+    public async Task Actualizar_Borrador_MenosLineas_ReemplazaLineasEIncrementaVersion()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var armazon = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        var estuche = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "EST-1", "Estuche", 300m));
+        var lente = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "LEN-1", "Lente", 1000m));
+        await GrabarPresupuesto(baseTemporal,
+            Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(armazon), Linea(estuche), Linea(lente)]));
+
+        // AC-02, AC-03: otro cliente; queda el lente primero y el armazón con cantidad 2 y 10 %, sin el estuche.
+        await ModificarAsync(baseTemporal, 5, original =>
+        {
+            var armazonModificado = original.Lineas[0].ConCantidadYDescuento(2, 10m);
+            Assert.True(armazonModificado.EsValida);
+            return original.Modificar(OtroCliente(), [original.Lineas[2], armazonModificado.Linea!]);
+        });
+
+        Assert.Equal(
+            [["5", "2026-03-10", "borrador", OtroApellido, OtroNombre, OtroDni, "", OtroEmail, "", "1"]],
+            Filas(cadena, SelectEncabezado));
+        var lenteTexto = lente.Codigo!.Value.ToString(CultureInfo.InvariantCulture);
+        var armazonTexto = armazon.Codigo!.Value.ToString(CultureInfo.InvariantCulture);
+        Assert.Equal(
+            [
+                ["5", "1", lenteTexto, "Lente", "100000", "100000", "100000", "1", "0"],
+                ["5", "2", armazonTexto, "Armazón", "185000", "166500", "333000", "2", "1000"],
+            ],
+            Filas(cadena, SelectLinea));
+        var leido = (await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(5))!;
+        Assert.Equal((1L, Fecha, EstadoPresupuesto.Borrador, 4330m), (leido.Version, leido.Fecha, leido.Estado, leido.Total));
+        Assert.Equal(["Lente", "Armazón"], leido.Lineas.Select(l => l.Descripcion));
+    }
+
+    [Fact]
+    public async Task Actualizar_Borrador_MasLineas_ReemplazaLineasEIncrementaVersion()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var armazon = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        var estuche = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "EST-1", "Estuche", 300m));
+        var lente = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "LEN-1", "Lente", 1000m));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(armazon)]));
+
+        // AC-03: el armazón pasa a cantidad 3 y se agregan dos líneas, numeradas 1..3.
+        await ModificarAsync(baseTemporal, 5, original => original.Modificar(
+            original.Cliente, [original.Lineas[0].ConCantidadYDescuento(3, 0m).Linea!, Linea(estuche), Linea(lente)]));
+
+        Assert.Equal(
+            [
+                ["5", "1", "Armazón", "3", "555000"],
+                ["5", "2", "Estuche", "1", "30000"],
+                ["5", "3", "Lente", "1", "100000"],
+            ],
+            Filas(cadena,
+                "SELECT PresupuestoNumero, Orden, Descripcion, Cantidad, PrecioFinalCentavos FROM LineaPresupuesto " +
+                "ORDER BY Orden"));
+        Assert.Equal([["1"]], Filas(cadena, "SELECT Version FROM Presupuesto"));
+
+        // Otra modificación parte de la versión 1 y deja la 2.
+        await ModificarAsync(baseTemporal, 5, original => original.Modificar(original.Cliente, [original.Lineas[1]]));
+        Assert.Equal([["2"]], Filas(cadena, "SELECT Version FROM Presupuesto"));
+        Assert.Equal([["5", "1", "Estuche"]],
+            Filas(cadena, "SELECT PresupuestoNumero, Orden, Descripcion FROM LineaPresupuesto"));
+        Assert.Equal(Apellido, Assert.Single(Filas(cadena, SelectEncabezado))[3]);
+    }
+
+    [Fact]
+    public async Task Actualizar_VersionVieja_ConflictoConcurrencia()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var armazon = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        var estuche = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "EST-1", "Estuche", 300m));
+        await GrabarPresupuesto(baseTemporal,
+            Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(armazon), Linea(estuche)]));
+
+        // Dos sesiones leen la versión 0; la primera graba (versión 1).
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var leidoPorLaSegunda = (await repositorio.ObtenerAsync(5))!;
+        await ModificarAsync(baseTemporal, 5, original => original.Modificar(original.Cliente, [original.Lineas[1]]));
+        var encabezado = Filas(cadena, SelectEncabezado);
+        var lineas = Filas(cadena, SelectLinea);
+
+        // La segunda graba con la versión que leyó: conflicto, sin escribir encabezado ni líneas (D-01).
+        var modificado = leidoPorLaSegunda.Modificar(
+            OtroCliente(), [leidoPorLaSegunda.Lineas[0], leidoPorLaSegunda.Lineas[1], Linea(armazon)]);
+        repositorio.Actualizar(leidoPorLaSegunda, modificado, leidoPorLaSegunda.Version);
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        Assert.Equal(MotivoConflicto.Concurrencia, error.Motivo);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain(OtroApellido, error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(OtroDni, error.ToString(), StringComparison.Ordinal);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+    }
+
+    [Fact]
+    public async Task CambiarEstado_Borrador_FinalSinTocarLineas()
+    {
+        var directorio = BaseTemporal.CrearDirectorioTemporal();
+        try
+        {
+            var registro = new RegistroCapturado();
+            using var servicios = BaseTemporal.CrearServicios(directorio, registro);
+            servicios.InicializarBaseDeDatos();
+            var cadena = servicios.GetRequiredService<FabricaConexion>().CadenaConexion;
+            using (var alcance = servicios.CreateScope())
+            {
+                var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+                var articulos = new ArticuloRepository(contexto);
+                articulos.Agregar(Articulo.Nuevo("ARM-1", "Armazón", 1850m, 0m, 1850m));
+                await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+                var articulo = (await articulos.ObtenerPorClaveAsync("ARM-1"))!;
+                new PresupuestoRepository(contexto).Agregar(
+                    Presupuesto.Nuevo(9, Fecha, ClienteCompleto(), [.. Enumerable.Repeat(Linea(articulo), 100)]));
+                await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+            }
+
+            var lineas = Filas(cadena, SelectLinea);
+            Assert.Equal(100, lineas.Count);
+            while (registro.Mensajes.TryDequeue(out _))
+            {
+            }
+
+            // AC-04: dentro de la operación, como el caso de uso (ADR-013); solo se sigue el encabezado.
+            using (var alcance = servicios.CreateScope())
+            {
+                var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+                var unidad = new UnidadDeTrabajoEf(contexto);
+                var repositorio = new PresupuestoRepository(contexto);
+                await unidad.EjecutarEnTransaccionAsync(async cancelacion =>
+                {
+                    var leido = (await repositorio.ObtenerAsync(9, cancelacion))!;
+                    repositorio.CambiarEstado(leido.PasarAFinal(), leido.Version);
+                    Assert.IsType<PresupuestoFila>(Assert.Single(contexto.ChangeTracker.Entries()).Entity);
+                    await unidad.ConfirmarAsync(cancelacion);
+                    return 0;
+                });
+            }
+
+            Assert.Equal(
+                [["9", "2026-03-10", "final", Apellido, Nombre, Dni, Domicilio, Email, Telefono, "1"]],
+                Filas(cadena, SelectEncabezado));
+            Assert.Equal(lineas, Filas(cadena, SelectLinea));
+
+            // Un único UPDATE del encabezado, solo con Estado y Version; ningún comando sobre las líneas.
+            var comandos = registro.Mensajes.Where(m => m.Contains("Executed DbCommand", StringComparison.Ordinal)).ToList();
+            var update = Assert.Single(comandos, m => m.Contains("UPDATE \"Presupuesto\"", StringComparison.Ordinal));
+            Assert.Contains("SET \"Estado\" = ", update, StringComparison.Ordinal);
+            Assert.Contains("\"Version\" = ", update, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"Apellido\"", update, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"Fecha\"", update, StringComparison.Ordinal);
+            Assert.DoesNotContain(comandos, m =>
+                m.Contains("INSERT INTO \"LineaPresupuesto\"", StringComparison.Ordinal)
+                || m.Contains("UPDATE \"LineaPresupuesto\"", StringComparison.Ordinal)
+                || m.Contains("DELETE FROM \"LineaPresupuesto\"", StringComparison.Ordinal));
+            AfirmarSinDatosDelCliente(string.Join("\n", registro.Mensajes));
+        }
+        finally
+        {
+            BaseTemporal.BorrarDirectorio(directorio);
+        }
+    }
+
+    [Fact]
+    public async Task CambiarEstado_VersionVieja_ConflictoConcurrencia()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var armazon = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(armazon)]));
+
+        // Una sesión lee la versión 0; otra modifica el Borrador (versión 1) antes de que la primera pase a Final.
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var leido = (await repositorio.ObtenerAsync(5))!;
+        await ModificarAsync(baseTemporal, 5, original => original.Modificar(
+            OtroCliente(), [original.Lineas[0].ConCantidadYDescuento(2, 0m).Linea!]));
+        var encabezado = Filas(cadena, SelectEncabezado);
+        var lineas = Filas(cadena, SelectLinea);
+
+        repositorio.CambiarEstado(leido.PasarAFinal(), leido.Version);
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        // Nada en Final con un contenido que la operadora no vio (D-01).
+        Assert.Equal(MotivoConflicto.Concurrencia, error.Motivo);
+        Assert.Null(error.InnerException);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+        Assert.Equal("borrador", Assert.Single(encabezado)[2]);
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+    }
+
+    [Fact]
+    public void Actualizar_VersionMaxima_Rechazada()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var linea = new LineaPresupuesto(1, "Armazón", 10m, 1, 0m, 10m, 10m);
+        var original = new Presupuesto(
+            5, Fecha, EstadoPresupuesto.Borrador, ClienteCompleto(), [linea], Presupuesto.VersionMaxima);
+        var modificado = original.Modificar(OtroCliente(), [linea, linea]);
+
+        // La versión siguiente no entraría en el rango de la columna: se rechaza antes de registrar nada.
+        var maxima = Assert.Throws<ArgumentException>(
+            () => repositorio.Actualizar(original, modificado, Presupuesto.VersionMaxima));
+        Assert.Equal("versionOriginal", maxima.ParamName);
+        var negativa = Assert.Throws<ArgumentException>(() => repositorio.Actualizar(original, modificado, -1));
+        Assert.Equal("versionOriginal", negativa.ParamName);
+        var enFinal = Assert.Throws<ArgumentException>(
+            () => repositorio.CambiarEstado(original.PasarAFinal(), Presupuesto.VersionMaxima));
+        Assert.Equal("versionOriginal", enFinal.ParamName);
+
+        // Original y modificado tienen que ser el mismo presupuesto.
+        var otro = Presupuesto.Nuevo(6, Fecha, OtroCliente(), [linea]);
+        var otroNumero = Assert.Throws<ArgumentException>(() => repositorio.Actualizar(original, otro, 0));
+        Assert.Equal("modificado", otroNumero.ParamName);
+        Assert.Throws<ArgumentNullException>(() => repositorio.Actualizar(null!, modificado, 0));
+        Assert.Throws<ArgumentNullException>(() => repositorio.Actualizar(original, null!, 0));
+
+        // Mensajes fijos, sin datos del cliente, y nada registrado en el contexto.
+        AfirmarSinDatosDelCliente(maxima.Message + negativa.Message + enFinal.Message + otroNumero.Message);
+        Assert.DoesNotContain(OtroApellido, otroNumero.Message, StringComparison.Ordinal);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void CambiarEstado_PresupuestoNoFinal_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var borrador = Presupuesto.Nuevo(
+            5, Fecha, ClienteCompleto(), [new LineaPresupuesto(1, "Armazón", 10m, 1, 0m, 10m, 10m)]);
+
+        // CambiarEstado solo registra el paso a Final que ya hizo el dominio; Final → Borrador no existe (FR-06).
+        var error = Assert.Throws<ArgumentException>(() => repositorio.CambiarEstado(borrador, 0));
+
+        Assert.Equal("presupuesto", error.ParamName);
+        AfirmarSinDatosDelCliente(error.Message);
+        Assert.Throws<ArgumentNullException>(() => repositorio.CambiarEstado(null!, 0));
+        Assert.Empty(contexto.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public async Task CambiarEstado_EntradaSeguidaConOtrosCambios_Rechazada()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var encabezado = Filas(cadena, SelectEncabezado);
+
+        // El contexto ya sigue la fila con el apellido cambiado: CambiarEstado no puede escribir solo Estado y Version.
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var leido = (await repositorio.ObtenerAsync(5))!;
+        contexto.Presupuestos.Find(5L)!.Apellido = OtroApellido;
+        var conCambios = Assert.Throws<InvalidOperationException>(
+            () => repositorio.CambiarEstado(leido.PasarAFinal(), leido.Version));
+        Assert.Equal(MensajeEntradaConOtrosCambios, conCambios.Message);
+
+        // Actualizar admite los datos del cliente modificados (los escribe él), pero no otra columna como la fecha.
+        var conFecha = baseTemporal.CrearContexto();
+        conFecha.Presupuestos.Find(5L)!.Fecha = new DateOnly(2026, 3, 11);
+        var enActualizar = Assert.Throws<InvalidOperationException>(() => new PresupuestoRepository(conFecha)
+            .Actualizar(leido, leido.Modificar(OtroCliente(), leido.Lineas), leido.Version));
+        Assert.Equal(MensajeEntradaConOtrosCambios, enActualizar.Message);
+
+        // Seguida como borrada, o como alta de otro presupuesto con el mismo número: también se rechaza.
+        var borrado = baseTemporal.CrearContexto();
+        borrado.Presupuestos.Remove(borrado.Presupuestos.Find(5L)!);
+        Assert.Equal(MensajeEntradaConOtrosCambios, Assert.Throws<InvalidOperationException>(
+            () => new PresupuestoRepository(borrado).CambiarEstado(leido.PasarAFinal(), leido.Version)).Message);
+        var alta = baseTemporal.CrearContexto();
+        new PresupuestoRepository(alta).Agregar(Presupuesto.Nuevo(6, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var otro = Presupuesto.Nuevo(6, Fecha, ClienteCompleto(), [Linea(articulo)]).PasarAFinal();
+        Assert.Equal(MensajeEntradaConOtrosCambios, Assert.Throws<InvalidOperationException>(
+            () => new PresupuestoRepository(alta).CambiarEstado(otro, 0)).Message);
+
+        // CambiarEstado y después Actualizar en el mismo contexto: la modificación escribiría también el Estado.
+        var pasoYModificacion = baseTemporal.CrearContexto();
+        var repositorioMixto = new PresupuestoRepository(pasoYModificacion);
+        repositorioMixto.CambiarEstado(leido.PasarAFinal(), leido.Version);
+        var actualizarTrasPaso = Assert.Throws<InvalidOperationException>(
+            () => repositorioMixto.Actualizar(leido, leido.Modificar(OtroCliente(), leido.Lineas), leido.Version));
+        Assert.Equal(MensajeEntradaConOtrosCambios, actualizarTrasPaso.Message);
+
+        AfirmarSinDatosDelCliente(conCambios.ToString() + enActualizar + actualizarTrasPaso);
+        Assert.DoesNotContain(OtroApellido, conCambios.ToString(), StringComparison.Ordinal);
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+
+        // Seguida sin cambios, se reutiliza y el UPDATE sigue siendo solo de Estado y Version.
+        var sinCambios = baseTemporal.CrearContexto();
+        Assert.NotNull(sinCambios.Presupuestos.Find(5L));
+        new PresupuestoRepository(sinCambios).CambiarEstado(leido.PasarAFinal(), leido.Version);
+        Assert.Equal(
+            [nameof(PresupuestoFila.Estado), nameof(PresupuestoFila.Version)],
+            sinCambios.ChangeTracker.Entries<PresupuestoFila>().Single().Properties
+                .Where(p => p.IsModified).Select(p => p.Metadata.Name).Order(StringComparer.Ordinal));
+        await new UnidadDeTrabajoEf(sinCambios).ConfirmarAsync();
+        Assert.Equal(["final", Apellido, "1"],
+            Assert.Single(Filas(cadena, "SELECT Estado, Apellido, Version FROM Presupuesto")));
+    }
+
+    [Fact]
+    public async Task Agregar_Final_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        var contexto = baseTemporal.CrearContexto();
+        var final = new Presupuesto(1, Fecha, EstadoPresupuesto.Final, ClienteCompleto(), [Linea(articulo)], version: 0);
+
+        // AGENTS.md: un Final no se graba directo; se graba en Borrador y después pasa a Final.
+        var error = Assert.Throws<ArgumentException>(() => new PresupuestoRepository(contexto).Agregar(final));
+
+        Assert.Equal("presupuesto", error.ParamName);
+        AfirmarSinDatosDelCliente(error.Message);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Empty(Filas(cadena, SelectPresupuesto));
+    }
+
+    [Fact]
+    public async Task Actualizar_OtraSesionPasoAFinal_MotivoRegistroCerrado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var armazon = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        var estuche = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "EST-1", "Estuche", 300m));
+        await GrabarPresupuesto(baseTemporal,
+            Presupuesto.Nuevo(5, Fecha, ClienteCompleto(), [Linea(armazon), Linea(estuche)]));
+
+        // Una sesión lee la versión 0; otra pasa el Borrador a Final (versión 1) antes de que la primera grabe.
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var leido = (await repositorio.ObtenerAsync(5))!;
+        var cierre = baseTemporal.CrearContexto();
+        var repositorioCierre = new PresupuestoRepository(cierre);
+        var paraCerrar = (await repositorioCierre.ObtenerAsync(5))!;
+        repositorioCierre.CambiarEstado(paraCerrar.PasarAFinal(), paraCerrar.Version);
+        await new UnidadDeTrabajoEf(cierre).ConfirmarAsync();
+        var encabezado = Filas(cadena, SelectEncabezado);
+        var lineas = Filas(cadena, SelectLinea);
+
+        // El motivo que devuelve la base: el doble de la aplicación (PresupuestosEnMemoria) replica este mismo.
+        repositorio.Actualizar(leido, leido.Modificar(OtroCliente(), [leido.Lineas[1], Linea(armazon)]), leido.Version);
+        var error = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(contexto).ConfirmarAsync());
+
+        Assert.Equal(MotivoConflicto.RegistroCerrado, error.Motivo);
+        Assert.Null(error.InnerException);
+        Assert.Empty(contexto.ChangeTracker.Entries());
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+    }
+
+    public static TheoryData<long[]> OrdenesConHueco => new()
+    {
+        new long[] { 1, 3 },
+        new long[] { 2 },
+        new long[] { 2, 3 },
+        new long[] { 1, 2, 4 },
+    };
+
+    [Theory]
+    [MemberData(nameof(OrdenesConHueco))]
+    public async Task Obtener_OrdenConHueco_EstadoCorrupto(long[] ordenes)
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = await GrabarArticulo(baseTemporal, "ARM-1", "Armazón metálico", 1850m);
+        InsertarCrudo(cadena, "Presupuesto", ValoresPresupuesto(numero: 7));
+        foreach (var orden in ordenes)
+        {
+            InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 7, orden, codigo));
+        }
+
+        // El orden de la Api es la posición + 1 (D-03): una lista que no es exactamente 1..n no se puede representar.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(7));
+
+        Assert.Equal(MensajeFilaInvalida, error.Message);
+        AfirmarSinDatosDelCliente(error.ToString());
+
+        // La misma fila con 1..n se lee.
+        Ejecutar(cadena, "DELETE FROM LineaPresupuesto");
+        for (var orden = 1L; orden <= ordenes.Length; orden++)
+        {
+            InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 7, orden, codigo));
+        }
+
+        var leido = await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(7);
+        Assert.Equal(ordenes.Length, leido!.Lineas.Count);
+    }
+
+    [Fact]
+    public async Task Trigger_ModificarFinal_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var encabezado = Filas(cadena, SelectEncabezado);
+
+        // AC-07: un UPDATE directo, sin pasar por el dominio ni por el caso de uso, también se rechaza.
+        AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Apellido = 'Otroapellido' WHERE Numero = 1");
+        AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Version = Version + 1 WHERE Numero = 1");
+        AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Estado = 'final' WHERE Numero = 1");
+
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+        Assert.Equal("1", Assert.Single(encabezado)[9]);
+    }
+
+    [Fact]
+    public async Task Trigger_LineasDeFinal_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = await GrabarArticulo(baseTemporal, "ARM-1", "Armazón metálico", 1850m);
+        var articulo = await LeerArticulo(baseTemporal, codigo);
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(2, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var lineas = Filas(cadena, SelectLinea);
+
+        // INSERT, UPDATE (también moviendo la línea hacia o desde el Final) y DELETE sobre las líneas del Final.
+        var insert = Assert.Throws<SqliteException>(
+            () => InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 1, orden: 2, codigo)));
+        AfirmarRegistroCerrado(insert);
+        AfirmarRegistroCerrado(cadena, "UPDATE LineaPresupuesto SET Cantidad = 2 WHERE PresupuestoNumero = 1");
+        AfirmarRegistroCerrado(cadena,
+            "UPDATE LineaPresupuesto SET PresupuestoNumero = 1, Orden = 2 WHERE PresupuestoNumero = 2");
+        AfirmarRegistroCerrado(cadena,
+            "UPDATE LineaPresupuesto SET PresupuestoNumero = 2, Orden = 2 WHERE PresupuestoNumero = 1");
+        AfirmarRegistroCerrado(cadena, "DELETE FROM LineaPresupuesto WHERE PresupuestoNumero = 1");
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+
+        // Las líneas del Borrador se siguen pudiendo cambiar.
+        Ejecutar(cadena, "UPDATE LineaPresupuesto SET Cantidad = 2 WHERE PresupuestoNumero = 2");
+        Assert.Equal([["1", "1"], ["2", "2"]],
+            Filas(cadena, "SELECT PresupuestoNumero, Cantidad FROM LineaPresupuesto ORDER BY PresupuestoNumero"));
+    }
+
+    [Fact]
+    public async Task Trigger_FinalABorrador_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+
+        // AC-08: Final → Borrador no existe, ni siquiera con un UPDATE directo.
+        AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Estado = 'borrador' WHERE Numero = 1");
+
+        var leido = await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(1);
+        Assert.Equal(EstadoPresupuesto.Final, leido!.Estado);
+    }
+
+    [Fact]
+    public async Task Trigger_CambiarFechaONumero_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var encabezado = Filas(cadena, SelectEncabezado);
+
+        // AC-01: sobre un Borrador, para que el único trigger que dispara sea el de la fecha y el número.
+        AfirmarFechaONumero(cadena, "UPDATE Presupuesto SET Fecha = '2026-03-11' WHERE Numero = 1");
+        AfirmarFechaONumero(cadena, "UPDATE Presupuesto SET Numero = 9 WHERE Numero = 1");
+        Assert.Equal(encabezado, Filas(cadena, SelectEncabezado));
+
+        // Reescribir la misma fecha y el mismo número no dispara (IS NOT).
+        Ejecutar(cadena, "UPDATE Presupuesto SET Fecha = '2026-03-10', Numero = 1, Apellido = 'Otroapellido'");
+        Assert.Equal(["1", "2026-03-10", OtroApellido],
+            Assert.Single(Filas(cadena, "SELECT Numero, Fecha, Apellido FROM Presupuesto")));
+    }
+
+    [Fact]
+    public async Task Trigger_BorrarFinal_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(2, Fecha, ClienteCompleto(), [Linea(articulo)]));
+
+        // El trigger dispara antes que la clave foránea de las líneas: el motivo es el registro cerrado (D-08).
+        AfirmarRegistroCerrado(cadena, "DELETE FROM Presupuesto WHERE Numero = 1");
+        Assert.Equal([["1"], ["2"]], Filas(cadena, "SELECT Numero FROM Presupuesto ORDER BY Numero"));
+
+        // Un Borrador sin líneas sí se borra: el trigger solo protege los Final.
+        Ejecutar(cadena, "DELETE FROM LineaPresupuesto WHERE PresupuestoNumero = 2; DELETE FROM Presupuesto WHERE Numero = 2");
+        Assert.Equal([["1"]], Filas(cadena, "SELECT Numero FROM Presupuesto"));
+    }
+
+    [Fact]
+    public async Task Migracion_CierrePresupuestos_BorradoresExistentesConVersion0()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+        var migrador = contexto.GetService<IMigrator>();
+        var migraciones = contexto.Database.GetMigrations().ToList();
+        var cierre = migraciones[^1];
+        Assert.EndsWith("_CierrePresupuestos", cierre, StringComparison.Ordinal);
+        var presupuestos = migraciones[^2];
+        Assert.EndsWith("_Presupuestos", presupuestos, StringComparison.Ordinal);
+
+        // ADR-012: SQL escrito a mano; ni AddColumn ni AddCheckConstraint, que en SQLite reconstruyen la tabla.
+        var ensamblado = contexto.GetService<IMigrationsAssembly>();
+        var migracion = ensamblado.CreateMigration(ensamblado.Migrations[cierre], contexto.Database.ProviderName!);
+        Assert.All(migracion.UpOperations, operacion => Assert.IsType<SqlOperation>(operacion));
+        Assert.All(migracion.DownOperations, operacion => Assert.IsType<SqlOperation>(operacion));
+
+        // Una base de FEAT-003b con un Borrador y un Final (grabados antes de que existieran los triggers).
+        migrador.Migrate(presupuestos);
+        InsertarArticulo(cadena, "ABC-1", "Armazón");
+        InsertarCrudo(cadena, "Presupuesto", ValoresPresupuesto(numero: 1));
+        InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 1, orden: 1, codigo: 1));
+        var final = ValoresPresupuesto(numero: 2);
+        final["Estado"] = "final";
+        InsertarCrudo(cadena, "Presupuesto", final);
+        InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 2, orden: 1, codigo: 1));
+        InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 2, orden: 2, codigo: 1));
+        var sqlAntes = SqlTabla(cadena, "Presupuesto");
+        var sqlLineaAntes = SqlTabla(cadena, "LineaPresupuesto");
+        var encabezados = Filas(cadena, SelectPresupuesto);
+        var lineas = Filas(cadena, SelectLinea);
+
+        migrador.Migrate(cierre);
+
+        // Sin reconstruir: el CREATE TABLE es el mismo, con la columna que ADD COLUMN inserta después de la última; datos
+        // y líneas iguales.
+        const string columnaVersion =
+            ", \"Version\" INTEGER NOT NULL DEFAULT 0 CONSTRAINT \"CK_Presupuesto_Version\" CHECK " +
+            "(\"Version\" BETWEEN 0 AND 9007199254740991)";
+        var sqlDespues = SqlTabla(cadena, "Presupuesto");
+        Assert.Contains(columnaVersion, sqlDespues, StringComparison.Ordinal);
+        Assert.Equal(sqlAntes, sqlDespues.Replace(columnaVersion, string.Empty, StringComparison.Ordinal));
+        Assert.Equal(sqlLineaAntes, SqlTabla(cadena, "LineaPresupuesto"));
+        Assert.Equal(encabezados, Filas(cadena, SelectPresupuesto));
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+        Assert.Equal([["0"], ["0"]], Filas(cadena, "SELECT Version FROM Presupuesto ORDER BY Numero"));
+        Assert.Equal(TriggersDeCierre, Triggers(cadena));
+        Assert.Empty(contexto.Database.GetPendingMigrations());
+
+        // Los Final que ya estaban quedan protegidos, y los Borradores se leen con versión 0.
+        AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Apellido = 'Otroapellido' WHERE Numero = 2");
+        var leido = await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(1);
+        Assert.Equal(0, leido!.Version);
+    }
+
+    [Fact]
+    public async Task Migracion_Down_QuitaTriggersYColumna()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var articulo = await LeerArticulo(baseTemporal, await GrabarArticulo(baseTemporal, "ARM-1", "Armazón", 1850m));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(1, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(2, Fecha, ClienteCompleto(), [Linea(articulo)]));
+        var contexto = baseTemporal.CrearContexto();
+        var migrador = contexto.GetService<IMigrator>();
+        var presupuestos = contexto.Database.GetMigrations().ToList()[^2];
+        var encabezados = Filas(cadena, SelectPresupuesto);
+        var lineas = Filas(cadena, SelectLinea);
+
+        // Solo para desarrollo: quita primero los triggers (si no, DROP COLUMN fallaría) y después la columna.
+        migrador.Migrate(presupuestos);
+
+        Assert.Empty(Triggers(cadena));
+        Assert.DoesNotContain("Version", Columnas(cadena, "Presupuesto").Select(c => c.Split(' ')[0]));
+        Assert.DoesNotContain("CK_Presupuesto_Version", SqlTabla(cadena, "Presupuesto"), StringComparison.Ordinal);
+        Assert.Equal(encabezados, Filas(cadena, SelectPresupuesto));
+        Assert.Equal(lineas, Filas(cadena, SelectLinea));
+
+        // Volver a aplicarla deja todo como antes; la versión del Final se pierde y vuelve a 0.
+        migrador.Migrate();
+        Assert.Equal(TriggersDeCierre, Triggers(cadena));
+        Assert.Equal([["0"], ["0"]], Filas(cadena, "SELECT Version FROM Presupuesto ORDER BY Numero"));
+        Assert.Equal(encabezados, Filas(cadena, SelectPresupuesto));
+        Assert.Empty(contexto.Database.GetPendingMigrations());
+    }
+
+    private static ClientePresupuesto OtroCliente() => new(OtroApellido, OtroNombre, OtroDni, null, OtroEmail, null);
+
+    /// <summary>
+    /// Lee el presupuesto, arma el modificado y lo graba con la versión leída, dentro de la operación en transacción,
+    /// como el caso de uso (ADR-013).
+    /// </summary>
+    private static async Task ModificarAsync(
+        BaseTemporal baseTemporal, long numero, Func<Presupuesto, Presupuesto> modificar)
+    {
+        var contexto = baseTemporal.CrearContexto();
+        var unidad = new UnidadDeTrabajoEf(contexto);
+        var repositorio = new PresupuestoRepository(contexto);
+        await unidad.EjecutarEnTransaccionAsync(async cancelacion =>
+        {
+            var original = (await repositorio.ObtenerAsync(numero, cancelacion))!;
+            repositorio.Actualizar(original, modificar(original), original.Version);
+            await unidad.ConfirmarAsync(cancelacion);
+            return 0;
+        });
+    }
+
+    /// <summary>Graba el presupuesto en Borrador y después lo pasa a Final, como la aplicación (AGENTS.md).</summary>
+    private static async Task GrabarFinal(BaseTemporal baseTemporal, Presupuesto borrador)
+    {
+        await GrabarPresupuesto(baseTemporal, borrador);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        var leido = (await repositorio.ObtenerAsync(borrador.Numero))!;
+        repositorio.CambiarEstado(leido.PasarAFinal(), leido.Version);
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+    }
+
+    private static void AfirmarRegistroCerrado(string cadena, string sql) =>
+        AfirmarRegistroCerrado(Assert.Throws<SqliteException>(() => Ejecutar(cadena, sql)));
+
+    private static void AfirmarRegistroCerrado(SqliteException error)
+    {
+        Assert.Equal(SqliteRestriccionTrigger, error.SqliteExtendedErrorCode);
+        Assert.Contains("'registro_cerrado'", error.Message, StringComparison.Ordinal);
+    }
+
+    private static void AfirmarFechaONumero(string cadena, string sql)
+    {
+        var error = Assert.Throws<SqliteException>(() => Ejecutar(cadena, sql));
+        Assert.Equal(SqliteRestriccionTrigger, error.SqliteExtendedErrorCode);
+        Assert.Contains("'presupuesto_fecha_numero'", error.Message, StringComparison.Ordinal);
     }
 
     private static ClientePresupuesto ClienteCompleto() =>
@@ -760,7 +1446,7 @@ public partial class PresupuestoRepositoryTests
         Filas(cadena, "SELECT * FROM Articulo ORDER BY Id"),
         Filas(cadena, "SELECT sql FROM sqlite_master WHERE tbl_name = 'Articulo' ORDER BY type, name"),
         Filas(cadena, "SELECT name, \"unique\" FROM pragma_index_list('Articulo') ORDER BY name"),
-        Filas(cadena, "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"),
+        Filas(cadena, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'Articulo' ORDER BY name"),
         Filas(cadena, "SELECT seq FROM sqlite_sequence WHERE name = 'Articulo'"),
     ];
 

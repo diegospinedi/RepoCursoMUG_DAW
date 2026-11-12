@@ -52,8 +52,17 @@ public interface IUnidadDeTrabajo
     /// (<c>CK_CredencialAcceso_Id</c>: otra credencial grabada en paralelo o una segunda credencial). Con
     /// <see cref="MotivoConflicto.Concurrencia"/>, lo que se reemplaza cambió o se borró después de leerlo: la credencial
     /// por otro cambio de contraseña o un restablecimiento, o un artículo cuya versión o estado ya no son los leídos
-    /// (D-08, D-22). Cualquier otra falla, incluida otra restricción CHECK, se propaga como error y no se guarda nada.
+    /// (D-08, D-22), o un presupuesto cuya versión ya no es la leída (D-01 de FEAT-003c). Con
+    /// <see cref="MotivoConflicto.RegistroCerrado"/>, lo guardado modifica o borra un registro cerrado (un presupuesto en
+    /// Final o sus líneas): lo rechazó un trigger de la base. Cualquier otra falla, incluida otra restricción CHECK u otro
+    /// trigger, se propaga como error y no se guarda nada.
     /// </exception>
+    /// <remarks>
+    /// Convención para los triggers que protegen registros cerrados (ADR-017): abortan con
+    /// <c>RAISE(ABORT, 'registro_cerrado')</c>, y solo ese texto se informa como
+    /// <see cref="MotivoConflicto.RegistroCerrado"/>. Un trigger nuevo con la misma función (por ejemplo, las facturas con
+    /// CAE) usa el mismo texto.
+    /// </remarks>
     Task ConfirmarAsync(CancellationToken cancelacion = default);
 }
 
@@ -65,6 +74,12 @@ public enum MotivoConflicto
 
     /// <summary>Lo guardado repite una clave primaria o única, o la credencial única.</summary>
     Unicidad,
+
+    /// <summary>
+    /// Lo que se intentó escribir es un registro cerrado (un presupuesto en Final o sus líneas; más adelante, una factura
+    /// con CAE): un trigger de la base lo rechazó con <c>RAISE(ABORT, 'registro_cerrado')</c> (ADR-017).
+    /// </summary>
+    RegistroCerrado,
 }
 
 /// <summary>

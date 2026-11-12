@@ -8,6 +8,7 @@ import { CambiarContrasena } from './paginas/CambiarContrasena';
 import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
 import { EditarArticulo } from './paginas/EditarArticulo';
+import { EditarPresupuesto } from './paginas/EditarPresupuesto';
 import { Ingreso } from './paginas/Ingreso';
 import { NuevoArticulo } from './paginas/NuevoArticulo';
 import { NuevoPresupuesto } from './paginas/NuevoPresupuesto';
@@ -45,6 +46,7 @@ export function App() {
             {/* Como en artículos: "nuevo" es el alta, no el presupuesto con ese número. */}
             <Route path="/presupuestos/nuevo" element={<NuevoPresupuesto />} />
             <Route path="/presupuestos/:numero" element={<Presupuesto />} />
+            <Route path="/presupuestos/:numero/editar" element={<EditarPresupuesto />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

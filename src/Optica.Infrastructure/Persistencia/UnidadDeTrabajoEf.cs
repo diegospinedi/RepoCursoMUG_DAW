@@ -10,7 +10,8 @@ namespace Optica.Infrastructure.Persistencia;
 /// dentro de una transacción explícita: si algo falla antes del commit, no queda nada guardado. Las violaciones de
 /// unicidad (motivo <see cref="MotivoConflicto.Unicidad"/>) y los tokens de concurrencia que no coinciden
 /// (<see cref="DbUpdateConcurrencyException"/>, motivo <see cref="MotivoConflicto.Concurrencia"/>) se informan como
-/// <see cref="ConflictoAlConfirmarException"/>, nunca con la excepción de EF como causa (D-18).
+/// <see cref="ConflictoAlConfirmarException"/>, nunca con la excepción de EF como causa (D-18); también el rechazo de un
+/// trigger de cierre (motivo <see cref="MotivoConflicto.RegistroCerrado"/>, ADR-017).
 /// </summary>
 public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTrabajo
 {
@@ -18,6 +19,12 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
     private const int SqliteRestriccionCheck = 275;
     private const int SqliteRestriccionClavePrimaria = 1555;
     private const int SqliteRestriccionUnica = 2067;
+
+    // RAISE(ABORT, ...) dentro de un trigger: SQLITE_CONSTRAINT_TRIGGER.
+    private const int SqliteRestriccionTrigger = 1811;
+
+    /// <summary>El texto con el que aborta un trigger que protege un registro cerrado (convención de ADR-017).</summary>
+    private const string TextoRegistroCerrado = "registro_cerrado";
 
     /// <summary>
     /// El único CHECK que expresa unicidad (a lo sumo una credencial, <c>Id = 1</c>). Cualquier otro CHECK es
@@ -119,6 +126,14 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
             throw new ConflictoAlConfirmarException(
                 "Los datos a guardar cambiaron después de leerlos.", MotivoConflicto.Concurrencia);
         }
+        catch (DbUpdateException error) when (EsRegistroCerrado(error))
+        {
+            // Un trigger de cierre rechazó la escritura de un registro cerrado (un presupuesto en Final o sus líneas,
+            // ADR-017). Lo pendiente se descarta y la causa no se adjunta: sus Entries llevan los datos del cliente.
+            contexto.ChangeTracker.Clear();
+            throw new ConflictoAlConfirmarException(
+                "Los datos a guardar pertenecen a un registro cerrado.", MotivoConflicto.RegistroCerrado);
+        }
         catch (DbUpdateException error) when (EsConflicto(error))
         {
             // Lo pendiente no se guardó: se descarta para que el contexto no lo reintente. La causa tampoco se adjunta
@@ -134,6 +149,14 @@ public sealed class UnidadDeTrabajoEf(OpticaDbContext contexto) : IUnidadDeTraba
             throw;
         }
     }
+
+    /// <summary>
+    /// <c>RAISE(ABORT, 'registro_cerrado')</c> de un trigger: código extendido <c>SQLITE_CONSTRAINT_TRIGGER</c> y el texto
+    /// de la convención. Otro trigger con otro texto (la fecha y el número del presupuesto) no es un conflicto.
+    /// </summary>
+    private static bool EsRegistroCerrado(DbUpdateException error) =>
+        error.InnerException is SqliteException { SqliteExtendedErrorCode: SqliteRestriccionTrigger } sqlite
+        && sqlite.Message.Contains("'" + TextoRegistroCerrado + "'", StringComparison.Ordinal);
 
     private static bool EsConflicto(DbUpdateException error) =>
         error.InnerException is SqliteException sqlite

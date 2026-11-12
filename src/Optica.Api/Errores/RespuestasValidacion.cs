@@ -124,11 +124,46 @@ public static class RespuestasValidacion
             throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
         }
 
+        return controller.Conflicto409(TituloConflictoArticulo, motivo, detalle);
+    }
+
+    // El 409 de los presupuestos (D-05 de FEAT-003c): su título fijo y su propio motivo; "cambiado" se comparte.
+
+    /// <summary>El <c>title</c> fijo de los 409 de la modificación y del paso a Final de un presupuesto (D-05).</summary>
+    public const string TituloConflictoPresupuesto = "No se pudo grabar el presupuesto.";
+
+    /// <summary>Valor de la extensión <c>motivo</c> de un 409: el presupuesto está en Final (FR-05, FR-06).</summary>
+    public const string MotivoFinal = "final";
+
+    /// <summary>
+    /// 409 con ProblemDetails para un presupuesto que no se pudo grabar (D-05): <c>title</c> fijo
+    /// (<see cref="TituloConflictoPresupuesto"/>), <paramref name="detalle"/> en <c>detail</c> (el texto fijo de la
+    /// aplicación, que no repite datos recibidos) y <paramref name="motivo"/> en la extensión <c>motivo</c>
+    /// (<see cref="MotivoFinal"/> o <see cref="MotivoCambiado"/>). Sin <c>errors</c>: no es un error de un campo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los dos previstos, o el detalle está vacío.</exception>
+    public static ActionResult ConflictoPresupuesto(this ControllerBase controller, string motivo, string detalle)
+    {
+        if (motivo is not (MotivoFinal or MotivoCambiado))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        return controller.Conflicto409(TituloConflictoPresupuesto, motivo, detalle);
+    }
+
+    /// <summary>
+    /// El 409 que comparten artículos y presupuestos: <paramref name="titulo"/> fijo, <paramref name="detalle"/> en
+    /// <c>detail</c> y <paramref name="motivo"/> en la extensión <c>motivo</c>. Cada llamador valida su motivo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El detalle está vacío.</exception>
+    private static ObjectResult Conflicto409(this ControllerBase controller, string titulo, string motivo, string detalle)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(detalle);
         var problema = controller.ProblemDetailsFactory.CreateProblemDetails(
             controller.HttpContext,
             statusCode: StatusCodes.Status409Conflict,
-            title: TituloConflictoArticulo,
+            title: titulo,
             detail: detalle);
         problema.Extensions["motivo"] = motivo;
         return new ObjectResult(problema)

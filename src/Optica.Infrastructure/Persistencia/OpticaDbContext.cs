@@ -134,6 +134,11 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
         modelBuilder.Entity<PresupuestoFila>(presupuesto =>
         {
+            // ADVERTENCIA (ADR-012, ADR-017): toda migración que toque Presupuesto o LineaPresupuesto se revisa antes de
+            // aplicarla para que EF Core no reconstruya la tabla (lo hace con AddCheckConstraint, DropCheckConstraint,
+            // AlterColumn y similares). La tabla reconstruida pierde los triggers de cierre de CierrePresupuestos, que
+            // impiden modificar o borrar un presupuesto en Final y sus líneas, y el DEFAULT de Version. Si hace falta, se
+            // escribe a mano como CierrePresupuestos.
             // FEAT-003a. Tabla nueva, creada con CreateTable: no reconstruye ninguna existente (ADR-012, D-18). Los CHECK
             // son la segunda barrera detrás de PoliticaCliente (D-08, D-09) y de la numeración (D-07). Sin DEFAULT: el
             // repositorio asigna todas las columnas. Lleva datos personales (Ley 25.326, D-17, D-23).
@@ -150,6 +155,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint("CK_Presupuesto_Domicilio", "length(\"Domicilio\") <= 200");
                 tabla.HasCheckConstraint("CK_Presupuesto_Email", "length(\"Email\") <= 254");
                 tabla.HasCheckConstraint("CK_Presupuesto_Telefono", "length(\"Telefono\") <= 30");
+
+                // FEAT-003c: el mismo CHECK que escribe CierrePresupuestos en el ADD COLUMN (ADR-012).
+                tabla.HasCheckConstraint("CK_Presupuesto_Version", "\"Version\" BETWEEN 0 AND 9007199254740991");
             });
             presupuesto.HasKey(p => p.Numero);
 
@@ -164,6 +172,10 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             presupuesto.Property(p => p.Nombre).IsRequired();
             presupuesto.Property(p => p.Dni).IsRequired();
 
+            // FEAT-003c. Token de concurrencia de la modificación y del paso a Final (D-01). Sin HasDefaultValue: el
+            // DEFAULT vive solo en la migración, para las filas que ya estaban, y el repositorio la asigna siempre.
+            presupuesto.Property(p => p.Version).IsRequired().IsConcurrencyToken();
+
             presupuesto.HasMany(p => p.Lineas)
                 .WithOne()
                 .HasForeignKey(l => l.PresupuestoNumero)
@@ -172,6 +184,8 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
         modelBuilder.Entity<LineaPresupuestoFila>(linea =>
         {
+            // ADVERTENCIA (ADR-012, ADR-017): como Presupuesto, esta tabla no se reconstruye; reconstruirla borra los
+            // triggers de cierre que protegen las líneas de un presupuesto en Final.
             // Importes y descuento en centésimos (ADR-008), con los CHECK detrás de LineaPresupuesto.
             linea.ToTable("LineaPresupuesto", tabla =>
             {
@@ -332,6 +346,12 @@ public sealed class PresupuestoFila
     public string? Email { get; set; }
 
     public string? Telefono { get; set; }
+
+    /// <summary>
+    /// La versión para la concurrencia optimista, de 0 a 2^53 − 1; cada modificación y el paso a Final la incrementan
+    /// (FEAT-003c, D-01).
+    /// </summary>
+    public long Version { get; set; }
 
     /// <summary>Las líneas, con <see cref="LineaPresupuestoFila.Orden"/> desde 1.</summary>
     public List<LineaPresupuestoFila> Lineas { get; set; } = [];
