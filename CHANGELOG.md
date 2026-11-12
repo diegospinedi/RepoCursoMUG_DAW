@@ -60,6 +60,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   - Una modificación hecha en otra pestaña no se pisa: columna `Version` con concurrencia optimista, 409 con motivo `cambiado` y la pantalla pide volver a abrir el presupuesto.
   - `PUT /api/presupuestos/{numero}` y `PUT /api/presupuestos/{numero}/estado`; `GET /api/presupuestos/{numero}` devuelve `version` y el `orden` de cada línea.
   - Pruebas de punta a punta de los 10 criterios en Chrome y Edge.
+- [FEAT-003d] Concurrencia, volumen y navegadores del presupuesto:
+  - Dos sesiones que graban un presupuesto al mismo tiempo reciben números distintos y consecutivos, sin error de bloqueo: la base declara un tiempo de espera explícito de 30 s (`Default Timeout`) y la segunda grabación espera a que confirme la primera (ADR-013, ADR-015). Probado en integración y por la Api con un cruce forzado de las dos transacciones, y en Chrome y Edge con dos sesiones de navegador.
+  - Con 10.000 presupuestos grabados, el alta, la modificación de un Borrador, el paso a Final y dos altas simultáneas dan los mismos resultados (pruebas de la Api con datos ficticios, en Borrador y después en Final como en la app).
+  - Todos los criterios de los presupuestos se cumplen en Chrome y Edge en su versión estable (la versión anterior queda fuera de alcance por decisión del usuario).
 - [FEAT-004] Análisis estático de la web con oxlint 1.92.0 (en lugar de ESLint, que con typescript-eslint no soporta TypeScript 7):
   - `npm run lint` en `web/` revisa la aplicación y sus pruebas con las reglas equivalentes a la plantilla de Vite (corrección, hooks de React, exportaciones para recarga en caliente y reglas de TypeScript), sin admitir avisos (`--max-warnings 0`) e ignorando `dist/` y `coverage/`.
   - `npm run test:lint` con 8 pruebas que fijan la configuración; el comando quedó declarado en la sección "Stack" de `AGENTS.md`.

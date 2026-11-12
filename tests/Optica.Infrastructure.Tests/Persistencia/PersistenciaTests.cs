@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -184,6 +185,31 @@ public class PersistenciaTests
             Assert.True(
                 relativa.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relativa),
                 $"La ruta por defecto '{ruta}' está dentro del repositorio '{repositorio}'.");
+        }
+    }
+
+    [Fact]
+    public void CadenaConexion_TiempoDeEsperaExplicito30()
+    {
+        var directorio = BaseTemporal.CrearDirectorioTemporal();
+        try
+        {
+            var fabrica = new FabricaConexion(directorio);
+
+            // NFR-01 y ADR-013: la cadena declara el tiempo de espera, no lo hereda del valor por defecto de
+            // Microsoft.Data.Sqlite. El builder de Sqlite devuelve 30 aunque la clave falte: se lee la cadena tal cual.
+            var claves = new DbConnectionStringBuilder { ConnectionString = fabrica.CadenaConexion };
+            Assert.True(claves.TryGetValue("Default Timeout", out var declarado), "La cadena no declara 'Default Timeout'.");
+            Assert.Equal("30", Convert.ToString(declarado, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(30, new SqliteConnectionStringBuilder(fabrica.CadenaConexion).DefaultTimeout);
+
+            // Una conexión abierta con la cadena toma ese tiempo para sus comandos (y para el BEGIN IMMEDIATE).
+            using var conexion = new SqliteConnection(fabrica.CadenaConexion);
+            Assert.Equal(30, conexion.DefaultTimeout);
+        }
+        finally
+        {
+            BaseTemporal.BorrarDirectorio(directorio);
         }
     }
 
