@@ -785,6 +785,8 @@ test('la linea se graba con cantidad 1, descuento 0 y precios de 1.850,00', asyn
       porcentajeDescuento: 0,
       precioConDescuento: 1850,
       precioFinal: 1850,
+      // Desde FEAT-003c la Api devuelve el orden de cada línea (D-10).
+      orden: 1,
     },
   ]);
   expect(guardado.total).toBe(1850);

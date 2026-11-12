@@ -289,6 +289,8 @@ test('AC-01: cantidad 3 y 10 % dan 900,00 y 2.700,00', async ({ page }) => {
       porcentajeDescuento: 10,
       precioConDescuento: 900,
       precioFinal: 2700,
+      // Desde FEAT-003c la Api devuelve el orden de cada línea (D-10).
+      orden: 1,
     },
   ]);
   expect(guardado.total).toBe(2700);
