@@ -44,6 +44,8 @@ describe('App', () => {
     ['/presupuestos/155', 'Presupuesto'],
     // La modificación no es el presupuesto número 155 (FEAT-003c).
     ['/presupuestos/155/editar', 'Modificar presupuesto'],
+    // La búsqueda (FEAT-006) no es el presupuesto con un número.
+    ['/presupuestos', 'Buscar presupuestos'],
   ])('App_Ruta%s_MuestraSuPantalla', async (ruta, titulo) => {
     servidorFalso({ 'GET /api/sesion': vacia(204) });
 
@@ -51,6 +53,16 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: titulo })).toBeTruthy();
     expect(screen.getByTestId('ubicacion').textContent).toBe(ruta);
+  });
+
+  it('App: /presupuestos tiene pantalla', async () => {
+    // Nombre de la spec de FEAT-006 (Block 3), para la trazabilidad; misma comprobación que la fila de la tabla.
+    servidorFalso({ 'GET /api/sesion': vacia(204) });
+
+    renderizarApp('/presupuestos');
+
+    expect(await screen.findByRole('heading', { name: 'Buscar presupuestos' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos');
   });
 });
 
@@ -341,6 +353,40 @@ const PANTALLAS: Pantalla[] = [
     interactuar: async () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Grabar' }));
       expect(await screen.findByText('El presupuesto cambió mientras lo editabas. Volvé a abrirlo.')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos',
+    descripcion: 'búsqueda de presupuestos con resultados y un error junto a un campo',
+    preparar: () =>
+      servidorFalso({
+        'POST /api/presupuestos/busqueda': [
+          json(200, {
+            presupuestos: [
+              {
+                numero: 155,
+                fecha: '2026-03-10',
+                apellido: 'Pérez',
+                nombre: 'Ana',
+                dni: '99999999',
+                estado: 'borrador',
+                total: 1850,
+              },
+            ],
+            pagina: 1,
+            tamanoPagina: 50,
+            total: 1,
+          }),
+        ],
+      }),
+    titulo: 'Buscar presupuestos',
+    interactuar: async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+      expect(await screen.findByText('Pérez')).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-03-20' } });
+      fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-03-10' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+      expect(await screen.findByText('La fecha Desde no puede ser posterior a Hasta.')).toBeTruthy();
     },
   },
 ];

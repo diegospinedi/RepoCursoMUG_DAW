@@ -125,6 +125,20 @@ describe('Inicio', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/nuevo');
   });
 
+  it('Inicio: enlace Buscar presupuestos', async () => {
+    // FEAT-006: la búsqueda no consulta al abrir, así que no hace falta preparar la Api.
+    const servidor = servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Buscar presupuestos' });
+    expect(enlace.getAttribute('href')).toBe('/presupuestos');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Buscar presupuestos' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos');
+    expect(servidor.pedidosA('POST', '/api/presupuestos/busqueda')).toHaveLength(0);
+  });
+
   it('Inicio_EnlaceArticulos', async () => {
     servidorFalso({
       ...conSesion,
