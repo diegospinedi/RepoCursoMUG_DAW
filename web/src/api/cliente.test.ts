@@ -37,6 +37,8 @@ import {
   pasarPresupuestoAFinal,
   buscarPresupuestos,
   MENSAJE_BUSQUEDA_GRANDE,
+  descargarPdfPresupuesto,
+  MENSAJE_PRESUPUESTO_BORRADOR_PDF,
 } from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
@@ -1439,4 +1441,118 @@ describe('cliente de la Api: búsqueda de presupuestos (FEAT-006)', () => {
 
     expect(await buscarPresupuestos(FILTRO, 1)).toEqual(ILEGIBLE);
   });
+});
+
+describe('cliente de la Api: PDF del presupuesto (FEAT-006)', () => {
+  const RUTA_PDF = '/api/presupuestos/155/pdf';
+  const CLAVE = `GET ${RUTA_PDF}`;
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  /** El comienzo de un PDF: basta para comprobar que el cliente entrega los bytes tal cual. */
+  const BYTES_PDF = '%PDF-1.7\n';
+  const pdf = (tipo = 'application/pdf') => () =>
+    new Response(BYTES_PDF, {
+      status: 200,
+      headers: { 'Content-Type': tipo, 'Content-Disposition': 'attachment; filename=presupuesto-155.pdf' },
+    });
+  /** El 409 de la Api para un Borrador (D-11, D-16): el título y el detalle del servidor nunca se muestran. */
+  const conflicto = (motivo: unknown) =>
+    json(409, {
+      status: 409,
+      title: 'No se pudo generar el PDF del presupuesto.',
+      detail: 'El presupuesto está en Borrador.',
+      motivo,
+    });
+
+  it('descargarPdfPresupuesto_Final_DevuelveElPdfComoBlob', async () => {
+    const servidor = servidorFalso({ [CLAVE]: pdf() });
+
+    const resultado = await descargarPdfPresupuesto(155);
+
+    expect(resultado.tipo).toBe('ok');
+    const datos = (resultado as { tipo: 'ok'; datos: Blob }).datos;
+    // El `Blob` de `Response` es el de Node, no el de jsdom: se compara por su tipo y su contenido, no con instanceof.
+    expect(datos.type).toBe('application/pdf');
+    expect(await datos.text()).toBe(BYTES_PDF);
+    const pedidos = servidor.pedidosA('GET', RUTA_PDF);
+    expect(pedidos).toHaveLength(1);
+    // Mismo origen, con la cookie de la sesión y sin cuerpo (D-10).
+    expect(pedidos[0]?.init?.credentials).toBe('same-origin');
+    expect(pedidos[0]?.init?.body).toBeUndefined();
+  });
+
+  it('cliente: 409 con motivo borrador se lee como conflicto', async () => {
+    servidorFalso({ [CLAVE]: conflicto('borrador') });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({
+      tipo: 'conflicto',
+      motivo: 'borrador',
+      mensaje: MENSAJE_PRESUPUESTO_BORRADOR_PDF,
+    });
+    expect(MENSAJE_PRESUPUESTO_BORRADOR_PDF).toBe(
+      'El presupuesto está en Borrador: pasalo a Final para descargar el PDF.',
+    );
+  });
+
+  it.each(['final', 'cambiado', 'otro', undefined])('descargarPdfPresupuesto_409MotivoAjeno_%s_Ilegible', async (m) => {
+    servidorFalso({ [CLAVE]: conflicto(m) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('descargarPdfPresupuesto_401_SinSesionYAvisa', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [CLAVE]: vacia(401) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('descargarPdfPresupuesto_404_NoEncontrado', async () => {
+    servidorFalso({ [CLAVE]: vacia(404) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({
+      tipo: 'general',
+      mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+    });
+  });
+
+  it.each([
+    ['falla de red', sinRed],
+    ['500', vacia(500)],
+    // Una respuesta exitosa que no es un PDF no se entrega como archivo.
+    ['200 que no es PDF', pdf('application/json')],
+    ['200 sin tipo', () => new Response(BYTES_PDF, { status: 200, headers: { 'Content-Type': '' } })],
+    // Sin el encabezado: un cuerpo de bytes no le agrega un Content-Type, así `get` devuelve null.
+    ['200 sin encabezado de tipo', () => new Response(new TextEncoder().encode(BYTES_PDF), { status: 200 })],
+  ])('descargarPdfPresupuesto_%s_SinConexion', async (_caso, respuesta) => {
+    servidorFalso({ [CLAVE]: respuesta });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('descargarPdfPresupuesto_CuerpoIlegible_SinConexion', async () => {
+    servidorFalso({
+      [CLAVE]: () => {
+        const respuesta = new Response(BYTES_PDF, { status: 200, headers: { 'Content-Type': 'application/pdf' } });
+        vi.spyOn(respuesta, 'blob').mockRejectedValue(new TypeError('Failed to fetch'));
+        return respuesta;
+      },
+    });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    'descargarPdfPresupuesto_NumeroInvalido_%s_NoSeEnvia',
+    async (numero) => {
+      const servidor = servidorFalso({});
+
+      expect(await descargarPdfPresupuesto(numero)).toEqual({
+        tipo: 'general',
+        mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+      });
+      expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+    },
+  );
 });

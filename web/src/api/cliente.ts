@@ -34,6 +34,8 @@ export const MENSAJE_LISTADO_CAMBIADO = 'El artículo cambió. Volvé a cargar e
  */
 export const MENSAJE_PRESUPUESTO_CAMBIADO = 'El presupuesto cambió mientras lo editabas. Volvé a abrirlo.';
 export const MENSAJE_PRESUPUESTO_FINAL = 'El presupuesto está en Final y no se puede modificar.';
+/** El 409 `borrador` del PDF (FEAT-006, D-11): la pantalla quedó vieja y el presupuesto sigue en Borrador. */
+export const MENSAJE_PRESUPUESTO_BORRADOR_PDF = 'El presupuesto está en Borrador: pasalo a Final para descargar el PDF.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
@@ -95,10 +97,13 @@ export interface PaginaArticulos {
   total: number;
 }
 
-/** Los motivos de un 409: los de los artículos (D-19) y `final` del presupuesto (FEAT-003c, D-05). */
-export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final';
+/**
+ * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05) y `borrador` del PDF
+ * del presupuesto (FEAT-006, D-11).
+ */
+export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final' | 'borrador';
 
-const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final'];
+const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final', 'borrador'];
 
 const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
 
@@ -869,6 +874,41 @@ export const pasarPresupuestoAFinal = (numero: number, version: number): Promise
         resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
       )
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/** El tipo de contenido del PDF del presupuesto (con o sin parámetros, como `; charset`). */
+const TIPO_PDF = /^application\/pdf\s*(;|$)/i;
+
+/**
+ * El PDF de un presupuesto en Final (FEAT-006, FR-11, FR-12) con `GET /api/presupuestos/{numero}/pdf`: los bytes tal
+ * cual, como `Blob`, para que la pantalla los descargue con una URL de objeto (D-10). La respuesta exitosa se lee con
+ * `blob()` y no con `leerJson`; los errores pasan por la misma traducción que los demás pedidos: un 401 sin cuerpo avisa
+ * a {@link alPerderLaSesion}; un 409 `borrador` (D-11) es un conflicto con
+ * {@link MENSAJE_PRESUPUESTO_BORRADOR_PDF}, y cualquier otro motivo, una respuesta ilegible; un 404, "No se encontró el
+ * presupuesto.". Una falla de red, un 5xx, una respuesta exitosa que no es `application/pdf` o un cuerpo que no se
+ * pudo leer son {@link MENSAJE_SIN_CONEXION}. Un número que no puede existir no se envía.
+ */
+export async function descargarPdfPresupuesto(numero: number): Promise<Resultado<Blob>> {
+  if (!esEnteroEntre(numero, 1)) {
+    return { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+  }
+  const respuesta = await enviar({
+    metodo: 'GET',
+    ruta: `/api/presupuestos/${numero}/pdf`,
+    motivos409: { borrador: MENSAJE_PRESUPUESTO_BORRADOR_PDF },
+    mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+  });
+  if (respuesta.tipo !== 'respuesta') {
+    return respuesta;
+  }
+  if (!TIPO_PDF.test(respuesta.respuesta.headers.get('Content-Type') ?? '')) {
+    return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  }
+  try {
+    return { tipo: 'ok', datos: await respuesta.respuesta.blob() };
+  } catch {
+    return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  }
+}
 
 /*
  * Búsqueda de presupuestos (FEAT-006, ADR-019).
