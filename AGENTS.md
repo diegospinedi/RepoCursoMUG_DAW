@@ -117,7 +117,7 @@ Report any change that would violate the dependency rules.
 
 ## What NOT to do in this project
 
-- **No modificar registros cerrados.** Un presupuesto en estado Final no se edita ni vuelve a Borrador (RF-08, RF-67), y una factura con CAE no se modifica ni se elimina (RF-32). No agregues endpoints, migraciones ni "fixes" que permitan eso. La base lo refuerza con triggers de SQLite (migraciones `CierrePresupuestos` y `FacturasInmutablesYBusqueda`): no los borres. Para cargar datos de prueba, el presupuesto se graba en Borrador y después pasa a Final, como en la app.
+- **No modificar registros cerrados.** Un presupuesto en estado Final no se edita ni vuelve a Borrador (RF-08, RF-67), y una factura con CAE no se modifica ni se elimina (RF-32). No agregues endpoints, migraciones ni "fixes" que permitan eso. La base lo refuerza con triggers de SQLite (migraciones `CierrePresupuestos` y `Facturas`): no los borres. Para cargar datos de prueba, el presupuesto se graba en Borrador y después pasa a Final, como en la app.
 - **No quitar la leyenda de comprobante simulado.** Con `Arca:Entorno = Simulado`, el PDF de la factura dice "COMPROBANTE SIMULADO — SIN VALIDEZ FISCAL": su CAE no existe en ARCA.
 - **No copiar la base con una copia de archivo común.** SQLite está en modo WAL: los cambios recientes pueden estar en `optica.db-wal`. Un backup (RNF-02) tiene que usar `VACUUM INTO` o la API de backup de SQLite.
 - **No emitir contra ARCA producción.** Todo desarrollo y prueba va contra el entorno de homologación. No apuntes a producción ni uses el certificado productivo para probar; un comprobante autorizado por error no se puede anular desde el sistema (las notas de crédito están fuera de alcance).

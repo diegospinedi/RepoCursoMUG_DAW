@@ -154,6 +154,62 @@ export function archivosDePrueba(nombres) {
 }
 
 /**
+ * Qué responde el simulador de ARCA según el archivo de pruebas (D-17): el rechazo y la falta de respuesta tienen cada
+ * uno su archivo, y por lo tanto su Api; todos los demás autorizan.
+ */
+const RESPUESTA_DEL_SIMULADOR = {
+  'facturacion-rechazo': 'rechazar',
+  'facturacion-sin-respuesta': 'no_responder',
+};
+
+/** El archivo de pruebas de una instancia: su nombre sin el navegador ("chrome-facturacion-rechazo" → "facturacion-rechazo"). */
+const archivoDeLaInstancia = (nombre) => nombre.slice(nombre.indexOf('-') + 1);
+
+/**
+ * Las variables `Arca__*` de la Api de una instancia (FEAT-007, D-17, R-10): siempre el entorno simulado, que no sale de
+ * la máquina, con 2 s de tiempo máximo (así la prueba de "ARCA no respondió" no espera 30 s) y la respuesta del
+ * simulador que corresponde a su archivo de pruebas. El CUIT y el certificado van vacíos (cuentan como ausentes): un
+ * certificado que esté en el entorno de quien corre la suite nunca llega a una Api de prueba.
+ */
+export function variablesDeArca(nombre) {
+  return {
+    Arca__Entorno: 'Simulado',
+    Arca__TiempoMaximoSegundos: '2',
+    Arca__Simulado__Respuesta: RESPUESTA_DEL_SIMULADOR[archivoDeLaInstancia(nombre)] ?? 'autorizar',
+    Arca__Cuit: '',
+    Arca__Certificado__Ruta: '',
+    Arca__Certificado__Clave: '',
+  };
+}
+
+/**
+ * Las claves de ARCA tal como .NET las lee del entorno: `Arca__…` o `Arca:…`, también con los prefijos
+ * `ASPNETCORE_` y `DOTNET_` que la Api suma a su configuración. Windows no distingue mayúsculas en el entorno y .NET
+ * tampoco en las claves, así que la comparación es sin mayúsculas.
+ */
+const CLAVE_DE_ARCA = /^(arca|aspnetcore_arca|dotnet_arca)(__|:)/i;
+
+/**
+ * El entorno de la Api de una instancia: el de quien corre la suite sin ninguna clave de ARCA, más las de
+ * {@link variablesDeArca}. Sin quitarlas, una `ARCA__ENTORNO=Produccion` o una clave de certificado del entorno de la
+ * PC se sumaría a las de la instancia (en otra mayúscula o con otro prefijo no la pisa) y la Api de prueba podría
+ * salir a ARCA. No modifica `entorno`.
+ */
+export function entornoDeLaApi(entorno, nombre) {
+  const sinArca = Object.fromEntries(Object.entries(entorno).filter(([clave]) => !CLAVE_DE_ARCA.test(clave)));
+  return { ...sinArca, ...variablesDeArca(nombre) };
+}
+
+/**
+ * El contador inicial del simulador (`arca-simulado.json` del directorio de datos, D-53) de una instancia, o `null` para
+ * empezar sin archivo (numera desde 1). Solo `facturacion.spec.ts` arranca la Factura B del punto de venta 3 en 124: su
+ * primera factura autorizada es la 0003-00000125 de AC-19 y AC-30.
+ */
+export function contadorSimulado(nombre) {
+  return archivoDeLaInstancia(nombre) === 'facturacion' ? { contadores: { 'B-3': 124 } } : null;
+}
+
+/**
  * Espera a que la Api de una instancia responda. Falla si su proceso termina antes (`terminada` devuelve el código o
  * la señal; null mientras sigue vivo) o si no responde en `plazoMs`. El reloj y la espera se reciben para probarla sin
  * dormir.

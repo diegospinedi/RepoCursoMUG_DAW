@@ -22,7 +22,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   comandosDeCompilacion,
+  contadorSimulado,
   debeBorrarse,
+  entornoDeLaApi,
   esperarApi,
   leerInstancias,
   leerPid,
@@ -89,12 +91,19 @@ async function levantar({ nombre, puerto }, api) {
       '<rect width="200" height="60" fill="#0903A0"/>' +
       '<text x="100" y="38" font-size="24" text-anchor="middle" fill="#FFFFFF">Prueba</text></svg>',
   );
+  // El contador del simulador de ARCA, solo donde la prueba espera un número fijo (FEAT-007, AC-30).
+  const contador = contadorSimulado(nombre);
+  if (contador !== null) {
+    writeFileSync(join(datos, 'arca-simulado.json'), JSON.stringify(contador));
+  }
 
   const hijo = spawn('dotnet', [join(api, 'Optica.Api.dll')], {
     cwd: api,
     stdio: ['ignore', 'inherit', 'inherit'],
     env: {
-      ...process.env,
+      // Siempre ARCA simulada, con la respuesta que corresponde al archivo de pruebas y sin credenciales: ninguna clave
+      // de ARCA del entorno de quien corre la suite llega a la Api, en ninguna mayúscula ni prefijo (FEAT-007).
+      ...entornoDeLaApi(process.env, nombre),
       ASPNETCORE_ENVIRONMENT: 'Production',
       DOTNET_ENVIRONMENT: 'Production',
       AllowedHosts: 'localhost',

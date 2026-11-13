@@ -5,31 +5,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, test } from 'node:test';
 
-import * as compilacion from './compilacion.mjs';
-
-const { comandosDeCompilacion, debeBorrarse, verificarModulosDeLaWeb } = compilacion;
-
-/** Todavía no existen antes de esta ronda: se toman del módulo para que la prueba falle en su aserción, no al importar. */
-const leerPid = (texto) => {
-  assert.equal(typeof compilacion.leerPid, 'function', 'compilacion.mjs no exporta leerPid.');
-  return compilacion.leerPid(texto);
-};
-const mensajeDeFallo = (...argumentos) => {
-  assert.equal(typeof compilacion.mensajeDeFallo, 'function', 'compilacion.mjs no exporta mensajeDeFallo.');
-  return compilacion.mensajeDeFallo(...argumentos);
-};
-const leerInstancias = (texto) => {
-  assert.equal(typeof compilacion.leerInstancias, 'function', 'compilacion.mjs no exporta leerInstancias.');
-  return compilacion.leerInstancias(texto);
-};
-const archivosDePrueba = (nombres) => {
-  assert.equal(typeof compilacion.archivosDePrueba, 'function', 'compilacion.mjs no exporta archivosDePrueba.');
-  return compilacion.archivosDePrueba(nombres);
-};
-const esperarApi = (opciones) => {
-  assert.equal(typeof compilacion.esperarApi, 'function', 'compilacion.mjs no exporta esperarApi.');
-  return compilacion.esperarApi(opciones);
-};
+import {
+  archivosDePrueba,
+  comandosDeCompilacion,
+  contadorSimulado,
+  debeBorrarse,
+  entornoDeLaApi,
+  esperarApi,
+  leerInstancias,
+  leerPid,
+  mensajeDeFallo,
+  variablesDeArca,
+  verificarModulosDeLaWeb,
+} from './compilacion.mjs';
 
 /** Rutas como las de la PC de desarrollo en Windows: espacios, & y % (que cmd.exe interpretaría). */
 const REPOSITORIO = 'C:\\Repos\\Curso & Prueba\\Modulo 6';
@@ -331,5 +319,86 @@ describe('esperarApi (servidor.mjs)', () => {
       }),
       /La Api de chrome-acceso no respondió en el puerto 5543/,
     );
+  });
+});
+
+describe('ARCA de cada instancia (FEAT-007, D-17)', () => {
+  /** Las credenciales de ARCA van vacías (cuentan como ausentes): ninguna del entorno de quien corre llega a la Api. */
+  const SIN_CREDENCIALES = { Arca__Cuit: '', Arca__Certificado__Ruta: '', Arca__Certificado__Clave: '' };
+  const esperadas = (respuesta) => ({
+    Arca__Entorno: 'Simulado',
+    Arca__TiempoMaximoSegundos: '2',
+    Arca__Simulado__Respuesta: respuesta,
+    ...SIN_CREDENCIALES,
+  });
+
+  for (const navegador of ['chrome', 'msedge', 'chromium']) {
+    test(`${navegador}: facturacion autoriza, facturacion-rechazo rechaza y facturacion-sin-respuesta no responde`, () => {
+      assert.deepEqual(variablesDeArca(`${navegador}-facturacion`), esperadas('autorizar'));
+      assert.deepEqual(variablesDeArca(`${navegador}-facturacion-rechazo`), esperadas('rechazar'));
+      assert.deepEqual(variablesDeArca(`${navegador}-facturacion-sin-respuesta`), esperadas('no_responder'));
+    });
+  }
+
+  test('los demás archivos: simulado, 2 s y autorizar, sin credenciales', () => {
+    for (const nombre of ['chrome-acceso', 'msedge-presupuestos-pdf', 'chrome-configuracion']) {
+      assert.deepEqual(variablesDeArca(nombre), esperadas('autorizar'));
+    }
+  });
+
+  test('el nombre del archivo, no un pedazo: "facturacion-rechazo-x" no rechaza', () => {
+    assert.equal(variablesDeArca('chrome-facturacion-rechazo-x').Arca__Simulado__Respuesta, 'autorizar');
+    assert.equal(variablesDeArca('chrome-presupuestos-facturacion-rechazo').Arca__Simulado__Respuesta, 'autorizar');
+  });
+
+  test('contador del simulador: solo facturacion arranca en 124 para la Factura B del punto de venta 3 (AC-30)', () => {
+    assert.deepEqual(contadorSimulado('chrome-facturacion'), { contadores: { 'B-3': 124 } });
+    assert.deepEqual(contadorSimulado('msedge-facturacion'), { contadores: { 'B-3': 124 } });
+    assert.equal(contadorSimulado('chrome-facturacion-rechazo'), null);
+    assert.equal(contadorSimulado('msedge-facturacion-sin-respuesta'), null);
+    assert.equal(contadorSimulado('chrome-acceso'), null);
+  });
+
+  describe('entornoDeLaApi: ninguna clave de ARCA de quien corre la suite llega a la Api', () => {
+    test('quita las claves de ARCA del entorno, en cualquier mayúscula y con __ o :, y suma las de la instancia', () => {
+      const entorno = {
+        PATH: '/usr/bin',
+        HOME: '/home/prueba',
+        ARCA__ENTORNO: 'Produccion',
+        arca__certificado__clave: 'x',
+        'Arca:Certificado:Ruta': 'C:\\cert.pfx',
+        Arca__Simulado__Respuesta: 'rechazar',
+        ASPNETCORE_ARCA__ENTORNO: 'Produccion',
+        dotnet_arca__cuit: '20000000001',
+        'DOTNET_Arca:TiempoMaximoSegundos': '120',
+      };
+
+      const resultado = entornoDeLaApi(entorno, 'chrome-facturacion');
+
+      assert.deepEqual(resultado, { PATH: '/usr/bin', HOME: '/home/prueba', ...variablesDeArca('chrome-facturacion') });
+      // Ninguna variante de la clave del certificado queda con un valor.
+      assert.deepEqual(
+        Object.keys(resultado).filter((clave) => /certificado/i.test(clave)),
+        ['Arca__Certificado__Ruta', 'Arca__Certificado__Clave'],
+      );
+      assert.equal(resultado.Arca__Certificado__Clave, '');
+      assert.equal(resultado.Arca__Entorno, 'Simulado');
+    });
+
+    test('las que solo se parecen a una de ARCA quedan', () => {
+      const entorno = { ARCADIA: '1', MI_ARCA__X: '2', Arcade__X: '3', ARCA: '4', ASPNETCORE_ENVIRONMENT: 'Production' };
+
+      const resultado = entornoDeLaApi(entorno, 'msedge-facturacion-rechazo');
+
+      assert.deepEqual(resultado, { ...entorno, ...variablesDeArca('msedge-facturacion-rechazo') });
+    });
+
+    test('no modifica el entorno recibido', () => {
+      const entorno = { ARCA__ENTORNO: 'Produccion' };
+
+      entornoDeLaApi(entorno, 'chrome-acceso');
+
+      assert.deepEqual(entorno, { ARCA__ENTORNO: 'Produccion' });
+    });
   });
 });

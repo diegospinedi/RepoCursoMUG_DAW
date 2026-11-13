@@ -47,6 +47,9 @@ const GRABADO = {
   lineas: [LINEA],
   total: 1850,
   version: 3,
+  // El GET suma la facturación (FEAT-007, D-19); los PUT no la llevan, y la pantalla ignora lo que sobra.
+  factura: null,
+  emisionPendiente: false,
 };
 
 /** Abre el presupuesto 155 con la respuesta indicada (por defecto, el grabado) y espera que se muestre. */
@@ -137,11 +140,12 @@ describe('Presupuesto', () => {
     expect(dato('Email')).toBe('ana@mail.com');
     expect(dato('Nro. de Teléfono')).toBe('11 5555-0000');
     // Solo lectura: ningún campo; la edición va por "Modificar" y los botones son "Pasar a Final" (FEAT-003c) y
-    // "Descargar PDF" (FEAT-006), este deshabilitado en Borrador.
+    // "Descargar PDF" (FEAT-006) y "Facturar" (FEAT-007), estos dos deshabilitados en Borrador.
     expect(within(pantalla()).queryAllByRole('textbox')).toEqual([]);
     expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual([
       'Pasar a Final',
       'Descargar PDF',
+      'Facturar',
     ]);
   });
 
@@ -276,8 +280,8 @@ describe('Presupuesto', () => {
     expect(JSON.parse(String(pedidos[0]?.init?.body))).toEqual({ estado: 'final', version: 3 });
     expect(dato('Estado')).toBe('Final');
     expect(screen.queryByRole('dialog')).toBeNull();
-    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
-    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
+    // En Final no hay acciones de edición: los botones son "Descargar PDF" (FEAT-006) y "Facturar" (FEAT-007).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF', 'Facturar']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
     // El botón que tenía el foco ya no existe: el foco va al aviso.
     expect(document.activeElement).toBe(aviso);
@@ -326,8 +330,8 @@ describe('Presupuesto', () => {
     await abrir({ ...GRABADO, estado: 'final' });
 
     expect(dato('Estado')).toBe('Final');
-    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
-    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
+    // En Final no hay acciones de edición: los botones son "Descargar PDF" (FEAT-006) y "Facturar" (FEAT-007).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF', 'Facturar']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
   });
 
@@ -349,8 +353,8 @@ describe('Presupuesto', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(dato('Estado')).toBe('Final'));
     expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2);
-    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
-    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
+    // En Final no hay acciones de edición: los botones son "Descargar PDF" (FEAT-006) y "Facturar" (FEAT-007).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF', 'Facturar']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
     expect(screen.queryByText(PASADO_A_FINAL)).toBeNull();
     // El botón ya no está: el foco va al mensaje, que sigue en pantalla después de recargar.
@@ -806,5 +810,389 @@ describe('Presupuesto: Descargar PDF (FEAT-006)', () => {
     await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
     expect(registro.pedidosA('GET', '/api/presupuestos/156/pdf')).toHaveLength(1);
     expect(enlaces[0]?.descarga).toBe('presupuesto-156.pdf');
+  });
+});
+
+describe('Presupuesto: Facturar (FEAT-007)', () => {
+  const RUTA_FACTURA = '/api/presupuestos/155/factura';
+  const CLAVE_FACTURA = `POST ${RUTA_FACTURA}`;
+  const COMPROBANTE = 'Factura B 0003-00000125';
+  const EMITIDA_MENSAJE = 'Se emitió la Factura B 0003-00000125.';
+  const DESCRIPCION_RECHAZO =
+    'Rechazo simulado: el número o la fecha del comprobante no se corresponde con el próximo a autorizar.';
+  const SIN_RESPUESTA = 'ARCA no respondió. La emisión quedó pendiente de verificación.';
+  const PENDIENTE = 'La emisión anterior está pendiente de verificación.';
+  const PENDIENTE_VERIFICACION = 'La factura quedó pendiente de verificación.';
+  const NO_ENVIADA = 'No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.';
+  /** El aviso fijo junto a Facturar mientras hay una emisión pendiente (FR-24). */
+  const AVISO_PENDIENTE = 'La emisión de la factura de este presupuesto está pendiente de verificación.';
+  /** Un presupuesto en Final con 3 líneas y total $3.000,00 (AC-01), con un DNI ficticio que no se emite (D-50). */
+  const FINAL = {
+    ...GRABADO,
+    estado: 'final',
+    version: 4,
+    cliente: { ...CLIENTE, dni: '00718294', email: 'cliente@example.com' },
+    lineas: [
+      { ...LINEA, precioUnitario: 1000, precioConDescuento: 1000, precioFinal: 1000 },
+      { ...LINEA, precioUnitario: 1000, precioConDescuento: 1000, precioFinal: 1000, orden: 2 },
+      { ...LINEA, precioUnitario: 1000, precioConDescuento: 1000, precioFinal: 1000, orden: 3 },
+    ],
+    total: 3000,
+  };
+  const FACTURADO = { ...FINAL, factura: { comprobante: COMPROBANTE } };
+  const PENDIENTE_EN_GET = { ...FINAL, emisionPendiente: true };
+  const EMITIDA = {
+    comprobante: COMPROBANTE,
+    tipo: 'b',
+    numero: 125,
+    cae: '12345678901234',
+    vencimientoCae: '2026-11-09',
+    fecha: '2026-10-30',
+    total: 3000,
+    neto: 2479.34,
+    iva: 520.66,
+  };
+  /** El 409 de la emisión con un `detail` que la pantalla nunca muestra (D-61). */
+  const conflictoFactura = (motivo: string, extra: Record<string, unknown> = {}) =>
+    json(409, { status: 409, title: 'No se pudo emitir la factura.', detail: 'Texto del servidor.', motivo, ...extra });
+
+  const botonFacturar = () => within(pantalla()).getByRole('button', { name: 'Facturar' });
+
+  /** Abre el presupuesto 155 con las respuestas indicadas y espera que se muestre. */
+  async function abrirCon(rutas: Parameters<typeof servidorFalso>[0]) {
+    const registro = servidorFalso(rutas);
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+    return registro;
+  }
+
+  /** Abre el diálogo con Facturar y lo devuelve. */
+  async function abrirDialogo() {
+    fireEvent.click(botonFacturar());
+    return screen.findByRole('dialog', { name: 'Facturar' });
+  }
+
+  /** Abre el diálogo, elige el concepto y pulsa Emitir. */
+  async function emitir(concepto: 'Productos' | 'Productos y servicios' = 'Productos') {
+    const dialogo = await abrirDialogo();
+    fireEvent.click(within(dialogo).getByRole('radio', { name: concepto }));
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Emitir' }));
+    return dialogo;
+  }
+
+  it('Facturar: Final con concepto Productos emite y muestra el comprobante', async () => {
+    // AC-01, AC-18, AC-19: la pantalla manda solo el concepto; con 201 confirma con el tipo, el punto de venta y el
+    // número, y el presupuesto pasa a mostrar la factura, con Facturar deshabilitado (AC-03).
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: json(201, EMITIDA),
+    });
+    expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
+    expect(botonFacturar().hasAttribute('disabled')).toBe(false);
+
+    await emitir('Productos');
+
+    const aviso = await screen.findByText(EMITIDA_MENSAJE);
+    expect(aviso.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(dato('Factura')).toBe(COMPROBANTE);
+    expect(botonFacturar().hasAttribute('disabled')).toBe(true);
+    // El botón quedó deshabilitado: el foco va al aviso, que anuncia el resultado.
+    await waitFor(() => expect(document.activeElement).toBe(aviso));
+    const pedidos = registro.pedidosA('POST', RUTA_FACTURA);
+    expect(pedidos).toHaveLength(1);
+    // Solo el concepto (R-06): tipo, importes, receptor y fecha los arma el servidor.
+    expect(JSON.parse(String(pedidos[0]?.init?.body))).toEqual({ concepto: 'productos' });
+  });
+
+  it('Facturar: Productos y servicios envía ese concepto', async () => {
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: json(201, EMITIDA),
+    });
+
+    await emitir('Productos y servicios');
+
+    await screen.findByText(EMITIDA_MENSAJE);
+    const [pedido] = registro.pedidosA('POST', RUTA_FACTURA);
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ concepto: 'productos_y_servicios' });
+  });
+
+  it('Facturar: al abrir un presupuesto facturado muestra el comprobante (AC-19)', async () => {
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FACTURADO) });
+
+    expect(dato('Factura')).toBe(COMPROBANTE);
+  });
+
+  it.each([
+    ['Borrador', GRABADO],
+    ['con factura', FACTURADO],
+    ['con emisión pendiente', PENDIENTE_EN_GET],
+  ])('Facturar: deshabilitado en Borrador, con factura y con pendiente (%s)', async (_caso, cuerpo) => {
+    // AC-02, AC-03, AC-22: `disabled`, y un clic no abre el diálogo ni llama a la Api. Control: en Final sin factura
+    // ni pendiente está habilitado (el primer caso de este archivo).
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(botonFacturar().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(botonFacturar());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toEqual([]);
+  });
+
+  it('Facturar: con emisión pendiente avisa junto al botón', async () => {
+    // El aviso es un estado (`role="status"`) y describe al botón deshabilitado: un lector de pantalla dice por qué.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, PENDIENTE_EN_GET) });
+
+    const aviso = screen.getByText(AVISO_PENDIENTE);
+    expect(aviso.getAttribute('role')).toBe('status');
+    expect(aviso.classList.contains('aviso')).toBe(true);
+    expect(aviso.id).not.toBe('');
+    expect(botonFacturar().getAttribute('aria-describedby')).toBe(aviso.id);
+    expect(screen.getByRole('button', { name: 'Facturar', description: AVISO_PENDIENTE })).toBe(botonFacturar());
+    cleanup();
+
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL) });
+    expect(screen.queryByText(AVISO_PENDIENTE)).toBeNull();
+    expect(botonFacturar().hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('Facturar: sin concepto elegido, Emitir deshabilitado', async () => {
+    // FR-08: el diálogo pide el concepto y no trae ninguno elegido al abrir, tampoco al volver a abrirlo.
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL) });
+
+    let dialogo = await abrirDialogo();
+    const productos = within(dialogo).getByRole('radio', { name: 'Productos' }) as HTMLInputElement;
+    const servicios = within(dialogo).getByRole('radio', { name: 'Productos y servicios' }) as HTMLInputElement;
+    expect(within(dialogo).getByRole('group', { name: 'Concepto' })).toBeTruthy();
+    expect(productos.checked).toBe(false);
+    expect(servicios.checked).toBe(false);
+    const emitirBoton = within(dialogo).getByRole('button', { name: 'Emitir' });
+    expect(emitirBoton.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(emitirBoton);
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toEqual([]);
+
+    fireEvent.click(servicios);
+    expect(within(dialogo).getByRole('button', { name: 'Emitir' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(botonFacturar()));
+
+    dialogo = await abrirDialogo();
+    expect((within(dialogo).getByRole('radio', { name: 'Productos y servicios' }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.keyDown(dialogo, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toEqual([]);
+  });
+
+  it('Facturar: mientras emite, un segundo clic no envía otra emisión', async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    const pendiente = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: () => pendiente,
+    });
+
+    const dialogo = await emitir();
+    const emitirBoton = within(dialogo).getByRole('button', { name: 'Emitir' });
+    await waitFor(() => expect(emitirBoton.getAttribute('aria-disabled')).toBe('true'));
+    fireEvent.click(emitirBoton);
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }));
+    fireEvent.keyDown(dialogo, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBe(dialogo);
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toHaveLength(1);
+
+    responder(new Response(JSON.stringify(EMITIDA), { status: 201 }));
+    await screen.findByText(EMITIDA_MENSAJE);
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toHaveLength(1);
+  });
+
+  it('Facturar: 409 rechazada muestra código y descripción y sigue habilitado', async () => {
+    // AC-20, FR-22: el código y la descripción de ARCA, como texto; sin factura y con Facturar habilitado.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: conflictoFactura('rechazada', { codigo: 10016, descripcion: DESCRIPCION_RECHAZO }),
+    });
+
+    await emitir();
+
+    const alerta = await screen.findByText(`ARCA rechazó la factura: 10016 – ${DESCRIPCION_RECHAZO}`);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(screen.queryByText('Texto del servidor.')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2));
+    expect(botonFacturar().hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
+  });
+
+  it('Facturar: 409 rechazada con una descripción con marcas la muestra como texto', async () => {
+    // La descripción viene de ARCA: se muestra como texto, nunca como HTML.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: conflictoFactura('rechazada', { codigo: 10016, descripcion: '<img src=x onerror=alert(1)>' }),
+    });
+
+    await emitir();
+
+    const alerta = await screen.findByText('ARCA rechazó la factura: 10016 – <img src=x onerror=alert(1)>');
+    expect(alerta.querySelector('img')).toBeNull();
+  });
+
+  it('Facturar: 409 rechazada con código 0 dice que ARCA no informó el motivo', async () => {
+    // D-57: sin código de ARCA, ni "0" ni la frase fija de la Api repetida.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: conflictoFactura('rechazada', {
+        codigo: 0,
+        descripcion: 'ARCA rechazó el comprobante sin informar el motivo.',
+      }),
+    });
+
+    await emitir();
+
+    const alerta = await screen.findByRole('alert');
+    expect(alerta.textContent).toBe('ARCA rechazó la factura sin informar el motivo.');
+  });
+
+  /** Abre un Final cuya emisión responde `respuesta` y, al releerlo, tiene la emisión pendiente; emite. */
+  async function emitirYQuedarPendiente(respuesta: Parameters<typeof servidorFalso>[0][string]) {
+    await abrirCon({
+      'GET /api/presupuestos/155': [json(200, FINAL), json(200, PENDIENTE_EN_GET)],
+      [CLAVE_FACTURA]: respuesta,
+    });
+    await emitir();
+  }
+
+  it('Facturar: 409 sin_respuesta muestra que ARCA no respondió', async () => {
+    // AC-21: el mensaje fijo y, al releer, Facturar deshabilitado por la emisión pendiente; el foco en el mensaje.
+    await emitirYQuedarPendiente(conflictoFactura('sin_respuesta'));
+
+    const alerta = await screen.findByText(SIN_RESPUESTA);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    expect(screen.getByText(AVISO_PENDIENTE)).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+  });
+
+  it('Facturar: 409 pendiente muestra que la emisión anterior está pendiente', async () => {
+    // AC-22: otra sesión dejó una emisión pendiente; el mensaje fijo y Facturar deshabilitado al releer.
+    await emitirYQuedarPendiente(conflictoFactura('pendiente'));
+
+    const alerta = await screen.findByText(PENDIENTE);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+  });
+
+  it('Facturar: 500 y emisión pendiente al releer, el foco va al mensaje', async () => {
+    // Sin respuesta legible no se sabe si la factura se grabó: se relee y, como el botón puede quedar deshabilitado,
+    // el foco va al mensaje y no al botón.
+    await emitirYQuedarPendiente(vacia(500));
+
+    const alerta = await screen.findByText(MENSAJE_SIN_CONEXION);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+  });
+
+  it('Facturar: 409 pendiente_verificacion, mensaje de pendiente y botón deshabilitado', async () => {
+    // D-31: ARCA autorizó y la factura no se grabó; la pendiente queda y la pantalla no ofrece emitir otra.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': [json(200, FINAL), json(200, PENDIENTE_EN_GET)],
+      [CLAVE_FACTURA]: conflictoFactura('pendiente_verificacion'),
+    });
+
+    await emitir();
+
+    expect((await screen.findByText(PENDIENTE_VERIFICACION)).getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    expect(registro.pedidosA('POST', RUTA_FACTURA)).toHaveLength(1);
+  });
+
+  it.each([
+    ['sin_tope', 'Cargá el tope de identificación en la configuración para facturar.'],
+    ['sin_punto_venta', 'Cargá el punto de venta en la configuración para facturar.'],
+    ['alicuota_no_admitida', 'Elegí una alícuota de IVA válida en la configuración para facturar.'],
+  ])('Facturar: 409 sin_tope, sin_punto_venta y alicuota_no_admitida, mensajes con enlace (%s)', async (motivo, mensaje) => {
+    // AC-13, AC-32, AC-29: el mensaje fijo, con el enlace a la configuración, y Facturar sigue habilitado.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: conflictoFactura(motivo),
+    });
+
+    await emitir();
+
+    const alerta = await screen.findByRole('alert');
+    expect(alerta.textContent).toContain(mensaje);
+    const enlace = within(alerta).getByRole('link', { name: 'Ir a la configuración' });
+    expect(enlace.getAttribute('href')).toBe('/configuracion');
+    expect(botonFacturar().hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(enlace);
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/configuracion');
+  });
+
+  it.each([
+    ['409 no_enviada', conflictoFactura('no_enviada'), NO_ENVIADA],
+    ['409 con un motivo desconocido', conflictoFactura('otro'), MENSAJE_SIN_CONEXION],
+    ['201 ilegible', json(201, { ...EMITIDA, cae: 'no' }), MENSAJE_SIN_CONEXION],
+    ['500', vacia(500), MENSAJE_SIN_CONEXION],
+    ['falla de red', sinRed, MENSAJE_SIN_CONEXION],
+  ])('Facturar: 409 no_enviada y respuesta ilegible, error general (%s)', async (_caso, respuesta, mensaje) => {
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: respuesta,
+    });
+
+    await emitir();
+
+    const alerta = await screen.findByText(mensaje);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
+    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(false));
+    expect(within(alerta).queryByRole('link')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+  });
+
+  it('Facturar: 401 vuelve al ingreso', async () => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [CLAVE_FACTURA]: vacia(401),
+      'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+    });
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+
+    await emitir();
+
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso'));
+  });
+
+  it('Facturar: una respuesta de otro número no pisa la pantalla', async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    const pendiente = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      'GET /api/presupuestos/156': json(200, { ...FINAL, numero: 156 }),
+      [CLAVE_FACTURA]: () => pendiente,
+    });
+    const { volver } = renderizarApp(['/presupuestos/156', '/presupuestos/155']);
+    await screen.findByText('Número');
+    await emitir();
+
+    await volver();
+    await waitFor(() => expect(dato('Número')).toBe('156'));
+    responder(new Response(JSON.stringify(EMITIDA), { status: 201 }));
+    await act(async () => {
+      await pendiente;
+    });
+
+    expect(screen.queryByText(EMITIDA_MENSAJE)).toBeNull();
+    expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

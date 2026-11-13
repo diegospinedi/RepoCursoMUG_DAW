@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import fuenteApp from './App.tsx?raw';
 import { MENSAJE_BLOQUEADO } from './api/cliente';
@@ -157,6 +157,9 @@ const PRESUPUESTO_155 = {
   ],
   total: 1850,
   version: 3,
+  // El GET suma la facturación (FEAT-007, D-19).
+  factura: null,
+  emisionPendiente: false,
 };
 
 const PANTALLAS: Pantalla[] = [
@@ -353,6 +356,46 @@ const PANTALLAS: Pantalla[] = [
       // El diálogo de confirmación del paso a Final (FEAT-003c) también se revisa.
       fireEvent.click(screen.getByRole('button', { name: 'Pasar a Final' }));
       expect(await screen.findByRole('dialog')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos/:numero',
+    url: '/presupuestos/155',
+    descripcion: 'presupuesto en Final facturado (FEAT-007)',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/presupuestos/155': json(200, {
+          ...PRESUPUESTO_155,
+          estado: 'final',
+          factura: { comprobante: 'Factura B 0003-00000125' },
+        }),
+      }),
+    titulo: 'Presupuesto',
+    interactuar: async () => {
+      expect(await screen.findByText('Factura B 0003-00000125')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/presupuestos/:numero',
+    url: '/presupuestos/155',
+    descripcion: 'diálogo de Facturar con un rechazo de ARCA (FEAT-007)',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/presupuestos/155': json(200, { ...PRESUPUESTO_155, estado: 'final' }),
+        'POST /api/presupuestos/155/factura': json(409, {
+          title: 'No se pudo emitir la factura.',
+          motivo: 'rechazada',
+          codigo: 10016,
+          descripcion: 'Rechazo simulado.',
+        }),
+      }),
+    titulo: 'Presupuesto',
+    interactuar: async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Facturar' }));
+      const dialogo = await screen.findByRole('dialog', { name: 'Facturar' });
+      fireEvent.click(within(dialogo).getByRole('radio', { name: 'Productos' }));
+      fireEvent.click(within(dialogo).getByRole('button', { name: 'Emitir' }));
+      expect(await screen.findByText('ARCA rechazó la factura: 10016 – Rechazo simulado.')).toBeTruthy();
     },
   },
   {
