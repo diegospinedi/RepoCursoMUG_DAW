@@ -1,8 +1,13 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type SyntheticEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { pasarPresupuestoAFinal, type EstadoPresupuesto, type PresupuestoGrabado } from '../api/cliente';
+import {
+  descargarPdfPresupuesto,
+  pasarPresupuestoAFinal,
+  type EstadoPresupuesto,
+  type PresupuestoGrabado,
+} from '../api/cliente';
 import { mostrarDecimal, mostrarImporte } from '../configuracion/numeros';
-import { mensajePasadoAFinal, TEXTO_CONFIRMAR_FINAL } from '../presupuestos/reglas';
+import { mensajePasadoAFinal, mostrarFecha, TEXTO_CONFIRMAR_FINAL } from '../presupuestos/reglas';
 import { usePresupuestoDeLaRuta } from '../presupuestos/usePresupuestoDeLaRuta';
 
 /** Lo que se muestra de un dato opcional que no se cargó (FR-03). */
@@ -10,10 +15,23 @@ export const SIN_DATO = '—';
 
 const TEXTO_DEL_ESTADO: Record<EstadoPresupuesto, string> = { borrador: 'Borrador', final: 'Final' };
 
-/** `yyyy-MM-dd` como dd/mm/aaaa (FR-15), desde el texto: sin `Date`, así no depende de la zona horaria. */
-function mostrarFecha(fecha: string): string {
-  const [anio, mes, dia] = fecha.split('-');
-  return `${dia}/${mes}/${anio}`;
+/**
+ * Descarga el PDF recibido como `presupuesto-{numero}.pdf` (D-10): una URL de objeto, un enlace temporal con
+ * `download`, su clic y la revocación de la URL. El nombre lleva solo el número, nunca datos del cliente (R-02).
+ */
+function guardarPdf(contenido: Blob, numero: number) {
+  const url = URL.createObjectURL(contenido);
+  const enlace = document.createElement('a');
+  enlace.href = url;
+  enlace.download = `presupuesto-${numero}.pdf`;
+  enlace.hidden = true;
+  document.body.append(enlace);
+  try {
+    enlace.click();
+  } finally {
+    enlace.remove();
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** La confirmación que deja el alta en el estado de la navegación (D-24); cualquier otra cosa no se muestra. */
@@ -43,7 +61,8 @@ type DestinoDelFoco = 'boton' | 'aviso' | null;
  * servidor, sin recalcularlos (ADR-016), y 2 decimales (NFR-02). En Borrador ofrece "Modificar" (la pantalla de
  * modificación) y "Pasar a Final", que pide confirmación en un diálogo (FEAT-003c, FR-04): confirmar envía la versión
  * mostrada (D-01) y muestra "Presupuesto N.º {n} pasado a Final."; cancelar, Escape o cerrar no llaman a la Api. En
- * Final no hay acciones de edición (FR-05). Un 409 muestra el texto propio de su motivo, nunca el del servidor (D-07),
+ * Final no hay acciones de edición (FR-05). "Descargar PDF" (FEAT-006, FR-11, FR-12) está habilitado solo en Final y
+ * descarga `presupuesto-{numero}.pdf` (D-10). Un 409 muestra el texto propio de su motivo, nunca el del servidor (D-07),
  * y vuelve a leer el presupuesto para mostrar su estado y su versión reales. Una respuesta que llega cuando la ruta ya
  * muestra otro número se descarta. La carga es la de {@link usePresupuestoDeLaRuta}: un número de ruta inválido o un
  * 404 muestran "No se encontró el presupuesto." (D-24) y sin sesión va a `/ingreso`. Los datos del cliente viven solo
@@ -66,6 +85,13 @@ export function Presupuesto() {
   }
   const [enviando, setEnviando] = useState(false);
   const envioEnCurso = useRef(false);
+  /**
+   * El número cuyo PDF se está pidiendo, o `null`. Con otro número en la ruta el botón del presupuesto nuevo no queda
+   * bloqueado: `descargando` se deriva del número mostrado, como `aviso`.
+   */
+  const [numeroDescargando, setNumeroDescargando] = useState<number | null>(null);
+  const descargaEnCurso = useRef<number | null>(null);
+  const descargando = numeroDescargando !== null && numeroDescargando === numero;
   const refBotonFinal = useRef<HTMLButtonElement>(null);
   const refAviso = useRef<HTMLParagraphElement>(null);
   const destinoDelFoco = useRef<DestinoDelFoco>(null);
@@ -134,6 +160,48 @@ export function Presupuesto() {
     setConfirmandoNumero(null);
   }
 
+  /**
+   * Descarga el PDF (FEAT-006, FR-11): mientras se pide no se lanza otra descarga. Un 409 `borrador` (la pantalla quedó
+   * vieja, D-11) muestra su texto propio y vuelve a leer el presupuesto; sin sesión va a `/ingreso`; cualquier otra
+   * falla muestra el mensaje fijo del cliente y el botón vuelve a habilitarse.
+   */
+  async function descargarPdf(numeroDelPresupuesto: number) {
+    // Mientras se descarga el botón sigue habilitado (`aria-disabled`, para no perder el foco): esta guarda frena los
+    // clics siguientes del mismo presupuesto.
+    if (descargaEnCurso.current === numeroDelPresupuesto) {
+      return;
+    }
+    descargaEnCurso.current = numeroDelPresupuesto;
+    setNumeroDescargando(numeroDelPresupuesto);
+    setAviso(null);
+    const resultado = await descargarPdfPresupuesto(numeroDelPresupuesto);
+    // Si mientras tanto empezó la descarga de otro número, esa sigue en curso.
+    if (descargaEnCurso.current === numeroDelPresupuesto) {
+      descargaEnCurso.current = null;
+    }
+    setNumeroDescargando((actual) => (actual === numeroDelPresupuesto ? null : actual));
+    // Si la ruta ya muestra otro número, la respuesta no le corresponde: ni se descarga ni se muestra.
+    if (!sigueVigente(numeroDelPresupuesto)) {
+      return;
+    }
+    switch (resultado.tipo) {
+      case 'ok':
+        guardarPdf(resultado.datos, numeroDelPresupuesto);
+        break;
+      case 'sinSesion':
+        navegar('/ingreso', { replace: true });
+        break;
+      case 'conflicto':
+        // El texto propio de su motivo, nunca el del servidor; el mensaje es una alerta y se anuncia solo.
+        setAviso({ numero: numeroDelPresupuesto, tipo: 'error', texto: resultado.mensaje });
+        recargar();
+        break;
+      default:
+        setAviso({ numero: numeroDelPresupuesto, tipo: 'error', texto: resultado.mensaje });
+        break;
+    }
+  }
+
   return (
     <section className="pantalla pantalla--ancha">
       <h1>Presupuesto</h1>
@@ -183,6 +251,24 @@ export function Presupuesto() {
             />
           )}
         </div>
+      )}
+      {carga.tipo === 'listo' && (
+        <p>
+          {/*
+            FR-12, AC-12: en Borrador está deshabilitado (`disabled`); la Api tampoco genera el PDF de un Borrador (409).
+            Mientras descarga no se usa `disabled`, que le quitaría el foco: queda `aria-disabled` y `aria-busy`, y la
+            guarda de `descargarPdf` frena otro clic.
+          */}
+          <button
+            type="button"
+            disabled={carga.presupuesto.estado !== 'final'}
+            aria-disabled={descargando || undefined}
+            aria-busy={descargando || undefined}
+            onClick={() => void descargarPdf(carga.presupuesto.numero)}
+          >
+            Descargar PDF
+          </button>
+        </p>
       )}
       <p>
         <Link to="/presupuestos/nuevo">Nuevo presupuesto</Link>

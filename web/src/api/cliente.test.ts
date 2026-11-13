@@ -35,6 +35,10 @@ import {
   campoOrden,
   modificarPresupuesto,
   pasarPresupuestoAFinal,
+  buscarPresupuestos,
+  MENSAJE_BUSQUEDA_GRANDE,
+  descargarPdfPresupuesto,
+  MENSAJE_PRESUPUESTO_BORRADOR_PDF,
 } from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
@@ -1275,4 +1279,280 @@ describe('cliente de la Api: modificación y paso a Final del presupuesto (FEAT-
     expect(await pasarPresupuestoAFinal(-1, 3)).toEqual(NO_ENCONTRADO);
     expect(servidor.llamadas).toEqual([]);
   });
+});
+
+describe('cliente de la Api: búsqueda de presupuestos (FEAT-006)', () => {
+  const RUTA_BUSQUEDA = '/api/presupuestos/busqueda';
+  const CLAVE = `POST ${RUTA_BUSQUEDA}`;
+  const SIN_FILTROS = { apellido: '', nombre: '', dni: '', desde: '', hasta: '' };
+  /** Datos ficticios (Ley 25.326): ningún dato real de un cliente. */
+  const FILTRO = { apellido: '  González ', nombre: 'María', dni: '23.456', desde: '2026-03-10', hasta: '2026-03-20' };
+  const FILA = {
+    numero: 155,
+    fecha: '2026-03-10',
+    apellido: 'González',
+    nombre: 'María José',
+    dni: '23456789',
+    estado: 'final',
+    total: 2710.02,
+  };
+  const PAGINA = { presupuestos: [FILA], pagina: 1, tamanoPagina: 50, total: 1 };
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+
+  const cuerpoEnviado = (servidor: ReturnType<typeof servidorFalso>) => {
+    const [pedido] = servidor.pedidosA('POST', RUTA_BUSQUEDA);
+    return JSON.parse(String(pedido?.init?.body)) as unknown;
+  };
+
+  it('buscarPresupuestos envía el cuerpo y no pone filtros en la URL', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(200, PAGINA) });
+
+    expect(await buscarPresupuestos(FILTRO, 3)).toEqual({ tipo: 'ok', datos: PAGINA });
+
+    // R-02, ADR-019: la ruta es fija; Apellido, Nombre y DNI viajan solo en el cuerpo JSON.
+    expect(servidor.llamadas.map((l) => `${l.metodo} ${l.ruta}`)).toEqual([CLAVE]);
+    const [pedido] = servidor.llamadas;
+    expect(pedido?.ruta).not.toContain('?');
+    for (const valor of ['González', 'Gonz', 'María', '23.456', '2026-03']) {
+      expect(pedido?.ruta).not.toContain(valor);
+      expect(pedido?.ruta).not.toContain(encodeURIComponent(valor));
+    }
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+    // Los textos van recortados; la fecha en yyyy-MM-dd, como la da el campo de fecha.
+    expect(cuerpoEnviado(servidor)).toEqual({
+      apellido: 'González',
+      nombre: 'María',
+      dni: '23.456',
+      desde: '2026-03-10',
+      hasta: '2026-03-20',
+      pagina: 3,
+    });
+  });
+
+  it('buscarPresupuestos_SinFiltros_SoloLaPagina', async () => {
+    // D-23: una fecha vacía nunca viaja como "" (el servidor responde 400); los textos vacíos o en blanco tampoco.
+    const servidor = servidorFalso({ [CLAVE]: json(200, { ...PAGINA, presupuestos: [], total: 0 }) });
+
+    await buscarPresupuestos({ ...SIN_FILTROS, apellido: '   ', dni: ' ' }, 1);
+
+    expect(cuerpoEnviado(servidor)).toEqual({ pagina: 1 });
+  });
+
+  it('buscarPresupuestos_SoloHasta_NoEnviaDesde', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(200, PAGINA) });
+
+    await buscarPresupuestos({ ...SIN_FILTROS, hasta: '2026-03-10' }, 1);
+
+    expect(cuerpoEnviado(servidor)).toEqual({ hasta: '2026-03-10', pagina: 1 });
+  });
+
+  it('buscarPresupuestos_200_CopiaSoloLosSieteDatos', async () => {
+    servidorFalso({
+      [CLAVE]: json(200, {
+        ...PAGINA,
+        presupuestos: [{ ...FILA, domicilio: 'Calle Falsa 123', email: 'ana@example.com' }],
+        extra: 1,
+      }),
+    });
+
+    expect(await buscarPresupuestos(SIN_FILTROS, 1)).toEqual({ tipo: 'ok', datos: PAGINA });
+  });
+
+  it('buscarPresupuestos_200_PaginaPosteriorALaUltimaVacia', async () => {
+    const vacia3 = { presupuestos: [], pagina: 4, tamanoPagina: 50, total: 120 };
+    servidorFalso({ [CLAVE]: json(200, vacia3) });
+
+    expect(await buscarPresupuestos(SIN_FILTROS, 4)).toEqual({ tipo: 'ok', datos: vacia3 });
+  });
+
+  it.each([
+    ['sin la lista', { pagina: 1, tamanoPagina: 50, total: 1 }],
+    ['página 0', { ...PAGINA, pagina: 0 }],
+    ['tamaño 0', { ...PAGINA, tamanoPagina: 0 }],
+    ['total negativo', { ...PAGINA, total: -1 }],
+    ['número 0', { ...PAGINA, presupuestos: [{ ...FILA, numero: 0 }] }],
+    ['número como texto', { ...PAGINA, presupuestos: [{ ...FILA, numero: '155' }] }],
+    ['fecha inexistente', { ...PAGINA, presupuestos: [{ ...FILA, fecha: '2026-02-30' }] }],
+    ['fecha dd/mm/aaaa', { ...PAGINA, presupuestos: [{ ...FILA, fecha: '10/03/2026' }] }],
+    ['estado desconocido', { ...PAGINA, presupuestos: [{ ...FILA, estado: 'anulado' }] }],
+    ['total como texto', { ...PAGINA, presupuestos: [{ ...FILA, total: '2710.02' }] }],
+    ['total fuera del límite', { ...PAGINA, presupuestos: [{ ...FILA, total: IMPORTE_MAXIMO_SEGURO * 2 }] }],
+    ['apellido nulo', { ...PAGINA, presupuestos: [{ ...FILA, apellido: null }] }],
+    ['nombre ausente', { ...PAGINA, presupuestos: [{ ...FILA, nombre: undefined }] }],
+    ['dni como número', { ...PAGINA, presupuestos: [{ ...FILA, dni: 23456789 }] }],
+    ['fila nula', { ...PAGINA, presupuestos: [null] }],
+    ['cuerpo nulo', null],
+  ])('buscarPresupuestos_200Ilegible_%s', async (_caso, cuerpo) => {
+    servidorFalso({ [CLAVE]: json(200, cuerpo) });
+
+    expect(await buscarPresupuestos(SIN_FILTROS, 1)).toEqual(ILEGIBLE);
+  });
+
+  it('buscarPresupuestos_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      [CLAVE]: json(400, {
+        status: 400,
+        errors: {
+          desde: ['La fecha Desde no puede ser posterior a Hasta.'],
+          dni: ['Usá hasta 20 caracteres.'],
+        },
+      }),
+    });
+
+    expect(await buscarPresupuestos(FILTRO, 1)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'desde', mensaje: 'La fecha Desde no puede ser posterior a Hasta.' },
+        { campo: 'dni', mensaje: 'Usá hasta 20 caracteres.' },
+      ],
+    });
+  });
+
+  it('buscarPresupuestos_400SinErrores_MensajeGeneral', async () => {
+    servidorFalso({ [CLAVE]: vacia(400) });
+
+    expect(await buscarPresupuestos(FILTRO, 1)).toEqual({ tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO });
+  });
+
+  it('buscarPresupuestos_413_MensajeGeneralPropio', async () => {
+    servidorFalso({ [CLAVE]: problema(413, 'apellido', 'texto del servidor') });
+
+    expect(MENSAJE_BUSQUEDA_GRANDE).toBe('La búsqueda es demasiado larga.');
+    expect(await buscarPresupuestos(FILTRO, 1)).toEqual({ tipo: 'general', mensaje: MENSAJE_BUSQUEDA_GRANDE });
+  });
+
+  it('buscarPresupuestos_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [CLAVE]: vacia(401) });
+
+    expect(await buscarPresupuestos(FILTRO, 1)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+    alPerderLaSesion(null);
+  });
+
+  it.each([
+    ['falla de red', sinRed],
+    ['500', vacia(500)],
+  ])('buscarPresupuestos_%s_SinConexion', async (_caso, respuesta) => {
+    servidorFalso({ [CLAVE]: respuesta });
+
+    expect(await buscarPresupuestos(FILTRO, 1)).toEqual(ILEGIBLE);
+  });
+});
+
+describe('cliente de la Api: PDF del presupuesto (FEAT-006)', () => {
+  const RUTA_PDF = '/api/presupuestos/155/pdf';
+  const CLAVE = `GET ${RUTA_PDF}`;
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  /** El comienzo de un PDF: basta para comprobar que el cliente entrega los bytes tal cual. */
+  const BYTES_PDF = '%PDF-1.7\n';
+  const pdf = (tipo = 'application/pdf') => () =>
+    new Response(BYTES_PDF, {
+      status: 200,
+      headers: { 'Content-Type': tipo, 'Content-Disposition': 'attachment; filename=presupuesto-155.pdf' },
+    });
+  /** El 409 de la Api para un Borrador (D-11, D-16): el título y el detalle del servidor nunca se muestran. */
+  const conflicto = (motivo: unknown) =>
+    json(409, {
+      status: 409,
+      title: 'No se pudo generar el PDF del presupuesto.',
+      detail: 'El presupuesto está en Borrador.',
+      motivo,
+    });
+
+  it('descargarPdfPresupuesto_Final_DevuelveElPdfComoBlob', async () => {
+    const servidor = servidorFalso({ [CLAVE]: pdf() });
+
+    const resultado = await descargarPdfPresupuesto(155);
+
+    expect(resultado.tipo).toBe('ok');
+    const datos = (resultado as { tipo: 'ok'; datos: Blob }).datos;
+    // El `Blob` de `Response` es el de Node, no el de jsdom: se compara por su tipo y su contenido, no con instanceof.
+    expect(datos.type).toBe('application/pdf');
+    expect(await datos.text()).toBe(BYTES_PDF);
+    const pedidos = servidor.pedidosA('GET', RUTA_PDF);
+    expect(pedidos).toHaveLength(1);
+    // Mismo origen, con la cookie de la sesión y sin cuerpo (D-10).
+    expect(pedidos[0]?.init?.credentials).toBe('same-origin');
+    expect(pedidos[0]?.init?.body).toBeUndefined();
+  });
+
+  it('cliente: 409 con motivo borrador se lee como conflicto', async () => {
+    servidorFalso({ [CLAVE]: conflicto('borrador') });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({
+      tipo: 'conflicto',
+      motivo: 'borrador',
+      mensaje: MENSAJE_PRESUPUESTO_BORRADOR_PDF,
+    });
+    expect(MENSAJE_PRESUPUESTO_BORRADOR_PDF).toBe(
+      'El presupuesto está en Borrador: pasalo a Final para descargar el PDF.',
+    );
+  });
+
+  it.each(['final', 'cambiado', 'otro', undefined])('descargarPdfPresupuesto_409MotivoAjeno_%s_Ilegible', async (m) => {
+    servidorFalso({ [CLAVE]: conflicto(m) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('descargarPdfPresupuesto_401_SinSesionYAvisa', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [CLAVE]: vacia(401) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('descargarPdfPresupuesto_404_NoEncontrado', async () => {
+    servidorFalso({ [CLAVE]: vacia(404) });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual({
+      tipo: 'general',
+      mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+    });
+  });
+
+  it.each([
+    ['falla de red', sinRed],
+    ['500', vacia(500)],
+    // Una respuesta exitosa que no es un PDF no se entrega como archivo.
+    ['200 que no es PDF', pdf('application/json')],
+    ['200 sin tipo', () => new Response(BYTES_PDF, { status: 200, headers: { 'Content-Type': '' } })],
+    // Sin el encabezado: un cuerpo de bytes no le agrega un Content-Type, así `get` devuelve null.
+    ['200 sin encabezado de tipo', () => new Response(new TextEncoder().encode(BYTES_PDF), { status: 200 })],
+  ])('descargarPdfPresupuesto_%s_SinConexion', async (_caso, respuesta) => {
+    servidorFalso({ [CLAVE]: respuesta });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('descargarPdfPresupuesto_CuerpoIlegible_SinConexion', async () => {
+    servidorFalso({
+      [CLAVE]: () => {
+        const respuesta = new Response(BYTES_PDF, { status: 200, headers: { 'Content-Type': 'application/pdf' } });
+        vi.spyOn(respuesta, 'blob').mockRejectedValue(new TypeError('Failed to fetch'));
+        return respuesta;
+      },
+    });
+
+    expect(await descargarPdfPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    'descargarPdfPresupuesto_NumeroInvalido_%s_NoSeEnvia',
+    async (numero) => {
+      const servidor = servidorFalso({});
+
+      expect(await descargarPdfPresupuesto(numero)).toEqual({
+        tipo: 'general',
+        mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+      });
+      expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+    },
+  );
 });

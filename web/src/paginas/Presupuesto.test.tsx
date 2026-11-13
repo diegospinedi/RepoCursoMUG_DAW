@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
 afterEach(() => {
@@ -136,9 +136,13 @@ describe('Presupuesto', () => {
     expect(dato('Domicilio')).toBe('Calle Falsa 123');
     expect(dato('Email')).toBe('ana@mail.com');
     expect(dato('Nro. de Teléfono')).toBe('11 5555-0000');
-    // Solo lectura: ningún campo; la edición va por "Modificar" y el único botón es "Pasar a Final" (FEAT-003c).
+    // Solo lectura: ningún campo; la edición va por "Modificar" y los botones son "Pasar a Final" (FEAT-003c) y
+    // "Descargar PDF" (FEAT-006), este deshabilitado en Borrador.
     expect(within(pantalla()).queryAllByRole('textbox')).toEqual([]);
-    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Pasar a Final']);
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Pasar a Final',
+      'Descargar PDF',
+    ]);
   });
 
   it('Presupuesto_SinOpcionales_LosMuestraVacios', async () => {
@@ -272,7 +276,8 @@ describe('Presupuesto', () => {
     expect(JSON.parse(String(pedidos[0]?.init?.body))).toEqual({ estado: 'final', version: 3 });
     expect(dato('Estado')).toBe('Final');
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(within(pantalla()).queryAllByRole('button')).toEqual([]);
+    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
     // El botón que tenía el foco ya no existe: el foco va al aviso.
     expect(document.activeElement).toBe(aviso);
@@ -321,7 +326,8 @@ describe('Presupuesto', () => {
     await abrir({ ...GRABADO, estado: 'final' });
 
     expect(dato('Estado')).toBe('Final');
-    expect(within(pantalla()).queryAllByRole('button')).toEqual([]);
+    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
   });
 
@@ -343,7 +349,8 @@ describe('Presupuesto', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(dato('Estado')).toBe('Final'));
     expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2);
-    expect(within(pantalla()).queryAllByRole('button')).toEqual([]);
+    // En Final no hay acciones de edición: el único botón es "Descargar PDF" (FEAT-006).
+    expect(within(pantalla()).queryAllByRole('button').map((b) => b.textContent)).toEqual(['Descargar PDF']);
     expect(screen.queryByRole('link', { name: 'Modificar' })).toBeNull();
     expect(screen.queryByText(PASADO_A_FINAL)).toBeNull();
     // El botón ya no está: el foco va al mensaje, que sigue en pantalla después de recargar.
@@ -530,5 +537,274 @@ describe('Presupuesto', () => {
 
     expect(screen.getByRole('link', { name: 'Nuevo presupuesto' }).getAttribute('href')).toBe('/presupuestos/nuevo');
     expect(screen.getByRole('link', { name: 'Volver al inicio' }).getAttribute('href')).toBe('/');
+  });
+});
+
+describe('Presupuesto: Descargar PDF (FEAT-006)', () => {
+  const RUTA_PDF = '/api/presupuestos/155/pdf';
+  const FINAL = { ...GRABADO, estado: 'final', version: 4 };
+  const URL_DE_OBJETO = 'blob:prueba-pdf-155';
+  const MENSAJE_BORRADOR = 'El presupuesto está en Borrador: pasalo a Final para descargar el PDF.';
+  const BYTES_PDF = '%PDF-1.7\n';
+
+  const pdf = () => () =>
+    new Response(BYTES_PDF, {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename=presupuesto-155.pdf' },
+    });
+
+  /** Lo que pasó con la URL de objeto y el enlace temporal, en orden (D-10). */
+  let eventos: string[] = [];
+  let enlaces: { descarga: string; href: string | null; enDocumento: boolean }[] = [];
+  let blobs: Blob[] = [];
+
+  // jsdom no implementa `URL.createObjectURL` ni `URL.revokeObjectURL`, ni la descarga de un enlace: se simulan.
+  const urlEstatica = URL as unknown as Record<string, unknown>;
+  beforeEach(() => {
+    eventos = [];
+    enlaces = [];
+    blobs = [];
+    urlEstatica.createObjectURL = vi.fn((blob: Blob) => {
+      blobs.push(blob);
+      eventos.push('crear');
+      return URL_DE_OBJETO;
+    });
+    urlEstatica.revokeObjectURL = vi.fn((url: string) => {
+      eventos.push(`revocar ${url}`);
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      eventos.push('clic');
+      enlaces.push({ descarga: this.download, href: this.getAttribute('href'), enDocumento: this.isConnected });
+    });
+  });
+  afterEach(() => {
+    delete urlEstatica.createObjectURL;
+    delete urlEstatica.revokeObjectURL;
+  });
+
+  const botonPdf = () => within(pantalla()).getByRole('button', { name: 'Descargar PDF' });
+
+  /** Abre el presupuesto 155 con las respuestas indicadas y espera que se muestre. */
+  async function abrirCon(rutas: Parameters<typeof servidorFalso>[0]) {
+    const registro = servidorFalso(rutas);
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+    return registro;
+  }
+
+  it('Descargar PDF habilitado en Final y descarga presupuesto-N.pdf', async () => {
+    // AC-11 en pantalla: fetch, URL de objeto, enlace temporal con el nombre, clic y revocación (D-10).
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL), [`GET ${RUTA_PDF}`]: pdf() });
+    expect(botonPdf().hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(botonPdf());
+
+    await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
+    expect(registro.pedidosA('GET', RUTA_PDF)).toHaveLength(1);
+    expect(await blobs[0]?.text()).toBe(BYTES_PDF);
+    expect(enlaces).toEqual([{ descarga: 'presupuesto-155.pdf', href: URL_DE_OBJETO, enDocumento: true }]);
+    // El enlace temporal no queda en la página, y el botón vuelve a habilitarse.
+    expect(document.querySelector('a[download]')).toBeNull();
+    await waitFor(() => expect(botonPdf().hasAttribute('disabled')).toBe(false));
+    expect(within(pantalla()).queryByRole('alert')).toBeNull();
+  });
+
+  it('Descargar PDF deshabilitado en Borrador', async () => {
+    // AC-12: en Borrador el botón está deshabilitado (atributo `disabled`) y no pide nada a la Api.
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, GRABADO), [`GET ${RUTA_PDF}`]: pdf() });
+
+    expect(dato('Estado')).toBe('Borrador');
+    expect(botonPdf().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(botonPdf());
+
+    expect(registro.pedidosA('GET', RUTA_PDF)).toEqual([]);
+    expect(eventos).toEqual([]);
+  });
+
+  it('Descargar PDF: mientras descarga no lanza otra', async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    const pendiente = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL), [`GET ${RUTA_PDF}`]: () => pendiente });
+
+    const boton = botonPdf();
+    fireEvent.click(boton);
+    // El botón sigue habilitado (solo `aria-disabled`, para no perder el foco): el segundo clic llega al manejador y
+    // lo frena la guarda, sin otro pedido.
+    await waitFor(() => expect(botonPdf().getAttribute('aria-disabled')).toBe('true'));
+    expect(botonPdf().hasAttribute('disabled')).toBe(false);
+    fireEvent.click(botonPdf());
+    fireEvent.click(botonPdf());
+    expect(registro.pedidosA('GET', RUTA_PDF)).toHaveLength(1);
+
+    responder(pdf()());
+
+    await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
+    await waitFor(() => expect(botonPdf().hasAttribute('aria-disabled')).toBe(false));
+    expect(registro.pedidosA('GET', RUTA_PDF)).toHaveLength(1);
+  });
+
+  it('Descargar PDF: el botón conserva el foco durante y después de la descarga', async () => {
+    // WARN-1: con `disabled` nativo el navegador le quita el foco al botón mientras descarga; queda enfocable, con
+    // `aria-disabled` y `aria-busy` mientras dura el pedido.
+    let responder: (respuesta: Response) => void = () => {};
+    const pendiente = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL), [`GET ${RUTA_PDF}`]: () => pendiente });
+    const boton = botonPdf();
+    boton.focus();
+    expect(document.activeElement).toBe(boton);
+
+    fireEvent.click(boton);
+
+    await waitFor(() => expect(botonPdf().getAttribute('aria-busy')).toBe('true'));
+    expect(botonPdf().getAttribute('aria-disabled')).toBe('true');
+    expect(botonPdf().hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(botonPdf());
+
+    responder(pdf()());
+
+    await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
+    await waitFor(() => expect(botonPdf().hasAttribute('aria-busy')).toBe(false));
+    expect(botonPdf().hasAttribute('aria-disabled')).toBe(false);
+    expect(document.activeElement).toBe(botonPdf());
+  });
+
+  it('409 borrador: conflicto con mensaje propio y relectura', async () => {
+    // La pantalla quedó vieja (decía Final) y la Api responde 409 `borrador` (D-11): el texto propio, nunca el del
+    // servidor, y se vuelve a leer el presupuesto, que queda con el botón deshabilitado.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': [json(200, FINAL), json(200, GRABADO)],
+      [`GET ${RUTA_PDF}`]: json(409, {
+        status: 409,
+        title: 'No se pudo generar el PDF del presupuesto.',
+        detail: 'El presupuesto está en Borrador.',
+        motivo: 'borrador',
+      }),
+    });
+
+    fireEvent.click(botonPdf());
+
+    const alerta = await screen.findByText(MENSAJE_BORRADOR);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(screen.queryByText('El presupuesto está en Borrador.')).toBeNull();
+    expect(screen.queryByText('No se pudo generar el PDF del presupuesto.')).toBeNull();
+    await waitFor(() => expect(dato('Estado')).toBe('Borrador'));
+    expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2);
+    expect(botonPdf().hasAttribute('disabled')).toBe(true);
+    expect(eventos).toEqual([]);
+    // El mensaje sigue en pantalla después de releer.
+    expect(screen.getByText(MENSAJE_BORRADOR)).toBeTruthy();
+  });
+
+  it.each([
+    ['falla de red', sinRed],
+    ['500', vacia(500)],
+  ])('error de red al descargar: mensaje fijo (%s)', async (_caso, respuesta) => {
+    // Un mensaje fijo, sin archivo, y el botón vuelve a habilitarse para reintentar.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      [`GET ${RUTA_PDF}`]: [respuesta, pdf()],
+    });
+
+    fireEvent.click(botonPdf());
+
+    const alerta = await screen.findByText(MENSAJE_SIN_CONEXION);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(eventos).toEqual([]);
+    await waitFor(() => expect(botonPdf().hasAttribute('disabled')).toBe(false));
+    expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(1);
+
+    // Reintentar descarga y borra el mensaje anterior.
+    fireEvent.click(botonPdf());
+
+    await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
+    expect(screen.queryByText(MENSAJE_SIN_CONEXION)).toBeNull();
+  });
+
+  it('401 al descargar: no autorizado, va a ingreso', async () => {
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL), [`GET ${RUTA_PDF}`]: vacia(401) });
+
+    fireEvent.click(botonPdf());
+
+    expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso'));
+    expect(eventos).toEqual([]);
+  });
+
+  /**
+   * Abre el 155, pide su PDF (que queda pendiente) y vuelve al 156 con Atrás. Devuelve con qué responder el pedido del
+   * 155 y el registro de pedidos.
+   */
+  async function pedirPdfYCambiarDeNumero() {
+    let responder: (respuesta: Response) => void = () => {};
+    const pendiente = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    const registro = servidorFalso({
+      'GET /api/presupuestos/155': json(200, FINAL),
+      'GET /api/presupuestos/156': json(200, { ...FINAL, numero: 156 }),
+      [`GET ${RUTA_PDF}`]: () => pendiente,
+      'GET /api/presupuestos/156/pdf': pdf(),
+    });
+    const { volver } = renderizarApp(['/presupuestos/156', '/presupuestos/155']);
+    await screen.findByText('Número');
+    fireEvent.click(botonPdf());
+    await waitFor(() => expect(botonPdf().getAttribute('aria-busy')).toBe('true'));
+
+    await volver();
+    await waitFor(() => expect(dato('Número')).toBe('156'));
+    return { responder, registro };
+  }
+
+  it('Descargar PDF: un 500 tardío de otro número no pisa la pantalla', async () => {
+    const { responder } = await pedirPdfYCambiarDeNumero();
+
+    responder(new Response(null, { status: 500 }));
+
+    await waitFor(() => expect(botonPdf().hasAttribute('aria-disabled')).toBe(false));
+    expect(screen.queryByText(MENSAJE_SIN_CONEXION)).toBeNull();
+    expect(eventos).toEqual([]);
+  });
+
+  it('Descargar PDF: un PDF tardío de otro número no se descarga', async () => {
+    // WARN-2: aunque la respuesta sea un PDF válido, ya no le corresponde a la pantalla: ni URL de objeto ni clic.
+    const { responder, registro } = await pedirPdfYCambiarDeNumero();
+
+    const respuesta = pdf()();
+    let leido = false;
+    const blobOriginal = respuesta.blob.bind(respuesta);
+    vi.spyOn(respuesta, 'blob').mockImplementation(async () => {
+      const contenido = await blobOriginal();
+      leido = true;
+      return contenido;
+    });
+    responder(respuesta);
+
+    // El cliente leyó el PDF; después se deja terminar a la pantalla lo que haría con él.
+    await waitFor(() => expect(leido).toBe(true));
+    await act(async () => {
+      await new Promise((resolver) => setTimeout(resolver, 0));
+    });
+    expect(registro.pedidosA('GET', RUTA_PDF)).toHaveLength(1);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+    expect(eventos).toEqual([]);
+    expect(dato('Número')).toBe('156');
+  });
+
+  it('Descargar PDF: al cambiar de número el botón del presupuesto nuevo no queda bloqueado', async () => {
+    // INFO-3: la descarga pendiente del 155 no bloquea la del 156.
+    const { registro } = await pedirPdfYCambiarDeNumero();
+
+    expect(botonPdf().hasAttribute('aria-disabled')).toBe(false);
+    expect(botonPdf().hasAttribute('aria-busy')).toBe(false);
+    fireEvent.click(botonPdf());
+
+    await waitFor(() => expect(eventos).toEqual(['crear', 'clic', `revocar ${URL_DE_OBJETO}`]));
+    expect(registro.pedidosA('GET', '/api/presupuestos/156/pdf')).toHaveLength(1);
+    expect(enlaces[0]?.descarga).toBe('presupuesto-156.pdf');
   });
 });

@@ -44,16 +44,21 @@ cuenta estándar, sin permisos de administración. Quien administra la PC usa ot
 2. En la raíz del repositorio:
 
    ```powershell
-   dotnet publish src\Optica.Api\Optica.Api.csproj -c Release -o C:\Publicacion\OpticaSistema
+   dotnet publish src\Optica.Api\Optica.Api.csproj -c Release -r win-x64 --self-contained false -o C:\Publicacion\OpticaSistema
    ```
+
+   Publicá **siempre con `-r win-x64`**. El generador del PDF de los presupuestos (QuestPDF, ADR-018) trae binarios
+   nativos para 8 plataformas: sin `-r` se copian todos (unos 85 MB); con `-r win-x64`, solo los de Windows (unos
+   12 MB), que son los únicos que usa la PC del local (D-34 de FEAT-006, ADR-020). No pongas `RuntimeIdentifier` en el
+   `.csproj`: la CI corre en Linux y necesita los binarios de Linux.
 
    Publicá **siempre en Release**. En Release, `Directory.Build.props` reemplaza la ruta del repositorio por `/_/` en
    los ensamblados y en los PDB, y desactiva Source Link: así ni las trazas de error ni los PDB llevan la carpeta de
    usuario (con su nombre) de quien compiló ni la dirección del repositorio en GitHub (con el usuario de GitHub). La
    prueba `PublicacionSinRutasTests` (categoría `Publicacion`) lo comprueba sobre una publicación real. Una compilación
    Debug sí lleva esas rutas y Source Link: **no la instales**. Si preferís no distribuir los PDB,
-   agregá `-p:DebugType=none` al comando; las trazas pierden los números de línea. Si publicás desde Linux o WSL,
-   agregá `-r win-x64 --self-contained false` para obtener `Optica.Api.exe`.
+   agregá `-p:DebugType=none` al comando; las trazas pierden los números de línea. Con `-r win-x64` se obtiene
+   `Optica.Api.exe` también al publicar desde Linux o WSL.
 3. Copiá el contenido de `web\dist\` a `C:\Publicacion\OpticaSistema\wwwroot\`.
 4. Llevá la carpeta `C:\Publicacion\OpticaSistema` a la PC del local como `C:\OpticaSistema\App`.
 
@@ -108,6 +113,16 @@ domicilio, email y teléfono). Si está en un disco externo, tiene que ser NTFS 
 > implementado: es un riesgo aceptado mientras el sistema se usa como software de prueba, y se tiene que revisar antes
 > de cargar datos reales de clientes, de pasar a producción, al definir el backup (PRD 09) o si la PC se comparte (R-01
 > del modelo de amenazas de FEAT-003a, D-23 y D-27).
+
+> **El PDF del presupuesto lleva los datos del cliente (Ley 25.326).** El PDF que se descarga desde un presupuesto en
+> Final incluye el apellido, el nombre, el DNI, el domicilio, el email y el teléfono que el cliente haya dado, y el
+> navegador lo guarda en la carpeta **Descargas** de la cuenta de Windows que lo descargó. Ahí ya no lo protege el
+> sistema: borralo cuando lo hayas entregado o adjuntado, no lo dejes en una carpeta compartida y, si la PC la usan
+> varias personas, usá una cuenta de Windows por operadora (riesgo R-08 aceptado por las dueñas, FEAT-006, D-38).
+>
+> **Licencia de QuestPDF.** La generación del PDF usa QuestPDF con la licencia Community, gratuita solo si la empresa
+> factura menos de USD 1 millón por año (ADR-018). Si la óptica supera ese monto, hace falta comprar una licencia o
+> reemplazar el generador.
 
 ```powershell
 New-Item -ItemType Directory -Force D:\Backups\OpticaSistema

@@ -48,6 +48,9 @@ import {
   validarCliente,
   validarLineas,
   type TextosCliente,
+  MENSAJE_DESDE_POSTERIOR_A_HASTA,
+  mostrarFecha,
+  validarRangoFechas,
 } from './reglas';
 
 // Los caracteres invisibles se arman por su código: así el archivo no tiene ninguno escrito tal cual.
@@ -453,5 +456,30 @@ describe('reglas de la línea: cantidad, descuento y cálculo', () => {
     // D-02: 100,001 está fuera de rango y además tiene 3 decimales: gana el rango.
     expect(validarDescuento('100,001')).toEqual({ error: MENSAJE_DESCUENTO_FUERA_DE_RANGO });
     expect(validarDescuento('-0,001')).toEqual({ error: MENSAJE_DESCUENTO_FUERA_DE_RANGO });
+  });
+});
+
+describe('reglas de la búsqueda de presupuestos (FEAT-006)', () => {
+  it('validarRangoFechas', () => {
+    // El texto de AC-07, tal cual el del servidor (ValidacionPresupuesto.AccionDesdePosteriorAHasta).
+    expect(MENSAJE_DESDE_POSTERIOR_A_HASTA).toBe('La fecha Desde no puede ser posterior a Hasta.');
+    // Iguales: válidas (FR-05, límites inclusive).
+    expect(validarRangoFechas('2026-03-10', '2026-03-10')).toBeUndefined();
+    // Desde anterior a Hasta: válidas.
+    expect(validarRangoFechas('2026-03-10', '2026-03-20')).toBeUndefined();
+    // Desde posterior a Hasta: inválidas (AC-07).
+    expect(validarRangoFechas('2026-03-20', '2026-03-10')).toBe(MENSAJE_DESDE_POSTERIOR_A_HASTA);
+    // De un año al siguiente: se compara la fecha entera, no solo el día.
+    expect(validarRangoFechas('2026-12-31', '2027-01-01')).toBeUndefined();
+    expect(validarRangoFechas('2027-01-01', '2026-12-31')).toBe(MENSAJE_DESDE_POSTERIOR_A_HASTA);
+    // Una sola, o ninguna: válidas.
+    expect(validarRangoFechas('2026-03-20', '')).toBeUndefined();
+    expect(validarRangoFechas('', '2026-03-10')).toBeUndefined();
+    expect(validarRangoFechas('', '')).toBeUndefined();
+  });
+
+  it('mostrarFecha_DdMmAaaa', () => {
+    expect(mostrarFecha('2026-03-10')).toBe('10/03/2026');
+    expect(mostrarFecha('2027-12-01')).toBe('01/12/2027');
   });
 });

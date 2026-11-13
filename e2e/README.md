@@ -20,18 +20,22 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
 | `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5547 |
 | `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5548 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5549 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5550 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5551 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5552 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5553 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5554 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5555 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5556 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5557 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5558 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5559 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5560 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5549 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5550 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5551 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5552 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5553 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5554 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5555 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5556 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5557 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5558 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5559 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5560 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5561 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5562 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5563 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5564 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -44,8 +48,11 @@ movió `chrome-configuracion` de 5544 a 5545 y los de Edge de 5545–5546 a 5546
 (FEAT-003b) ocupa 5549 en Chrome y mueve los de Edge a 5550–5555, con el suyo en 5556; y `presupuestos-edicion.spec.ts`
 (FEAT-003c) ocupa 5550 en Chrome y mueve los de Edge a 5551–5557, con el suyo en 5558; y
 `presupuestos-concurrencia.spec.ts` (FEAT-003d) ocupa 5550 en Chrome, mueve `chrome-presupuestos-edicion` a 5551 y los
-de Edge a 5552–5558 y 5560, con el suyo en 5559. Son 18 proyectos, de 5543 a 5560. Si tenés algo fijado a un puerto,
-buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
+de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec.ts` y `presupuestos-pdf.spec.ts`
+(FEAT-006) ocupan 5549 y 5553 en Chrome, mueven `chrome-presupuestos-calculos`, `-concurrencia` y `-edicion` a
+5550–5552 y los de Edge a 5554–5559 y 5561–5563, con los suyos en 5560 y 5564. Son 22 proyectos, de 5543 a 5564. Si
+tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
+al arrancar.
 
 `articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
 y lo vuelve a 0,01 (AC-10), y al final deja Monotributo (AC-09). Por eso sus pruebas también van en ese orden.
@@ -107,11 +114,36 @@ Inscripto, 21 y 0,01), crea sus artículos con códigos en el proveedor propios 
 presupuesto testigo y compara los números con el de ese testigo, sin esperar un número fijo. Los clientes son
 ficticios, con DNI 99.999.9xx y emails en `example.com`, y cada prueba cierra sus dos contextos al terminar.
 
+`presupuestos-busqueda.spec.ts` (FEAT-006, AC-01 a AC-10 y la medición de NFR-01 en la pantalla) busca desde la
+pantalla `/presupuestos` por Apellido, Nombre, DNI y fechas, pagina y abre un resultado. Ninguna fecha se modifica en la
+base: todos los presupuestos tienen la fecha del día en que se graban, así que los filtros de fecha se prueban con el
+día anterior, el mismo y el siguiente (límites inclusive, una sola fecha cargada y Desde posterior a Hasta, que no
+envía la búsqueda); los rangos con fechas de marzo de 2026 se prueban en .NET con reloj falso. Solo la primera prueba
+graba Apellidos con "González" y "Gómez", el Nombre "María José" y un DNI que contiene "23456" (99.923.456, ficticio), así esas
+búsquedas tienen un resultado exacto. La prueba de AC-08 graba por la Api hasta que el último número es 120 (falla si la
+base ya lo pasó) y verifica las páginas 1 (120 a 71) y 3 (20 a 1); la de NFR-01 mide desde la pulsación de Buscar hasta
+la grilla, que tiene que aparecer en menos de 2 s (el volumen de 10.000 presupuestos de AC-16 se mide en las pruebas de
+la Api, D-03). Cada búsqueda verifica que los filtros viajan en el cuerpo y no en la URL. Sus pruebas no dependen del
+orden: cada una deja por la Api la configuración de partida y crea sus artículos con códigos propios (`PB-…`).
+
+`presupuestos-pdf.spec.ts` (FEAT-006, AC-11 y AC-12) descarga el PDF de un presupuesto en Final con el botón
+"Descargar PDF" (evento `download` de Playwright), comprueba el nombre `presupuesto-{n}.pdf`, que la descarga sale de
+una URL de objeto con la Content-Security-Policy de la SPA activa y sin violaciones, y lee el archivo en Node con el build
+`legacy` de `pdfjs-dist` (sin worker, sin fuentes del sistema y sin ninguna URL de fuentes, CMaps o wasm): tiene que
+ser un PDF válido con el texto "Presupuesto N.º {n}". El contenido completo del PDF se verifica en .NET con PdfPig
+(D-02). En Borrador el botón está deshabilitado y un pedido directo a la Api, con la sesión, recibe 409 `borrador` sin
+PDF. Sus pruebas no dependen del orden; los artículos usan códigos propios (`PP-…`) y el cliente es ficticio.
+`pdfjs-dist` trae como dependencia opcional `@napi-rs/canvas`, un binario nativo por plataforma que `npm ci` instala
+solo para la plataforma donde corre (en Linux x64, las variantes glibc y musl; en Windows x64, la de MSVC).
+`pdfjs-dist` lo carga al importarse para `DOMMatrix` y `Path2D`; la suite no dibuja páginas y, si el binario falta, solo
+hay advertencias.
+
 Dentro de un proyecto las pruebas corren en orden y de a una porque así lo fija `playwright.config.ts`
 (`workers: 1`, `fullyParallel: false`): comparten la base del proyecto. Solo algunos archivos dependen además de lo que
 dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts` y la primera prueba de
-`presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-calculos.spec.ts`,
-`presupuestos-concurrencia.spec.ts` y `presupuestos-edicion.spec.ts` no dependen del orden, como se describe arriba.
+`presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
+`presupuestos-calculos.spec.ts`, `presupuestos-concurrencia.spec.ts`, `presupuestos-edicion.spec.ts` y
+`presupuestos-pdf.spec.ts` no dependen del orden, como se describe arriba.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
 `npx playwright test --project=msedge-configuracion`.
 
@@ -199,6 +231,7 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
 (proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion`,
-`chromium-configuracion-recalculo`, `chromium-presupuestos-alta`, `chromium-presupuestos-calculos`,
-`chromium-presupuestos-concurrencia` y `chromium-presupuestos-edicion`).
+`chromium-configuracion-recalculo`, `chromium-presupuestos-alta`, `chromium-presupuestos-busqueda`,
+`chromium-presupuestos-calculos`, `chromium-presupuestos-concurrencia`, `chromium-presupuestos-edicion` y
+`chromium-presupuestos-pdf`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

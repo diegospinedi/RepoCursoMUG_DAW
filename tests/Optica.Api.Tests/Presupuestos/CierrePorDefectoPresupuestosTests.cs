@@ -66,7 +66,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Equal("El presupuesto está en Final y no se puede modificar.", ValidacionPresupuesto.DetalleFinal);
     }
 
-    /// <summary>El helper del 409 de presupuestos solo acepta sus dos motivos; el de artículos sigue con los suyos.</summary>
+    /// <summary>El helper del 409 de presupuestos solo acepta sus tres motivos; el de artículos sigue con los suyos.</summary>
     [Fact]
     public void ConflictoPresupuesto_MotivoAjeno_Lanza()
     {
@@ -75,6 +75,63 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto("inactivo", "Texto."));
         Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo(RespuestasValidacion.MotivoFinal, "Texto."));
         Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto(RespuestasValidacion.MotivoFinal, " "));
+    }
+
+    /// <summary>
+    /// FEAT-006 (D-11, D-16): el helper del 409 de presupuestos acepta <c>borrador</c>, con su propio título "No se pudo
+    /// generar el PDF del presupuesto." y el texto recibido; <c>final</c> y <c>cambiado</c> conservan el título de la
+    /// grabación. El helper de artículos no acepta <c>borrador</c>.
+    /// </summary>
+    [Fact]
+    public void ConflictoPresupuesto_MotivoBorrador_Aceptado()
+    {
+        var controller = Crear();
+
+        Assert.Equal("borrador", RespuestasValidacion.MotivoBorrador);
+        var borrador = Assert.IsType<ObjectResult>(
+            controller.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, "El presupuesto está en Borrador."));
+        Assert.Equal(StatusCodes.Status409Conflict, borrador.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(borrador.Value);
+        Assert.Equal("No se pudo generar el PDF del presupuesto.", problema.Title);
+        Assert.Equal("El presupuesto está en Borrador.", problema.Detail);
+        Assert.Equal("borrador", problema.Extensions["motivo"]);
+
+        foreach (var motivo in new[] { RespuestasValidacion.MotivoFinal, RespuestasValidacion.MotivoCambiado })
+        {
+            var otro = Assert.IsType<ProblemDetails>(
+                Assert.IsType<ObjectResult>(controller.ConflictoPresupuesto(motivo, "Texto.")).Value);
+            Assert.Equal("No se pudo grabar el presupuesto.", otro.Title);
+        }
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo(RespuestasValidacion.MotivoBorrador, "Texto."));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, " "));
+    }
+
+    /// <summary>
+    /// FEAT-006: el traductor del PDF es cerrado por defecto. Generado, 200 <c>application/pdf</c> como adjunto
+    /// <c>presupuesto-{numero}.pdf</c>; no encontrado, 404; Borrador, 409 <c>borrador</c> con el texto de la aplicación.
+    /// Cualquier otro resultado lanza.
+    /// </summary>
+    [Fact]
+    public void ResponderPdf_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderPdf(5, null));
+
+        var archivo = Assert.IsType<FileContentResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.Generado([1, 2, 3])));
+        Assert.Equal("application/pdf", archivo.ContentType);
+        Assert.Equal("presupuesto-5.pdf", archivo.FileDownloadName);
+        Assert.Equal([1, 2, 3], archivo.FileContents);
+
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+
+        var borrador = Assert.IsType<ObjectResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.Borrador));
+        Assert.Equal(StatusCodes.Status409Conflict, borrador.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(borrador.Value);
+        Assert.Equal("borrador", problema.Extensions["motivo"]);
+        Assert.Equal(GenerarPdfPresupuesto.DetalleBorrador, problema.Detail);
     }
 
     /// <summary>FEAT-003c: <c>version</c> y <c>lineas[i].orden</c> tienen su propio campo en un error de lectura.</summary>
@@ -183,6 +240,9 @@ public sealed class CierrePorDefectoPresupuestosTests
                 .ToString(),
             new SolicitudEstadoPresupuesto("Zq7-estado", 987654321).ToString(),
             new DatosLinea(987654321, 7531, 12.34m, 7531).ToString(),
+            // FEAT-006: la solicitud de la búsqueda (ADR-019).
+            new SolicitudBusquedaPresupuestos("Zq7Apellido", "Zq7Nombre", "30111222", "2026-03-10", "2026-03-20", 7531)
+                .ToString(),
         };
 
         foreach (var texto in textos)
@@ -198,12 +258,57 @@ public sealed class CierrePorDefectoPresupuestosTests
         }
     }
 
+    /// <summary>
+    /// FEAT-006 (ADR-019, Ley 25.326): la solicitud de la búsqueda y la respuesta de la página no muestran Apellido,
+    /// Nombre, DNI, fechas, página ni importes en <see cref="object.ToString"/>; MVC registra en Trace los argumentos de la
+    /// acción. Datos ficticios.
+    /// </summary>
+    [Fact]
+    public void SolicitudBusqueda_ToString_SinValores()
+    {
+        var textos = new[]
+        {
+            new SolicitudBusquedaPresupuestos("Zq7Apellido", "Zq7Nombre", "30111222", "2026-03-10", "2026-03-20", 7531)
+                .ToString(),
+            new ListadoPresupuestos(
+                [new PresupuestoListado(
+                    987654321, new DateOnly(2026, 3, 10), "Zq7Apellido", "Zq7Nombre", "30111222", "final", 12.34m)],
+                7531,
+                50,
+                7531).ToString(),
+        };
+
+        foreach (var texto in textos)
+        {
+            Assert.DoesNotContain("Zq7", texto, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("30111222", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("2026", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("987654321", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("7531", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12.34", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12,34", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("=", texto, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>El traductor de la búsqueda es cerrado por defecto: un resultado no previsto lanza; inválido, 400.</summary>
+    [Fact]
+    public void ResponderBusqueda_Cerrado()
+    {
+        var controller = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderBusqueda(null));
+        var invalido = Assert.IsType<ObjectResult>(controller.ResponderBusqueda(ResultadoBusquedaPresupuestos.Invalido(
+            [new ErrorValidacion(ValidacionPresupuesto.CampoPagina, ValidacionPresupuesto.AccionPaginaFueraDeRango)])));
+        Assert.Equal(StatusCodes.Status400BadRequest, invalido.StatusCode);
+    }
+
     private static PresupuestosController Crear()
     {
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

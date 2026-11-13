@@ -220,6 +220,74 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-006 (ADR-019, R-02): la búsqueda de presupuestos trae Apellido, Nombre y DNI; su 200, su 400 por validación y
+    /// su 400 por cuerpo ilegible responden con <c>no-store</c>.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_RespuestaNoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await Http.PostJsonAsync(cliente, RutaPresupuestos, CuerpoPresupuesto(codigo), cookie)).StatusCode);
+
+        var encontrada = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"apellido\":\"ficticio\"}", cookie);
+        Assert.Equal(HttpStatusCode.OK, encontrada.StatusCode);
+        Assert.Equal(1, (await Http.JsonAsync(encontrada)).GetProperty("total").GetInt32());
+        AfirmarNoStore(encontrada, "POST /api/presupuestos/busqueda");
+
+        var invalida = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"desde\":\"2026-02-30\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalida.StatusCode);
+        AfirmarNoStore(invalida, "400 de la búsqueda");
+
+        var ilegible = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"pagina\":\"2\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        AfirmarNoStore(ilegible, "400 de un cuerpo de búsqueda ilegible");
+    }
+
+    private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    /// <summary>
+    /// FEAT-006 (R-02): el PDF lleva los datos del cliente; su 200 (<c>application/pdf</c>), su 409 <c>borrador</c> y su
+    /// 404 responden con <c>no-store</c>, como el resto de <c>/api</c>.
+    /// </summary>
+    [Fact]
+    public async Task GetPdf_RespuestaNoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var alta = await Http.PostJsonAsync(cliente, RutaPresupuestos, CuerpoPresupuesto(codigo), cookie);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var numero = (await Http.JsonAsync(alta)).GetProperty("numero").GetInt64();
+
+        var borrador = await Http.GetAsync(cliente, $"{RutaPresupuestos}/{numero}/pdf", cookie);
+        Assert.Equal(HttpStatusCode.Conflict, borrador.StatusCode);
+        AfirmarNoStore(borrador, "409 del PDF de un Borrador");
+
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}/estado",
+            new StringContent("{\"estado\":\"final\",\"version\":0}", Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+
+        var pdf = await Http.GetAsync(cliente, $"{RutaPresupuestos}/{numero}/pdf", cookie);
+        Assert.Equal(HttpStatusCode.OK, pdf.StatusCode);
+        Assert.Equal("application/pdf", pdf.Content.Headers.ContentType?.MediaType);
+        AfirmarNoStore(pdf, "GET /api/presupuestos/{numero}/pdf");
+
+        var inexistente = await Http.GetAsync(cliente, $"{RutaPresupuestos}/999/pdf", cookie);
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+        AfirmarNoStore(inexistente, "404 del PDF");
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

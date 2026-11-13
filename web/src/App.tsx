@@ -4,6 +4,7 @@ import { alPerderLaSesion } from './api/cliente';
 import { Encabezado } from './componentes/Encabezado';
 import { MarcaProvider } from './marca/MarcaProvider';
 import { Articulos } from './paginas/Articulos';
+import { BuscarPresupuestos } from './paginas/BuscarPresupuestos';
 import { CambiarContrasena } from './paginas/CambiarContrasena';
 import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
@@ -43,6 +44,8 @@ export function App() {
             {/* El alta antes que la edición: "nuevo" no es un código (react-router ya prefiere el segmento fijo). */}
             <Route path="/articulos/nuevo" element={<NuevoArticulo />} />
             <Route path="/articulos/:codigo" element={<EditarArticulo />} />
+            {/* La búsqueda (FEAT-006): los filtros viven en la pantalla, nunca en la URL (R-02). */}
+            <Route path="/presupuestos" element={<BuscarPresupuestos />} />
             {/* Como en artículos: "nuevo" es el alta, no el presupuesto con ese número. */}
             <Route path="/presupuestos/nuevo" element={<NuevoPresupuesto />} />
             <Route path="/presupuestos/:numero" element={<Presupuesto />} />

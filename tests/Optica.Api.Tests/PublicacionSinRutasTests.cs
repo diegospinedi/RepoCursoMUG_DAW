@@ -47,6 +47,12 @@ public sealed class PublicacionSinRutasTests : IDisposable
             Assert.True(File.Exists(archivo), $"La publicación no tiene {Path.GetFileName(archivo)}.");
         }
 
+        // La fuente Lato de QuestPDF viaja con la publicación: el PDF del presupuesto no usa fuentes del sistema
+        // (D-14 de FEAT-006).
+        Assert.True(
+            File.Exists(Path.Combine(_salida, "QuestPDF.Fonts.Lato.br")),
+            "La publicación no tiene la fuente QuestPDF.Fonts.Lato.br.");
+
         var prohibidas = RutasProhibidas(repositorio);
         var textosProhibidos = TextosProhibidos();
         foreach (var archivo in ensamblados.Concat(pdbs))

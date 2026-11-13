@@ -34,6 +34,8 @@ export const MENSAJE_LISTADO_CAMBIADO = 'El artículo cambió. Volvé a cargar e
  */
 export const MENSAJE_PRESUPUESTO_CAMBIADO = 'El presupuesto cambió mientras lo editabas. Volvé a abrirlo.';
 export const MENSAJE_PRESUPUESTO_FINAL = 'El presupuesto está en Final y no se puede modificar.';
+/** El 409 `borrador` del PDF (FEAT-006, D-11): la pantalla quedó vieja y el presupuesto sigue en Borrador. */
+export const MENSAJE_PRESUPUESTO_BORRADOR_PDF = 'El presupuesto está en Borrador: pasalo a Final para descargar el PDF.';
 
 /** Campo de la contraseña en el cuerpo y en `errors` de la Api. */
 export const CAMPO_CONTRASENA = 'contrasena';
@@ -95,10 +97,13 @@ export interface PaginaArticulos {
   total: number;
 }
 
-/** Los motivos de un 409: los de los artículos (D-19) y `final` del presupuesto (FEAT-003c, D-05). */
-export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final';
+/**
+ * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05) y `borrador` del PDF
+ * del presupuesto (FEAT-006, D-11).
+ */
+export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final' | 'borrador';
 
-const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final'];
+const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final', 'borrador'];
 
 const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
 
@@ -869,6 +874,173 @@ export const pasarPresupuestoAFinal = (numero: number, version: number): Promise
         resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
       )
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/** El tipo de contenido del PDF del presupuesto (con o sin parámetros, como `; charset`). */
+const TIPO_PDF = /^application\/pdf\s*(;|$)/i;
+
+/**
+ * El PDF de un presupuesto en Final (FEAT-006, FR-11, FR-12) con `GET /api/presupuestos/{numero}/pdf`: los bytes tal
+ * cual, como `Blob`, para que la pantalla los descargue con una URL de objeto (D-10). La respuesta exitosa se lee con
+ * `blob()` y no con `leerJson`; los errores pasan por la misma traducción que los demás pedidos: un 401 sin cuerpo avisa
+ * a {@link alPerderLaSesion}; un 409 `borrador` (D-11) es un conflicto con
+ * {@link MENSAJE_PRESUPUESTO_BORRADOR_PDF}, y cualquier otro motivo, una respuesta ilegible; un 404, "No se encontró el
+ * presupuesto.". Una falla de red, un 5xx, una respuesta exitosa que no es `application/pdf` o un cuerpo que no se
+ * pudo leer son {@link MENSAJE_SIN_CONEXION}. Un número que no puede existir no se envía.
+ */
+export async function descargarPdfPresupuesto(numero: number): Promise<Resultado<Blob>> {
+  if (!esEnteroEntre(numero, 1)) {
+    return { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+  }
+  const respuesta = await enviar({
+    metodo: 'GET',
+    ruta: `/api/presupuestos/${numero}/pdf`,
+    motivos409: { borrador: MENSAJE_PRESUPUESTO_BORRADOR_PDF },
+    mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+  });
+  if (respuesta.tipo !== 'respuesta') {
+    return respuesta;
+  }
+  if (!TIPO_PDF.test(respuesta.respuesta.headers.get('Content-Type') ?? '')) {
+    return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  }
+  try {
+    return { tipo: 'ok', datos: await respuesta.respuesta.blob() };
+  } catch {
+    return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  }
+}
+
+/*
+ * Búsqueda de presupuestos (FEAT-006, ADR-019).
+ */
+
+/** El 413 de la búsqueda: un mensaje general propio, no en un campo (la pantalla limita los largos). */
+export const MENSAJE_BUSQUEDA_GRANDE = 'La búsqueda es demasiado larga.';
+/** Campos del cuerpo y de `errors` de `POST /api/presupuestos/busqueda` que no comparte con el alta. */
+export const CAMPO_DESDE = 'desde';
+export const CAMPO_HASTA = 'hasta';
+export const CAMPO_PAGINA = 'pagina';
+
+/**
+ * Lo escrito en el formulario de la búsqueda: textos tal cual y fechas `yyyy-MM-dd` o vacías. Datos personales
+ * (Ley 25.326): viajan solo en el cuerpo JSON, nunca en la URL, en el almacenamiento del navegador ni en la consola.
+ */
+export interface FiltroPresupuestos {
+  apellido: string;
+  nombre: string;
+  dni: string;
+  desde: string;
+  hasta: string;
+}
+
+/** Un resultado de la búsqueda: los siete datos de FR-09, y nada más. */
+export interface PresupuestoListado {
+  numero: number;
+  /** `yyyy-MM-dd`. */
+  fecha: string;
+  apellido: string;
+  nombre: string;
+  dni: string;
+  estado: EstadoPresupuesto;
+  total: number;
+}
+
+/** Una página de la búsqueda; una página posterior a la última trae la lista vacía y el total. */
+export interface PaginaPresupuestos {
+  presupuestos: PresupuestoListado[];
+  pagina: number;
+  tamanoPagina: number;
+  total: number;
+}
+
+/** El resultado de buscar: como {@link ResultadoAlta}, un 400 trae todos los campos inválidos. */
+export type ResultadoBusquedaPresupuestos = Resultado<PaginaPresupuestos> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+/** Un resultado: solo copia los siete datos; si la respuesta trajera otros datos del cliente, se descartan. */
+const leerPresupuestoListado: Lector<PresupuestoListado> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  esEnteroEntre(cuerpo.numero, 1) &&
+  esFecha(cuerpo.fecha) &&
+  typeof cuerpo.apellido === 'string' &&
+  typeof cuerpo.nombre === 'string' &&
+  typeof cuerpo.dni === 'string' &&
+  esEstadoPresupuesto(cuerpo.estado) &&
+  esImporte(cuerpo.total)
+    ? {
+        numero: cuerpo.numero,
+        fecha: cuerpo.fecha,
+        apellido: cuerpo.apellido,
+        nombre: cuerpo.nombre,
+        dni: cuerpo.dni,
+        estado: cuerpo.estado,
+        total: cuerpo.total,
+      }
+    : undefined;
+
+/** Una página de la búsqueda: cualquier resultado ilegible hace ilegible la página entera. */
+const leerPaginaPresupuestos: Lector<PaginaPresupuestos> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    !Array.isArray(cuerpo.presupuestos) ||
+    !esEnteroEntre(cuerpo.pagina, 1) ||
+    !esEnteroEntre(cuerpo.tamanoPagina, 1) ||
+    !esEnteroEntre(cuerpo.total, 0)
+  ) {
+    return undefined;
+  }
+  const presupuestos: PresupuestoListado[] = [];
+  for (const elemento of cuerpo.presupuestos as unknown[]) {
+    const fila = leerPresupuestoListado(elemento);
+    if (fila === undefined) {
+      return undefined;
+    }
+    presupuestos.push(fila);
+  }
+  return { presupuestos, pagina: cuerpo.pagina, tamanoPagina: cuerpo.tamanoPagina, total: cuerpo.total };
+};
+
+/**
+ * El cuerpo de la búsqueda: cada filtro recortado y solo si quedó cargado, y la página. Un campo vacío se omite: la Api
+ * responde 400 a una fecha `""` (D-23), y un texto vacío no es un filtro.
+ */
+function cuerpoBusqueda(filtro: FiltroPresupuestos, pagina: number): Record<string, string | number> {
+  const cuerpo: Record<string, string | number> = {};
+  const campos: [string, string][] = [
+    [CAMPO_APELLIDO, filtro.apellido],
+    [CAMPO_NOMBRE, filtro.nombre],
+    [CAMPO_DNI, filtro.dni],
+    [CAMPO_DESDE, filtro.desde],
+    [CAMPO_HASTA, filtro.hasta],
+  ];
+  for (const [campo, valor] of campos) {
+    const recortado = valor.trim();
+    if (recortado !== '') {
+      cuerpo[campo] = recortado;
+    }
+  }
+  cuerpo[CAMPO_PAGINA] = pagina;
+  return cuerpo;
+}
+
+/**
+ * Busca presupuestos (FEAT-006, FR-01 a FR-09) con `POST /api/presupuestos/busqueda`: los filtros viajan en el cuerpo
+ * JSON y nunca en la URL (ADR-019, R-02). Un 400 devuelve TODOS los campos de `errors`; un 413, el mensaje general
+ * {@link MENSAJE_BUSQUEDA_GRANDE}; un 401 sin cuerpo avisa a {@link alPerderLaSesion}; una falla de red, un 5xx o una
+ * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}.
+ */
+export const buscarPresupuestos = (
+  filtro: FiltroPresupuestos,
+  pagina: number,
+): Promise<ResultadoBusquedaPresupuestos> =>
+  grabarConCampos(
+    {
+      metodo: 'POST',
+      ruta: '/api/presupuestos/busqueda',
+      cuerpo: cuerpoBusqueda(filtro, pagina),
+      mensaje413: MENSAJE_BUSQUEDA_GRANDE,
+    },
+    leerPaginaPresupuestos,
+  );
 
 /**
  * Modifica los datos de un artículo con la versión que leyó la pantalla (D-08, D-17) y devuelve lo grabado, con el

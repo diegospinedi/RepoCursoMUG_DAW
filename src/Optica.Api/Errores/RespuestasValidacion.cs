@@ -22,6 +22,13 @@ public static class RespuestasValidacion
     public const string AccionCuerpoIlegibleConfiguracion =
         "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
 
+    /// <summary>
+    /// Acción para un cuerpo de la búsqueda de presupuestos que no se pudo leer (FEAT-006): JSON roto o vacío, un tipo
+    /// incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice "grabá".
+    /// </summary>
+    public const string AccionCuerpoIlegibleBusqueda =
+        "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";
+
     /// <summary>400 con <c>errors.{campo}</c> y la acción de cada error.</summary>
     public static ActionResult Invalido(this ControllerBase controller, params ErrorValidacion[] errores) =>
         controller.ConErrores(StatusCodes.Status400BadRequest, detalle: null, errores);
@@ -127,29 +134,42 @@ public static class RespuestasValidacion
         return controller.Conflicto409(TituloConflictoArticulo, motivo, detalle);
     }
 
-    // El 409 de los presupuestos (D-05 de FEAT-003c): su título fijo y su propio motivo; "cambiado" se comparte.
+    // El 409 de los presupuestos (D-05 de FEAT-003c): su título fijo y su propio motivo; "cambiado" se comparte. FEAT-006
+    // suma "borrador" (D-11), con su propio título (D-16).
 
     /// <summary>El <c>title</c> fijo de los 409 de la modificación y del paso a Final de un presupuesto (D-05).</summary>
     public const string TituloConflictoPresupuesto = "No se pudo grabar el presupuesto.";
+
+    /// <summary>El <c>title</c> fijo del 409 <c>borrador</c> del PDF de un presupuesto (FEAT-006, D-16).</summary>
+    public const string TituloConflictoPdfPresupuesto = "No se pudo generar el PDF del presupuesto.";
 
     /// <summary>Valor de la extensión <c>motivo</c> de un 409: el presupuesto está en Final (FR-05, FR-06).</summary>
     public const string MotivoFinal = "final";
 
     /// <summary>
-    /// 409 con ProblemDetails para un presupuesto que no se pudo grabar (D-05): <c>title</c> fijo
-    /// (<see cref="TituloConflictoPresupuesto"/>), <paramref name="detalle"/> en <c>detail</c> (el texto fijo de la
-    /// aplicación, que no repite datos recibidos) y <paramref name="motivo"/> en la extensión <c>motivo</c>
-    /// (<see cref="MotivoFinal"/> o <see cref="MotivoCambiado"/>). Sin <c>errors</c>: no es un error de un campo.
+    /// Valor de la extensión <c>motivo</c> de un 409: el presupuesto está en Borrador y no se genera su PDF (FR-12 de
+    /// FEAT-006, D-11).
     /// </summary>
-    /// <exception cref="ArgumentException">El motivo no es uno de los dos previstos, o el detalle está vacío.</exception>
+    public const string MotivoBorrador = "borrador";
+
+    /// <summary>
+    /// 409 con ProblemDetails para un presupuesto que no se pudo grabar o cuyo PDF no se pudo generar: <c>title</c> fijo
+    /// según el motivo (<see cref="TituloConflictoPresupuesto"/> para <see cref="MotivoFinal"/> y
+    /// <see cref="MotivoCambiado"/>, D-05; <see cref="TituloConflictoPdfPresupuesto"/> para <see cref="MotivoBorrador"/>,
+    /// D-16), <paramref name="detalle"/> en <c>detail</c> (el texto fijo de la aplicación, que no repite datos recibidos)
+    /// y <paramref name="motivo"/> en la extensión <c>motivo</c>. Sin <c>errors</c>: no es un error de un campo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los tres previstos, o el detalle está vacío.</exception>
     public static ActionResult ConflictoPresupuesto(this ControllerBase controller, string motivo, string detalle)
     {
-        if (motivo is not (MotivoFinal or MotivoCambiado))
+        var titulo = motivo switch
         {
-            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
-        }
+            MotivoFinal or MotivoCambiado => TituloConflictoPresupuesto,
+            MotivoBorrador => TituloConflictoPdfPresupuesto,
+            _ => throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo)),
+        };
 
-        return controller.Conflicto409(TituloConflictoPresupuesto, motivo, detalle);
+        return controller.Conflicto409(titulo, motivo, detalle);
     }
 
     /// <summary>

@@ -63,6 +63,27 @@ export const TEXTO_CONFIRMAR_FINAL = 'Una vez en Final, el presupuesto no se pue
 /** La confirmación del paso a Final. */
 export const mensajePasadoAFinal = (numero: number) => `Presupuesto N.º ${numero} pasado a Final.`;
 
+/*
+ * Búsqueda de presupuestos (FEAT-006). El texto de AC-07 es el mismo del servidor
+ * (`ValidacionPresupuesto.AccionDesdePosteriorAHasta`): la pantalla lo muestra junto a Desde sin llamar a la Api.
+ */
+export const MENSAJE_DESDE_POSTERIOR_A_HASTA = 'La fecha Desde no puede ser posterior a Hasta.';
+
+/**
+ * El mensaje de Desde cuando las dos fechas están cargadas y Desde es posterior a Hasta (FR-06, AC-07); si no,
+ * `undefined`. Iguales es válido (FR-05, límites inclusive) y una sola o ninguna también. Recibe el valor de un campo
+ * de fecha (`yyyy-MM-dd` o vacío): ese formato se compara como texto en el mismo orden que las fechas.
+ */
+export function validarRangoFechas(desde: string, hasta: string): string | undefined {
+  return desde !== '' && hasta !== '' && desde > hasta ? MENSAJE_DESDE_POSTERIOR_A_HASTA : undefined;
+}
+
+/** `yyyy-MM-dd` como dd/mm/aaaa, desde el texto: sin `Date`, así no depende de la zona horaria. */
+export function mostrarFecha(fecha: string): string {
+  const [anio, mes, dia] = fecha.split('-');
+  return `${dia}/${mes}/${anio}`;
+}
+
 /**
  * El número de presupuesto de una ruta, si es un entero positivo escrito sin ceros a la izquierda y dentro de los
  * enteros seguros; si no, `null` (no puede existir y no se consulta).

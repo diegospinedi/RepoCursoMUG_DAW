@@ -345,5 +345,9 @@ public class ConcurrenciaPresupuestosTests
 
         public void CambiarEstado(Presupuesto presupuesto, long versionOriginal) =>
             real.CambiarEstado(presupuesto, versionOriginal);
+
+        public Task<PaginaPresupuestos> BuscarAsync(
+            FiltroPresupuestos filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default) =>
+            real.BuscarAsync(filtro, pagina, tamanoPagina, cancelacion);
     }
 }

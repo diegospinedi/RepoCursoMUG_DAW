@@ -169,6 +169,11 @@
         "resolved": "13.0.4",
         "contentHash": "pdgNNMai3zv51W5aq268sujXUyx7SNdE2bj1wZcWjAQrKMFZV260lbqYop1d2GM67JI1huLRwxo9ZqnfF/lC6A=="
       },
+      "QuestPDF": {
+        "type": "Transitive",
+        "resolved": "2026.9.1",
+        "contentHash": "i2BT/v+Ui6Hg9+BZbOci/VfsyvmtY8nlQqAOmFt8iOZ4Hm9aKZZRgZZ+LfrKWYXAHRb3l1EjDcMVfjRaZTt+Cw=="
+      },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "Transitive",
         "resolved": "2.1.12",
@@ -263,7 +268,8 @@
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.12, )",
           "Optica.Application": "[1.0.0, )",
-          "Optica.Domain": "[1.0.0, )"
+          "Optica.Domain": "[1.0.0, )",
+          "QuestPDF": "[2026.9.1, )"
         }
       }
     }
