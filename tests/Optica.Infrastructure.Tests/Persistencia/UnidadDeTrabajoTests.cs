@@ -362,7 +362,7 @@ public class UnidadDeTrabajoTests
         Assert.Equal(MotivoConflicto.RegistroCerrado, error.Motivo);
         Assert.Null(error.InnerException);
         Assert.DoesNotContain("Quimerez", error.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("99999999", error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("00718294", error.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("quimerez@example.com", error.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("registro_cerrado", error.Message, StringComparison.Ordinal);
         Assert.Empty(contexto.ChangeTracker.Entries());
@@ -392,7 +392,7 @@ public class UnidadDeTrabajoTests
 
     /// <summary>Cliente ficticio con valores distintivos, para buscarlos en los mensajes; DNI y email inventados.</summary>
     private static ClientePresupuesto ClienteDistintivo() =>
-        new("Quimerez", "Distintiva", "99999999", null, "quimerez@example.com", null);
+        new("Quimerez", "Distintiva", "00718294", null, "quimerez@example.com", null);
 
     private static async Task GrabarPresupuestoAsync(BaseTemporal baseTemporal, long numero, LineaPresupuesto linea)
     {

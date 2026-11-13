@@ -105,7 +105,7 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
         Assert.Equal(FechaSembrada, json.GetProperty("fecha").GetString());
         Assert.Equal("borrador", json.GetProperty("estado").GetString());
         Assert.Equal(1, json.GetProperty("version").GetInt64());
-        AfirmarCliente(json, "Ficticiez", "99999999", "Calle Ficticia 123");
+        AfirmarCliente(json, "Ficticiez", "00718294", "Calle Ficticia 123");
         var linea = Assert.Single(json.GetProperty("lineas").EnumerateArray());
         var precio = PrecioVentaDe(fabrica, codigo);
         AfirmarLinea(linea, 1, codigo, "Cristal orgánico 00002", precio, 2, 0m, precio, precio * 2);
@@ -343,13 +343,13 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
         Assert.Equal(precioFinal, linea.GetProperty("precioFinal").GetDecimal());
     }
 
-    /// <summary>Un cliente ficticio válido (DNI 99.999.999, correo de example.com) como JSON.</summary>
+    /// <summary>Un cliente ficticio válido (DNI 00.718.294, correo de example.com) como JSON.</summary>
     private static string ClienteJson(string? domicilio) =>
         JsonSerializer.Serialize(new
         {
             apellido = "Ficticiez",
             nombre = "Prueboncia",
-            dni = "99.999.999",
+            dni = "00.718.294",
             domicilio,
             email = "prueba@example.com",
             telefono = (string?)null,

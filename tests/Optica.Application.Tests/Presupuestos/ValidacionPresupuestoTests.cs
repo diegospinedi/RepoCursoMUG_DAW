@@ -23,7 +23,7 @@ public class ValidacionPresupuestoTests
     /// <summary><c>Number.MAX_SAFE_INTEGER / 100</c>: el importe más alto que la web lee exacto (D-04).</summary>
     private const decimal TopeContrato = 90_071_992_547_409.91m;
 
-    private static readonly DatosCliente Cliente = new("Ficticiez", "Prueboncia", "99999999", null, null, null);
+    private static readonly DatosCliente Cliente = new("Ficticiez", "Prueboncia", "00718294", null, null, null);
 
     private static IReadOnlyList<ErrorValidacion> Validar(params DatosLinea?[] lineas) =>
         ValidacionPresupuesto.Validar(new DatosPresupuesto(Cliente, lineas));

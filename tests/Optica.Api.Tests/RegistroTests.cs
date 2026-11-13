@@ -396,7 +396,7 @@ public sealed class RegistroTests
             lineas,
             l => l.Nivel == LogLevel.Error && l.Mensaje.Contains("/api/presupuestos/1", StringComparison.Ordinal));
         var textoRespuesta = await respuesta.Content.ReadAsStringAsync();
-        foreach (var dato in new[] { "Zq7", "99999999", "99.999.999", "example.com", "5555-0199" })
+        foreach (var dato in new[] { "Zq7", "00718294", "00.718.294", "example.com", "5555-0199" })
         {
             Assert.DoesNotContain(dato, textoRespuesta, StringComparison.Ordinal);
             var conElDato = lineas.Where(l => l.TextoCompleto.Contains(dato, StringComparison.Ordinal))
@@ -409,7 +409,7 @@ public sealed class RegistroTests
     }
 
     private static string ClienteMarcado(string marca) =>
-        "{\"apellido\":\"" + marca + "Apellido\",\"nombre\":\"" + marca + "Nombre\",\"dni\":\"99.999.999\","
+        "{\"apellido\":\"" + marca + "Apellido\",\"nombre\":\"" + marca + "Nombre\",\"dni\":\"00.718.294\","
         + "\"domicilio\":\"" + marca + " Calle Ficticia 123\",\"email\":\"" + marca.ToLowerInvariant()
         + "@example.com\",\"telefono\":\"011-5555-0199\"}";
 

@@ -171,14 +171,19 @@ public sealed class FabricaConexion
                 (CoreEventId.QueryIterationFailed, LogLevel.Debug)));
 
     /// <summary>
-    /// Activa <c>foreign_keys</c> y <c>journal_mode = WAL</c> en cada conexión que se abre, y registra las funciones
-    /// <c>plegar</c> y <c>orden_articulo</c> de la búsqueda de artículos (<see cref="FuncionesSqlite"/>, ADR-011).
+    /// Activa <c>foreign_keys</c>, <c>journal_mode = WAL</c> y <c>recursive_triggers</c> en cada conexión que se abre, y
+    /// registra las funciones <c>plegar</c> y <c>orden_articulo</c> de la búsqueda de artículos
+    /// (<see cref="FuncionesSqlite"/>, ADR-011).
     /// </summary>
     private sealed class PragmasAlAbrir : DbConnectionInterceptor
     {
         public static readonly PragmasAlAbrir Instancia = new();
 
-        private const string Pragmas = "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;";
+        // recursive_triggers (FEAT-007, WARN-1 de la auditoría del Block 4): sin él, el borrado que hace un INSERT OR
+        // REPLACE al resolver un conflicto no dispara los triggers de DELETE, y una factura con CAE se podría reemplazar.
+        // Los triggers de cierre solo abortan y no escriben en otras tablas: activarlo no encadena ninguna escritura.
+        private const string Pragmas =
+            "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA recursive_triggers = ON;";
 
         public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
         {

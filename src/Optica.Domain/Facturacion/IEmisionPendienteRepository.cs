@@ -8,14 +8,18 @@ namespace Optica.Domain.Facturacion;
 public interface IEmisionPendienteRepository
 {
     /// <summary>
-    /// Registra la emisión pendiente. Si el presupuesto ya tiene una, la confirmación falla por unicidad (FR-24).
+    /// Registra la emisión pendiente. Si el presupuesto ya tiene una, la confirmación falla por unicidad (FR-24). Si la
+    /// del mismo presupuesto se quitó con <see cref="Quitar"/> y la baja todavía no se confirmó, lanza
+    /// <see cref="InvalidOperationException"/> sin registrar nada: una pendiente no se modifica, así que quitar y volver a
+    /// agregar exige confirmar en el medio.
     /// </summary>
     void Agregar(EmisionPendiente pendiente);
 
     /// <summary>
     /// Registra la baja de la emisión pendiente del presupuesto <paramref name="presupuestoNumero"/>: autorizada,
     /// rechazada o no enviada (FR-21, FR-22). Una sin respuesta no se quita (FR-23, FR-24). Si el presupuesto no tiene
-    /// una emisión pendiente no hace nada: la confirmación de la unidad de trabajo no falla por eso.
+    /// una emisión pendiente no hace nada: la confirmación de la unidad de trabajo no falla por eso. Hasta que la baja se
+    /// confirme no se puede <see cref="Agregar"/> otra pendiente para el mismo presupuesto.
     /// </summary>
     void Quitar(long presupuestoNumero);
 

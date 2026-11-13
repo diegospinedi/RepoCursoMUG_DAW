@@ -140,17 +140,17 @@ public class PresupuestoTests
         Assert.Equal("lineas", errorReconstruido.ParamName);
     }
 
-    // Datos claramente ficticios para las pruebas de FEAT-003c: DNI 99.999.999, dominio example.com y teléfono 0000.
+    // Datos claramente ficticios para las pruebas de FEAT-003c: DNI 00.718.294, dominio example.com y teléfono 0000.
     private static readonly string[] DatosDelCliente =
     [
-        "Ficticiez", "Prueboncia", "99999999", "99.999.999", "Calle Ficticia", "prueboncia@example.com", "0000-0000",
+        "Ficticiez", "Prueboncia", "00718294", "00.718.294", "Calle Ficticia", "prueboncia@example.com", "0000-0000",
     ];
 
     private static ClientePresupuesto ClienteFicticio() =>
-        new("Ficticiez", "Prueboncia", "99.999.999", "Calle Ficticia 100", "prueboncia@example.com", "00 0000-0000");
+        new("Ficticiez", "Prueboncia", "00.718.294", "Calle Ficticia 100", "prueboncia@example.com", "00 0000-0000");
 
     private static ClientePresupuesto ClienteMudado() =>
-        new("Ficticiez", "Prueboncia", "99.999.999", "Calle Ficticia 200", "prueboncia@example.com", "00 0000-0000");
+        new("Ficticiez", "Prueboncia", "00.718.294", "Calle Ficticia 200", "prueboncia@example.com", "00 0000-0000");
 
     private static LineaPresupuesto[] OtrasLineas() =>
     [

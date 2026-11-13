@@ -348,7 +348,7 @@ public sealed class ProteccionTests
 
     /// <summary>Una modificación válida del presupuesto 1 (versión 0, la línea 1), con datos ficticios.</summary>
     private static string CuerpoModificacionPresupuesto(long codigo) =>
-        "{\"version\":0,\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"99999999\"},"
+        "{\"version\":0,\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"00718294\"},"
         + "\"lineas\":[{\"orden\":1,\"codigoArticulo\":" + codigo + ",\"cantidad\":2,\"porcentajeDescuento\":0}]}";
 
     private static string CuerpoPresupuestoDeBytes(long codigo, int bytes)

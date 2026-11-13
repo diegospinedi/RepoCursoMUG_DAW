@@ -387,7 +387,7 @@ public class AccesoPersistenciaTests
         string[] conocidas =
         [
             "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
-            "CatalogoActivo", "Presupuestos", "CierrePresupuestos", "ConfiguracionPuntoVenta",
+            "CatalogoActivo", "Presupuestos", "CierrePresupuestos", "ConfiguracionPuntoVenta", "Facturas",
         ];
         Assert.Equal(conocidas, migraciones.Select(m => m[(m.IndexOf('_') + 1)..]).Where(conocidas.Contains));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);

@@ -515,7 +515,7 @@ public sealed class PresupuestosApiTests
         var cookie = await Http.DefinirAsync(cliente);
         var codigo = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
         var cuerpo =
-            "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"99999999\"},\"total\":1,"
+            "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"00718294\"},\"total\":1,"
             + "\"lineas\":[{\"codigoArticulo\":" + codigo + ",\"cantidad\":3,\"porcentajeDescuento\":10,"
             + "\"precioConDescuento\":1,\"precioFinal\":1}]}";
 
@@ -845,7 +845,7 @@ public sealed class PresupuestosApiTests
         Assert.Equal(numero, json.GetProperty("numero").GetInt64());
         Assert.Equal("borrador", json.GetProperty("estado").GetString());
         Assert.Equal(1, json.GetProperty("version").GetInt64());
-        AfirmarCliente(json, "Ficticiez", "Prueboncia", "99999999", "Calle Ficticia 123", "prueba@example.com", null);
+        AfirmarCliente(json, "Ficticiez", "Prueboncia", "00718294", "Calle Ficticia 123", "prueba@example.com", null);
         AfirmarLinea(Assert.Single(json.GetProperty("lineas").EnumerateArray()), 1, codigo, "Armazón", 1815m);
         Assert.Equal(json.GetRawText(), (await LeerAsync(cliente, cookie, numero)).GetRawText());
     }
@@ -1184,7 +1184,7 @@ public sealed class PresupuestosApiTests
         var lente = await GrabarArticuloAsync(cliente, cookie, "Lente bifocal", "LEN-1", 1000m, 0m);
 
         var alta = await PostAsync(
-            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "99999999", null, null, null, lente, armazon, lente));
+            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "00718294", null, null, null, lente, armazon, lente));
 
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         foreach (var json in new[] { await Http.JsonAsync(alta), await LeerAsync(cliente, cookie, 1) })
@@ -1330,7 +1330,7 @@ public sealed class PresupuestosApiTests
         {
             apellido = "Zq7Apellido",
             nombre = "Zq7Nombre",
-            dni = "99.999.999",
+            dni = "00.718.294",
             domicilio = "Zq7 Calle Ficticia 123",
             email = "zq7@example.com",
             telefono = "011-5555-0199",
@@ -1352,7 +1352,7 @@ public sealed class PresupuestosApiTests
                 Nombres(json),
                 nombre => Assert.Contains(nombre, new[] { "type", "title", "status", "detail", "motivo", "traceId" }));
             var texto = json.GetRawText();
-            foreach (var dato in new[] { "Zq7", "zq7", "99999999", "99.999.999", "5555", "example.com", "7531", "12.34" })
+            foreach (var dato in new[] { "Zq7", "zq7", "00718294", "00.718.294", "5555", "example.com", "7531", "12.34" })
             {
                 Assert.DoesNotContain(dato, texto, StringComparison.Ordinal);
             }
@@ -1375,12 +1375,12 @@ public sealed class PresupuestosApiTests
         {
             apellido = "Zq7Apellido",
             nombre = "Zq7Nombre",
-            dni = "99.999.999",
+            dni = "00.718.294",
             domicilio = "Zq7 Calle Ficticia 123",
             email = "zq7@example.com",
             telefono = "011-5555-0199",
         });
-        var invalido = marcado.Replace("99.999.999", "ZZMARCA", StringComparison.Ordinal);
+        var invalido = marcado.Replace("00.718.294", "ZZMARCA", StringComparison.Ordinal);
 
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(cliente, cookie, numero, CuerpoModificacion(0, marcado, LineaJson(codigo, 1)))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await PutAsync(cliente, cookie, numero, CuerpoModificacion(1, invalido, LineaJson(codigo, 1)))).StatusCode);
@@ -1390,7 +1390,7 @@ public sealed class PresupuestosApiTests
         var lineas = fabrica.Registro.Lineas;
         Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
         Assert.Contains(lineas, l => l.Mensaje.Contains("PresupuestosController", StringComparison.Ordinal));
-        foreach (var secreto in new[] { "Zq7", "zq7", "99999999", "99.999.999", "5555-0199", "example.com", "ZZMARCA" })
+        foreach (var secreto in new[] { "Zq7", "zq7", "00718294", "00.718.294", "5555-0199", "example.com", "ZZMARCA" })
         {
             var conElDato = lineas.Where(l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal))
                 .Select(l => $"{l.Categoria} ({l.Nivel})")
@@ -2219,20 +2219,20 @@ public sealed class PresupuestosApiTests
 
             Assert.Equal(HttpStatusCode.RequestEntityTooLarge, respuesta.StatusCode);
             var texto = await respuesta.Content.ReadAsStringAsync();
-            Assert.DoesNotContain("99.999.999", texto, StringComparison.Ordinal);
-            Assert.DoesNotContain("99999999", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("00.718.294", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("00718294", texto, StringComparison.Ordinal);
         }
     }
 
     private static StringContent Json(string cuerpo) => new(cuerpo, Encoding.UTF8, "application/json");
 
-    /// <summary>Un cliente ficticio válido (DNI 99.999.999, correo de example.com) como JSON.</summary>
+    /// <summary>Un cliente ficticio válido (DNI 00.718.294, correo de example.com) como JSON.</summary>
     private static string ClienteJson(string? domicilio = null) =>
         JsonSerializer.Serialize(new
         {
             apellido = "Ficticiez",
             nombre = "Prueboncia",
-            dni = "99.999.999",
+            dni = "00.718.294",
             domicilio,
             email = "prueba@example.com",
             telefono = (string?)null,
@@ -2257,7 +2257,7 @@ public sealed class PresupuestosApiTests
     private static async Task<long> AltaAsync(HttpClient cliente, string cookie, params long[] codigos)
     {
         var respuesta = await PostAsync(
-            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "99.999.999", null, "prueba@example.com", null, codigos));
+            cliente, cookie, Cuerpo("Ficticiez", "Prueboncia", "00.718.294", null, "prueba@example.com", null, codigos));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         return (await Http.JsonAsync(respuesta)).GetProperty("numero").GetInt64();
     }
@@ -2294,7 +2294,7 @@ public sealed class PresupuestosApiTests
 
     /// <summary>Un cliente ficticio válido (DNI fuera del rango que se emite) y las líneas JSON tal cual.</summary>
     private static string CuerpoConLineas(params string[] lineas) =>
-        "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"99999999\"},\"lineas\":["
+        "{\"cliente\":{\"apellido\":\"Ficticiez\",\"nombre\":\"Prueboncia\",\"dni\":\"00718294\"},\"lineas\":["
         + string.Join(",", lineas) + "]}";
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient cliente, string cookie, string cuerpo) =>

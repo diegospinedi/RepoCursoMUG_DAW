@@ -49,7 +49,7 @@ public class ObtenerPresupuestoTests
             3,
             new DateOnly(2026, 3, 10),
             EstadoPresupuesto.Borrador,
-            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, "prueba@example.com", null),
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "00718294", null, "prueba@example.com", null),
             [
                 new LineaPresupuesto(2, "Lente bifocal", 1000m, 1, 0m, 1000m, 1000m),
                 new LineaPresupuesto(1, "Paño", 10m, 1, 0m, 10m, 10m),
@@ -85,7 +85,7 @@ public class ObtenerPresupuestoTests
             9,
             new DateOnly(2026, 1, 5),
             EstadoPresupuesto.Borrador,
-            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, null, null),
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "00718294", null, null, null),
             [
                 new LineaPresupuesto(1, "Paño", 6.67m, 3, 50m, 3.34m, 10.02m),
                 new LineaPresupuesto(2, "Lente bifocal", 1000m, 3, 10m, 900.00m, 2700.00m),
