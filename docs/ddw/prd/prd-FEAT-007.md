@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-13 |
 | PRD de origen | `docs/ddw/prd/prd-DISC-001-06.md` (PRD 06 de DISC-001) |
-| PRD loops | 4 |
+| PRD loops | 5 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001 del que proviene. Los
@@ -14,7 +14,7 @@
 > `prd-DISC-001-06.md`.
 >
 > **Alcance decidido.** El usuario decidió el 2026-11-13 implementar el PRD 06 en un solo ticket, sin dividir, con
-> sus 26 AC (W-PRD-06 aceptado); al volver de PLAN se sumaron AC-27 a AC-29 (29 en total). Se descartó la división propuesta en cuatro partes (emisión e importes contra el
+> sus 26 AC (W-PRD-06 aceptado); al volver de PLAN se sumaron AC-27 a AC-32 (32 en total). Se descartó la división propuesta en cuatro partes (emisión e importes contra el
 > simulador; reglas de la emisión; concepto y receptor; ARCA real, errores y no funcionales).
 >
 > **Sin certificado de homologación.** El usuario no tiene todavía el certificado digital de homologación de ARCA
@@ -30,6 +30,12 @@
 > el 2026-11-13, al volver de PLAN, limitar la configuración a esas 6 alícuotas (FR-26, AC-27, AC-28). FR-27 y AC-29
 > cubren una base que ya tenga guardada una alícuota fuera de la tabla; es un **supuesto** de este PRD, porque la
 > configuración pudo grabarse antes de este cambio.
+>
+> **Punto de venta en la configuración.** FR-14 del PRD 01 prohibía mostrar y editar el punto de venta en cualquier
+> pantalla, y FR-19 y FR-20 lo muestran en el número de la factura. El usuario decidió el 2026-11-13, al volver de PLAN,
+> que el punto de venta se carga y se modifica en la pantalla de configuración (FR-28, AC-30, AC-31). FR-14 del PRD 01
+> sigue rigiendo para el certificado digital. FR-29 y AC-32 (sin punto de venta cargado no se emite) son un **supuesto**
+> de este PRD, con el mismo criterio que el tope de identificación (FR-13). El rango de 1 a 99999 es el que admite ARCA.
 
 ## Context and Problem
 Hoy la óptica factura entrando al sitio de ARCA con el usuario y la contraseña de la empresa, y
@@ -104,7 +110,7 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 ### Autorización y resultado
 - FR-17: El sistema debe solicitar la autorización del comprobante (CAE) al web service de
   facturación electrónica de ARCA (WSFEv1), con el certificado digital de la empresa y el punto de
-  venta habilitado para web services. [PRD-001 RF-28]
+  venta habilitado para web services vigente en la configuración al momento de emitir. [PRD-001 RF-28; FR-28]
 - FR-18: El sistema debe guardar la factura autorizada con su tipo, punto de venta, número, fecha,
   concepto, identificación del receptor, líneas, importes, CAE, fecha de vencimiento del CAE y
   entorno de ARCA en que se emitió (simulado, homologación o producción), vinculada al presupuesto
@@ -134,6 +140,13 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 - FR-27: El sistema no debe emitir una Factura B mientras la alícuota guardada no sea uno de los valores de FR-26, y
   debe indicar a la operadora que elija una alícuota válida en la configuración. [Supuesto: alícuota grabada antes
   de FR-26]
+
+### Punto de venta
+- FR-28: El sistema debe permitir a la operadora cargar y modificar, en la pantalla de configuración, el punto de venta
+  habilitado para web services, como un número entero de 1 a 99999. [Decisión del usuario del 2026-11-13; reemplaza,
+  para el punto de venta, FR-14 del PRD 01]
+- FR-29: El sistema no debe emitir la factura mientras el punto de venta no tenga valor cargado, y debe indicar a la
+  operadora que lo cargue en la configuración. [Supuesto, con el criterio de FR-13]
 
 ## Non-Functional Requirements
 - NFR-01: El sistema debe dar por no disponible el web service de ARCA tras 30 segundos sin
@@ -216,8 +229,8 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
   la pantalla o con un pedido directo a la API, THEN THE sistema SHALL rechazar el intento y dejar
   la factura sin cambios. [PRD-001 AC-32]
 - AC-24 (FR-17): WHEN la operadora emite una factura en el entorno de homologación de ARCA, THE
-  sistema SHALL obtener un CAE para el punto de venta habilitado para web services, sin pedir el
-  certificado ni el punto de venta en ninguna pantalla.
+  sistema SHALL obtener un CAE para el punto de venta cargado en la configuración, sin pedir el
+  certificado en ninguna pantalla.
 - AC-25 (NFR-02): WHEN, con ARCA respondiendo sin error, la operadora emite 20 facturas y se
   registra en cada una el tiempo total y el tiempo de espera de ARCA, THE sistema SHALL mantener la
   diferencia por debajo de 2 segundos en al menos 19 de ellas. [PRD-001 AC-78]
@@ -231,6 +244,14 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 - AC-29 (FR-27): IF la alícuota guardada es 19, la condición fiscal es Responsable Inscripto y la operadora presiona
   Facturar, THEN THE sistema SHALL no enviar ninguna solicitud a ARCA e indicar que debe elegir una alícuota válida en
   la configuración.
+- AC-30 (FR-28, FR-17): WHEN la operadora graba el punto de venta 3 en la configuración y emite una Factura B a la que
+  ARCA asigna el número 125, THE sistema SHALL solicitar a ARCA el comprobante con punto de venta 3 y mostrar
+  "Factura B 0003-00000125".
+- AC-31 (FR-28): IF la operadora pide grabar en la configuración el punto de venta 0, 100000 o 2,5, desde la pantalla o
+  con un pedido directo a la API, THEN THE sistema SHALL no grabarlo e indicar que debe ser un número entero de 1 a
+  99999.
+- AC-32 (FR-29): IF el punto de venta no tiene valor cargado y la operadora presiona Facturar, THEN THE sistema SHALL
+  no enviar ninguna solicitud a ARCA e indicar que debe cargar el punto de venta en la configuración.
 
 ## Out of Scope
 - Verificación de una emisión sin respuesta (consulta del último comprobante, recuperación del CAE
@@ -253,6 +274,9 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 - Riesgo: exposición del certificado digital y de la clave de la empresa. Mitigación: no se
   muestran en la interfaz (PRD 01 FR-14), se instalan fuera de la aplicación y no se versionan en
   el repositorio, que es público.
+- Riesgo: un punto de venta mal cargado hace que ARCA rechace la solicitud o que el comprobante salga con un punto de
+  venta que no corresponde. Mitigación: solo se admite un entero de 1 a 99999 (FR-28) y un punto de venta no habilitado
+  lo rechaza ARCA, sin registrar factura (FR-21).
 - Riesgo: el DNI del cliente (dato personal, Ley 25.326) se envía a ARCA. Mitigación: solo cuando
   el total supera el tope (FR-11), que es lo que exige la normativa.
 - Riesgo: cambios normativos de ARCA (topes, formato del comprobante). Mitigación: el tope es un
@@ -265,7 +289,8 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 ## Dependencies
 - PRD 01 (DISC-001), implementado en FEAT-001a a FEAT-001c: este PRD cambia la validación y la pantalla de la alícuota de
   IVA (FR-26). Además: sesión iniciada, condición fiscal, alícuota de IVA y tope de identificación
-  (FR-08 a FR-13 y FR-20), y certificado y punto de venta fuera de la interfaz (FR-14).
+  (FR-08 a FR-13 y FR-20), y certificado fuera de la interfaz (FR-14; el punto de venta pasa a la configuración por
+  FR-28 de este PRD).
 - PRD 04 (DISC-001): presupuestos en Final inmodificables, con total, líneas y DNI guardado sin
   puntos.
 - PRD 07 depende de este: verifica las emisiones pendientes de FR-24.
