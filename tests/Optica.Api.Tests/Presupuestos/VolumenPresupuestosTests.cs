@@ -28,6 +28,9 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
     private static readonly string[] CamposRespuesta =
         ["numero", "fecha", "estado", "cliente", "lineas", "total", "version"];
 
+    /// <summary>FEAT-007 (FR-20, D-28): el GET suma la factura y la emisión pendiente; el alta y los PUT no.</summary>
+    private static readonly string[] CamposLectura = [.. CamposRespuesta, "factura", "emisionPendiente"];
+
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
     private static readonly string[] CamposLinea =
@@ -367,11 +370,17 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
     private static Task<HttpResponseMessage> PutAsync(HttpClient cliente, string cookie, string ruta, string cuerpo) =>
         Http.EnviarAsync(cliente, HttpMethod.Put, ruta, new StringContent(cuerpo, Encoding.UTF8, "application/json"), cookie);
 
+    /// <summary>
+    /// El GET del presupuesto: con 10.000 presupuestos también suma <c>factura</c> y <c>emisionPendiente</c> (FEAT-007,
+    /// D-28), vacías; devuelve el resto, que se compara con las respuestas del alta y de los PUT.
+    /// </summary>
     private static async Task<JsonElement> LeerAsync(HttpClient cliente, string cookie, long numero)
     {
         using var respuesta = await Http.GetAsync(cliente, $"{Ruta}/{numero}", cookie);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        return (await Http.JsonAsync(respuesta)).Clone();
+        var leido = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposLectura, Nombres(leido));
+        return Http.SinFacturacion(leido);
     }
 
     private static string CadenaDe(FabricaApi fabrica) =>

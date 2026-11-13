@@ -46,6 +46,11 @@ public sealed class PresupuestosApiTests
     private static readonly string[] CamposRespuesta =
         ["numero", "fecha", "estado", "cliente", "lineas", "total", "version"];
 
+    /// <summary>
+    /// FEAT-007 (FR-20, D-19, D-28): el GET del presupuesto suma la factura y la emisión pendiente; el alta y los PUT no.
+    /// </summary>
+    private static readonly string[] CamposLectura = [.. CamposRespuesta, "factura", "emisionPendiente"];
+
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
     private static readonly string[] CamposLinea =
@@ -335,7 +340,10 @@ public sealed class PresupuestosApiTests
 
         var lectura = await Http.GetAsync(cliente, camino, cookie);
         Assert.Equal(HttpStatusCode.OK, lectura.StatusCode);
-        Assert.Equal(json.GetRawText(), (await Http.JsonAsync(lectura)).GetRawText());
+        var leido = await Http.JsonAsync(lectura);
+        // FEAT-007 (D-28): el GET suma factura y emisionPendiente después de version; el resto es el alta tal cual.
+        Assert.Equal(CamposLectura, Nombres(leido));
+        Assert.Equal(json.GetRawText(), Http.SinFacturacion(leido).GetRawText());
     }
 
     /// <summary>AC-04: sin Domicilio, Email ni Teléfono (ausentes o en blanco), 201 con esos tres en null (D-11).</summary>
@@ -2335,11 +2343,16 @@ public sealed class PresupuestosApiTests
         await servicios.GetRequiredService<IUnidadDeTrabajo>().ConfirmarAsync();
     }
 
+    /// <summary>
+    /// El GET del presupuesto sin factura ni pendiente, sin las claves <c>factura</c> y <c>emisionPendiente</c>
+    /// (FEAT-007, D-28): exige que estén, en ese orden y vacías, y devuelve el resto, que se compara con las respuestas
+    /// del alta y de los PUT.
+    /// </summary>
     private static async Task<JsonElement> LeerAsync(HttpClient cliente, string cookie, long numero)
     {
         var respuesta = await Http.GetAsync(cliente, $"{Ruta}/{numero}", cookie);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        return await Http.JsonAsync(respuesta);
+        return Http.SinFacturacion(await Http.JsonAsync(respuesta));
     }
 
     /// <summary>

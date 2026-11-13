@@ -154,6 +154,81 @@ public sealed class SinDatosArcaTests
         Assert.Contains("/api/sesion", sinCuerpo);
     }
 
+    /// <summary>
+    /// FEAT-007 (D-08, R-03): la ruta nueva de facturación tampoco devuelve el certificado ni el punto de venta como clave:
+    /// ni el 201 de la emisión (el punto de venta va dentro del texto del comprobante, no como dato), ni el GET del
+    /// presupuesto facturado, ni el 409 de un rechazo de ARCA.
+    /// </summary>
+    [Fact]
+    public async Task SinDatosArca_RutaFactura_SinCertificadoNiPuntoVenta()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var numero = await PresupuestoFinalFacturableAsync(cliente, cookie);
+
+        var emitida = await Http.PostJsonAsync(
+            cliente, $"{RutaPresupuestos}/{numero}/factura", "{\"concepto\":\"productos\"}", cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, emitida.StatusCode);
+        using var factura = JsonDocument.Parse(await emitida.Content.ReadAsStringAsync());
+        var leido = await Http.GetAsync(cliente, $"{RutaPresupuestos}/{numero}", cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, leido.StatusCode);
+        using var presupuesto = JsonDocument.Parse(await leido.Content.ReadAsStringAsync());
+        Assert.True(presupuesto.RootElement.TryGetProperty("factura", out _), "El GET no trae la factura.");
+
+        Assert.Empty(Hallazgos(RutaFactura, factura.RootElement));
+        Assert.Empty(Hallazgos(RutaPresupuesto, presupuesto.RootElement));
+
+        // El rechazo de ARCA (D-18) lleva código y descripción, nunca datos del certificado.
+        using var conRechazo = new FabricaApi(respuestaArca: FabricaApi.RespuestaArcaRechazar);
+        var otroCliente = conRechazo.CrearClienteSinCookies();
+        var otraCookie = await Http.DefinirAsync(otroCliente);
+        var otroNumero = await PresupuestoFinalFacturableAsync(otroCliente, otraCookie);
+        var rechazo = await Http.PostJsonAsync(
+            otroCliente, $"{RutaPresupuestos}/{otroNumero}/factura", "{\"concepto\":\"productos\"}", otraCookie);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, rechazo.StatusCode);
+        using var problema = JsonDocument.Parse(await rechazo.Content.ReadAsStringAsync());
+        Assert.True(problema.RootElement.TryGetProperty("codigo", out _), "El 409 del rechazo no trae el código.");
+        Assert.Empty(Hallazgos(RutaFactura, problema.RootElement));
+    }
+
+    /// <summary>Configura la emisión, graba un artículo y un presupuesto, lo pasa a Final y devuelve su número.</summary>
+    private static async Task<long> PresupuestoFinalFacturableAsync(HttpClient cliente, string cookie)
+    {
+        var configuracion = await Http.PostJsonAsync(
+            cliente,
+            RutaConfiguracion,
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"responsable_inscripto\",\"multiploRedondeo\":0.01,"
+            + "\"topeIdentificacion\":100000,\"puntoVenta\":3}",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, configuracion.StatusCode);
+        var articulo = await Http.PostJsonAsync(
+            cliente,
+            RutaArticulos,
+            """{"codigoProveedor":"ABC-1","descripcion":"Armazón","precioCosto":1210,"margenUtilidad":50}""",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, articulo.StatusCode);
+        var codigo = (await Http.JsonAsync(articulo)).GetProperty("codigo").GetInt64();
+        var alta = await Http.PostJsonAsync(
+            cliente,
+            RutaPresupuestos,
+            "{\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"00718294\"},"
+            + "\"lineas\":[{\"codigoArticulo\":" + codigo + ",\"cantidad\":1,\"porcentajeDescuento\":0}]}",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, alta.StatusCode);
+        var numero = (await Http.JsonAsync(alta)).GetProperty("numero").GetInt64();
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}/estado",
+            new System.Net.Http.StringContent(
+                "{\"estado\":\"final\",\"version\":0}", System.Text.Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, final.StatusCode);
+        return numero;
+    }
+
+    private const string RutaFactura = "/api/presupuestos/{numero:long}/factura";
     private const string RutaArticulos = "/api/articulos";
     private const string RutaArticulo = "/api/articulos/{codigo:long}";
     private const string RutaPresupuestos = "/api/presupuestos";

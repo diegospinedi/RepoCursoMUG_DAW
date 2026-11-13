@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Optica.Api.Controllers;
 using Optica.Api.Errores;
 using Optica.Application.Comun;
+using Optica.Application.Facturacion;
 using Optica.Application.Presupuestos;
 
 namespace Optica.Api.Tests.Presupuestos;
@@ -291,6 +292,147 @@ public sealed class CierrePorDefectoPresupuestosTests
         }
     }
 
+    // FEAT-007: la emisión de la factura.
+
+    /// <summary>Los diez motivos del 409 de la emisión (D-18, D-31), con su texto en la Api y su detalle fijo.</summary>
+    public static TheoryData<MotivoConflictoEmision, string, string> MotivosEmision => new()
+    {
+        { MotivoConflictoEmision.Borrador, "borrador", "El presupuesto está en Borrador: pasalo a Final para facturarlo." },
+        { MotivoConflictoEmision.Facturado, "facturado", "El presupuesto ya tiene una factura." },
+        { MotivoConflictoEmision.Pendiente, "pendiente", "La emisión anterior está pendiente de verificación." },
+        { MotivoConflictoEmision.SinTope, "sin_tope", "Cargá el tope de identificación en la configuración para facturar." },
+        {
+            MotivoConflictoEmision.SinPuntoVenta, "sin_punto_venta",
+            "Cargá el punto de venta en la configuración para facturar."
+        },
+        {
+            MotivoConflictoEmision.AlicuotaNoAdmitida, "alicuota_no_admitida",
+            "Elegí una alícuota de IVA válida en la configuración para facturar."
+        },
+        {
+            MotivoConflictoEmision.SinRespuesta, "sin_respuesta",
+            "ARCA no respondió. La emisión quedó pendiente de verificación."
+        },
+        {
+            MotivoConflictoEmision.NoEnviada, "no_enviada",
+            "No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos."
+        },
+        {
+            MotivoConflictoEmision.PendienteVerificacion, "pendiente_verificacion",
+            "La factura quedó pendiente de verificación."
+        },
+    };
+
+    /// <summary>
+    /// El traductor de la emisión es cerrado por defecto: emitida, 201 con la factura y la ubicación del presupuesto;
+    /// inválida, 400; no encontrado, 404; cualquier otro resultado lanza.
+    /// </summary>
+    [Fact]
+    public void ResponderEmision_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+        var factura = new FacturaEmitida(
+            "Factura B 0003-00000125", "b", 125, "71234567890123", new DateOnly(2026, 11, 9), new DateOnly(2026, 10, 30),
+            1815m, 1500m, 315m);
+
+        var emitida = Assert.IsType<CreatedAtActionResult>(controller.ResponderEmision(7, ResultadoEmision.Emitida(factura)));
+        Assert.Equal(StatusCodes.Status201Created, emitida.StatusCode);
+        Assert.Same(factura, emitida.Value);
+        Assert.Equal(nameof(PresupuestosController.Obtener), emitida.ActionName);
+        Assert.Equal(7L, emitida.RouteValues?["numero"]);
+
+        var invalido = Assert.IsType<ObjectResult>(controller.ResponderEmision(7, ResultadoEmision.Invalido(
+            [new ErrorValidacion(EmitirFactura.CampoConcepto, EmitirFactura.AccionConceptoInvalido)])));
+        Assert.Equal(StatusCodes.Status400BadRequest, invalido.StatusCode);
+
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderEmision(7, ResultadoEmision.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+        Assert.Equal("No se encontró el presupuesto.", Assert.IsType<ProblemDetails>(noEncontrado.Value).Title);
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderEmision(7, null));
+    }
+
+    /// <summary>Cada motivo del 409 de la emisión: título fijo, detalle fijo, su texto en <c>motivo</c> y nada más.</summary>
+    [Theory]
+    [MemberData(nameof(MotivosEmision))]
+    public void ResponderEmision_Conflicto_MotivoYDetalleFijos(MotivoConflictoEmision motivo, string texto, string detalle)
+    {
+        var controller = Crear();
+
+        var conflicto = Assert.IsType<ObjectResult>(controller.ResponderEmision(7, ResultadoEmision.Conflicto(motivo)));
+
+        Assert.Equal(StatusCodes.Status409Conflict, conflicto.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(conflicto.Value);
+        Assert.Equal("No se pudo emitir la factura.", problema.Title);
+        Assert.Equal(detalle, problema.Detail);
+        Assert.Equal(texto, problema.Extensions["motivo"]);
+        Assert.False(problema.Extensions.ContainsKey("codigo"));
+        Assert.False(problema.Extensions.ContainsKey("descripcion"));
+    }
+
+    /// <summary>
+    /// El rechazo de ARCA (AC-20): <c>rechazada</c> con <c>codigo</c> y <c>descripcion</c> como extensiones; la
+    /// descripción se recorta a 500 caracteres sin cortar un par sustituto.
+    /// </summary>
+    [Fact]
+    public void ResponderEmision_Rechazada_CodigoYDescripcionRecortada()
+    {
+        var controller = Crear();
+
+        var corta = Assert.IsType<ProblemDetails>(Assert.IsType<ObjectResult>(controller.ResponderEmision(
+            7, ResultadoEmision.Conflicto(MotivoConflictoEmision.Rechazada, 10016, "Número no correlativo."))).Value);
+        Assert.Equal("No se pudo emitir la factura.", corta.Title);
+        Assert.Equal("ARCA rechazó la factura.", corta.Detail);
+        Assert.Equal("rechazada", corta.Extensions["motivo"]);
+        Assert.Equal(10016, corta.Extensions["codigo"]);
+        Assert.Equal("Número no correlativo.", corta.Extensions["descripcion"]);
+
+        var larga = Assert.IsType<ProblemDetails>(Assert.IsType<ObjectResult>(controller.ResponderEmision(
+            7, ResultadoEmision.Conflicto(MotivoConflictoEmision.Rechazada, 1, new string('x', 600)))).Value);
+        Assert.Equal(new string('x', 500), larga.Extensions["descripcion"]);
+
+        // Un emoji (par sustituto) en las posiciones 499 y 500: se corta antes, no en el medio.
+        var conPar = new string('x', 499) + "😀" + new string('y', 50);
+        var recortada = Assert.IsType<ProblemDetails>(Assert.IsType<ObjectResult>(controller.ResponderEmision(
+            7, ResultadoEmision.Conflicto(MotivoConflictoEmision.Rechazada, 1, conPar))).Value);
+        Assert.Equal(new string('x', 499), recortada.Extensions["descripcion"]);
+    }
+
+    /// <summary>
+    /// El helper del 409 de la emisión solo acepta sus diez motivos, y el código y la descripción solo, y siempre, en
+    /// <c>rechazada</c>; los helpers de presupuestos y artículos no aceptan los de la factura.
+    /// </summary>
+    [Fact]
+    public void ConflictoFactura_MotivoAjenoOExtensionesFueraDeLugar_Lanza()
+    {
+        var controller = Crear();
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("final"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("cambiado"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("Facturado"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("facturado", 1, "x"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("rechazada"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("rechazada", 1, null));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("rechazada", null, "x"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto("facturado", "Texto."));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo("pendiente", "Texto."));
+        Assert.IsType<ObjectResult>(controller.ConflictoFactura("borrador"));
+    }
+
+    /// <summary>
+    /// Alerta de datos (Ley 25.326): la solicitud de la emisión no muestra el concepto en <see cref="object.ToString"/>,
+    /// como las demás solicitudes; la acción fija del cuerpo ilegible no repite valores.
+    /// </summary>
+    [Fact]
+    public void SolicitudFactura_ToString_SinValores()
+    {
+        var texto = new SolicitudFactura("Zq7-concepto").ToString();
+
+        Assert.DoesNotContain("Zq7", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("=", texto, StringComparison.Ordinal);
+        Assert.Equal("No se pudo leer el concepto enviado. Elegilo de nuevo.", RespuestasValidacion.AccionCuerpoIlegibleFactura);
+    }
+
     /// <summary>El traductor de la búsqueda es cerrado por defecto: un resultado no previsto lanza; inválido, 400.</summary>
     [Fact]
     public void ResponderBusqueda_Cerrado()
@@ -308,7 +450,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

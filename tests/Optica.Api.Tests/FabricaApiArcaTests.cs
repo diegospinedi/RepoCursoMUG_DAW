@@ -48,6 +48,41 @@ public sealed class FabricaApiArcaTests
             Environment.SetEnvironmentVariable("Arca__Simulado__Respuesta", respuestaAnterior);
         }
     }
+
+    /// <summary>
+    /// D-55: la respuesta del simulador la elige la prueba con el parámetro de la fábrica, y el tiempo máximo queda en 30
+    /// s aunque la PC tenga <c>Arca__TiempoMaximoSegundos</c>.
+    /// </summary>
+    [Fact]
+    public async Task Fabrica_RespuestaElegidaYTiempoMaximoFijo_LoUsaElSimulador()
+    {
+        var tiempoAnterior = Environment.GetEnvironmentVariable("Arca__TiempoMaximoSegundos");
+        Environment.SetEnvironmentVariable("Arca__TiempoMaximoSegundos", "5");
+        try
+        {
+            await using var fabrica = new FabricaApi(respuestaArca: FabricaApi.RespuestaArcaRechazar);
+            using var cliente = fabrica.CreateClient();
+
+            var autorizador = fabrica.Services.GetRequiredService<IAutorizadorComprobantes>();
+            using var plazo = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+            Assert.Equal(TimeSpan.FromSeconds(FabricaApi.TiempoMaximoArcaSegundos), autorizador.TiempoMaximo);
+            var resultado = await autorizador.AutorizarAsync(
+                new SolicitudComprobante(
+                    TipoComprobante.FacturaC,
+                    3,
+                    new DateOnly(2026, 10, 30),
+                    ConceptoFactura.Productos,
+                    ReceptorFactura.SinIdentificar,
+                    ImportesFactura.ParaFacturaC(1000m)),
+                plazo.Token);
+            Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Arca__TiempoMaximoSegundos", tiempoAnterior);
+        }
+    }
 }
 
 /// <summary>Sin paralelismo: cambia variables de entorno del proceso, que leen todas las Api que arrancan.</summary>

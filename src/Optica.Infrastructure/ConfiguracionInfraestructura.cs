@@ -16,6 +16,7 @@ using Optica.Domain.Configuracion;
 using Optica.Domain.Facturacion;
 using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Arca;
+using Optica.Infrastructure.Facturacion;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Pdf;
 using Optica.Infrastructure.Persistencia;
@@ -62,6 +63,10 @@ public static class ConfiguracionInfraestructura
         // pendiente, y después la factura y la baja de la pendiente, cada una en su transacción (D-09, ADR-021).
         servicios.AddScoped<IFacturaRepository, FacturaRepository>();
         servicios.AddScoped<IEmisionPendienteRepository, EmisionPendienteRepository>();
+
+        // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
+        // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.
+        servicios.AddSingleton<ICandadoEmision, CandadoEmision>();
 
         // ARCA (FEAT-007, ADR-022): las claves Arca:* se leen al resolver, como el directorio de datos; ValidarArca las
         // resuelve al arrancar. Sin Arca:Entorno, el simulador (R-14). Singleton: el simulador serializa su contador.

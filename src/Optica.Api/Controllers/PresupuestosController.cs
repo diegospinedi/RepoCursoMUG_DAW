@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Optica.Api.Acceso;
 using Optica.Api.Errores;
 using Optica.Application.Comun;
+using Optica.Application.Facturacion;
 using Optica.Application.Presupuestos;
 
 namespace Optica.Api.Controllers;
@@ -92,6 +93,56 @@ public sealed record SolicitudBusquedaPresupuestos(
 }
 
 /// <summary>
+/// Cuerpo de <c>POST /api/presupuestos/{numero}/factura</c> (FEAT-007, D-18): <c>{ "concepto": "productos" |
+/// "productos_y_servicios" }</c>. Es lo único que manda la pantalla: tipo, importes, receptor y fecha los arma el
+/// servidor (R-06). Un concepto que no es texto es un cuerpo ilegible; uno faltante o desconocido lo informa el caso de
+/// uso.
+/// </summary>
+[JsonNumberHandling(JsonNumberHandling.Strict)]
+public sealed record SolicitudFactura(string? Concepto)
+{
+    /// <summary>Sin valores en <see cref="object.ToString"/>, como las demás solicitudes (D-17 de FEAT-003a).</summary>
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
+/// La factura de un presupuesto en su GET (FR-20, D-19): solo el comprobante, "Factura B 0003-00000125".
+/// </summary>
+public sealed record FacturaDelPresupuesto(string Comprobante);
+
+/// <summary>
+/// La respuesta del GET de un presupuesto (D-28): los mismos datos que <see cref="PresupuestoGrabado"/>, en el mismo
+/// orden, más <see cref="Factura"/> (null sin factura) y <see cref="EmisionPendiente"/> (FR-20, FR-24). La combina la
+/// Api: Presupuestos no conoce Facturación. El alta y los PUT siguen respondiendo <see cref="PresupuestoGrabado"/>.
+/// </summary>
+/// <remarks>Lleva los datos del cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17).</remarks>
+public sealed record PresupuestoConFacturacion(
+    long Numero,
+    DateOnly Fecha,
+    string Estado,
+    ClienteGrabado Cliente,
+    IReadOnlyList<LineaGrabada> Lineas,
+    decimal Total,
+    long Version,
+    FacturaDelPresupuesto? Factura,
+    bool EmisionPendiente)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+
+    /// <summary>El presupuesto con su estado de facturación.</summary>
+    public static PresupuestoConFacturacion Desde(PresupuestoGrabado presupuesto, EstadoFacturacion estado) => new(
+        presupuesto.Numero,
+        presupuesto.Fecha,
+        presupuesto.Estado,
+        presupuesto.Cliente,
+        presupuesto.Lineas,
+        presupuesto.Total,
+        presupuesto.Version,
+        estado.Comprobante is { } comprobante ? new FacturaDelPresupuesto(comprobante) : null,
+        estado.EmisionPendiente);
+}
+
+/// <summary>
 /// Respuesta 200 de la búsqueda de presupuestos: <c>{ presupuestos, pagina, tamanoPagina, total }</c>. Una página
 /// posterior a la última trae la lista vacía y el total.
 /// </summary>
@@ -105,7 +156,8 @@ public sealed record ListadoPresupuestos(
 /// <summary>
 /// Presupuestos: alta en Borrador y consulta por número (FEAT-003a); modificación en Borrador y paso a Final
 /// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>; búsqueda y PDF de un Final (FEAT-006), con 409 <c>borrador</c>
-/// para el PDF de un Borrador. Solo traduce HTTP: delega en los casos de uso, que validan, leen
+/// para el PDF de un Borrador; emisión de la factura y estado de facturación en el GET (FEAT-007), con 409 y su
+/// <c>motivo</c> para los rechazos y los desenlaces de ARCA. Solo traduce HTTP: delega en los casos de uso, que validan, leen
 /// los artículos, numeran y graban. Exige sesión por la política por defecto (no está en
 /// <see cref="RutasAnonimas"/>): las respuestas traen datos personales del cliente (D-17). Sin sesión, 401 antes del 415
 /// y del 413; el Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (D-16). No registra el
@@ -127,8 +179,67 @@ public sealed class PresupuestosController(
     ModificarPresupuesto modificarPresupuesto,
     PasarPresupuestoAFinal pasarPresupuestoAFinal,
     BuscarPresupuestos buscarPresupuestos,
-    GenerarPdfPresupuesto generarPdfPresupuesto) : ControllerBase
+    GenerarPdfPresupuesto generarPdfPresupuesto,
+    EmitirFactura emitirFactura,
+    ObtenerEstadoFacturacion obtenerEstadoFacturacion) : ControllerBase
 {
+    /// <summary>Tamaño máximo del cuerpo de la emisión de la factura (FEAT-007); más grande, 413.</summary>
+    public const long CuerpoMaximoFactura = 1024;
+
+    /// <summary>
+    /// Emite la factura a consumidor final del presupuesto (FEAT-007, FR-01, D-18) y responde 201 con la factura y
+    /// <c>Location</c> hacia el GET del presupuesto. Un cuerpo ilegible responde 400 en <c>concepto</c> con
+    /// <see cref="RespuestasValidacion.AccionCuerpoIlegibleFactura"/>; un concepto faltante o desconocido, 400 en
+    /// <c>concepto</c>; inexistente, 404; Borrador, facturado, pendiente, configuración incompleta y los desenlaces de
+    /// ARCA, 409 con su <c>motivo</c> (ADR-021). La emisión no se cancela si el navegador corta el pedido (D-32): el
+    /// token del pedido solo cubre la primera transacción.
+    /// </summary>
+    [HttpPost("{numero:long}/factura")]
+    [RequestSizeLimit(CuerpoMaximoFactura)]
+    public async Task<IActionResult> Facturar(
+        long numero, [FromBody] SolicitudFactura? solicitud, CancellationToken cancelacion)
+    {
+        if (!ModelState.IsValid)
+        {
+            return this.Invalido(new ErrorValidacion(
+                EmitirFactura.CampoConcepto, RespuestasValidacion.AccionCuerpoIlegibleFactura));
+        }
+
+        return ResponderEmision(numero, await emitirFactura.EjecutarAsync(numero, solicitud?.Concepto, cancelacion));
+    }
+
+    /// <summary>
+    /// Traduce el resultado de la emisión. Cerrado por defecto: emitida, 201 con la factura; inválida con errores, 400;
+    /// no encontrado, 404; conflicto con su motivo, 409 (<see cref="RespuestasValidacion.ConflictoFactura"/>). Cualquier
+    /// otro resultado lanza, y el manejador de errores responde 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderEmision(long numero, ResultadoEmision? resultado) => resultado switch
+    {
+        { EsEmitida: true, Factura: var factura } => CreatedAtAction(nameof(Obtener), new { numero }, factura),
+        { Tipo: TipoResultadoEmision.Invalido, Errores.Count: > 0 } => this.Invalido([.. resultado.Errores]),
+        { Tipo: TipoResultadoEmision.NoEncontrado } =>
+            Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado),
+        { Tipo: TipoResultadoEmision.Conflicto, Motivo: { } motivo } =>
+            this.ConflictoFactura(TextoDelMotivo(motivo), resultado.CodigoArca, resultado.DescripcionArca),
+        _ => throw new InvalidOperationException("Resultado de la emisión de una factura no previsto."),
+    };
+
+    /// <summary>El texto de la extensión <c>motivo</c> de cada motivo de la aplicación (D-18, D-31).</summary>
+    private static string TextoDelMotivo(MotivoConflictoEmision motivo) => motivo switch
+    {
+        MotivoConflictoEmision.Borrador => RespuestasValidacion.MotivoBorrador,
+        MotivoConflictoEmision.Facturado => RespuestasValidacion.MotivoFacturado,
+        MotivoConflictoEmision.Pendiente => RespuestasValidacion.MotivoPendiente,
+        MotivoConflictoEmision.SinTope => RespuestasValidacion.MotivoSinTope,
+        MotivoConflictoEmision.SinPuntoVenta => RespuestasValidacion.MotivoSinPuntoVenta,
+        MotivoConflictoEmision.AlicuotaNoAdmitida => RespuestasValidacion.MotivoAlicuotaNoAdmitida,
+        MotivoConflictoEmision.Rechazada => RespuestasValidacion.MotivoRechazada,
+        MotivoConflictoEmision.SinRespuesta => RespuestasValidacion.MotivoSinRespuesta,
+        MotivoConflictoEmision.NoEnviada => RespuestasValidacion.MotivoNoEnviada,
+        MotivoConflictoEmision.PendienteVerificacion => RespuestasValidacion.MotivoPendienteVerificacion,
+        _ => throw new InvalidOperationException("Motivo del conflicto de la emisión no previsto."),
+    };
+
     /// <summary>El tipo de contenido del PDF del presupuesto (FEAT-006).</summary>
     private const string TipoPdf = "application/pdf";
 
@@ -288,13 +399,17 @@ public sealed class PresupuestosController(
         return new DatosPresupuesto(datosCliente, datosLineas);
     }
 
-    /// <summary>El presupuesto con ese número: 200, o 404 con ProblemDetails de título fijo y sin detalles.</summary>
+    /// <summary>
+    /// El presupuesto con ese número: 200 con su factura y su emisión pendiente (FEAT-007, FR-20, D-28), o 404 con
+    /// ProblemDetails de título fijo y sin detalles.
+    /// </summary>
     [HttpGet("{numero:long}")]
     public async Task<IActionResult> Obtener(long numero, CancellationToken cancelacion)
     {
         if (await obtenerPresupuesto.EjecutarAsync(numero, cancelacion) is { } presupuesto)
         {
-            return Ok(presupuesto);
+            var estado = await obtenerEstadoFacturacion.EjecutarAsync(numero, cancelacion);
+            return Ok(PresupuestoConFacturacion.Desde(presupuesto, estado));
         }
 
         return Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado);

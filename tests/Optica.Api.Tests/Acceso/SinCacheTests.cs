@@ -288,6 +288,63 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-007 (R-03): la emisión de la factura y el GET del presupuesto con la factura responden con <c>no-store</c>,
+    /// en el 201, el 409, el 400, el 404 y el 413.
+    /// </summary>
+    [Fact]
+    public async Task SinCache_RutaFactura_NoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var configuracion = await Http.PostJsonAsync(
+            cliente,
+            "/api/configuracion",
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"responsable_inscripto\",\"multiploRedondeo\":0.01,"
+            + "\"topeIdentificacion\":100000,\"puntoVenta\":3}",
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, configuracion.StatusCode);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var alta = await Http.PostJsonAsync(cliente, RutaPresupuestos, CuerpoPresupuesto(codigo), cookie);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var numero = (await Http.JsonAsync(alta)).GetProperty("numero").GetInt64();
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}/estado",
+            new StringContent("{\"estado\":\"final\",\"version\":0}", Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+        var ruta = $"{RutaPresupuestos}/{numero}/factura";
+
+        var invalida = await Http.PostJsonAsync(cliente, ruta, "{\"concepto\":\"servicios\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalida.StatusCode);
+        AfirmarNoStore(invalida, "400 de la factura");
+
+        var emitida = await Http.PostJsonAsync(cliente, ruta, "{\"concepto\":\"productos\"}", cookie);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
+        AfirmarNoStore(emitida, "201 de la factura");
+
+        var repetida = await Http.PostJsonAsync(cliente, ruta, "{\"concepto\":\"productos\"}", cookie);
+        Assert.Equal(HttpStatusCode.Conflict, repetida.StatusCode);
+        AfirmarNoStore(repetida, "409 de la factura");
+
+        var consulta = await Http.GetAsync(cliente, $"{RutaPresupuestos}/{numero}", cookie);
+        Assert.Equal(HttpStatusCode.OK, consulta.StatusCode);
+        Assert.Contains("\"factura\":{", await consulta.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        AfirmarNoStore(consulta, "GET del presupuesto facturado");
+
+        var inexistente = await Http.PostJsonAsync(cliente, $"{RutaPresupuestos}/999/factura", "{\"concepto\":\"productos\"}", cookie);
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+        AfirmarNoStore(inexistente, "404 de la factura");
+
+        var grande = await Http.PostJsonAsync(
+            cliente, ruta, "{\"concepto\":\"productos\",\"r\":\"" + new string('a', 1100) + "\"}", cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 de la factura");
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>
