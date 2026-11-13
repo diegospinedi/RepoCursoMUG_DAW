@@ -48,22 +48,24 @@ public sealed class ResultadoGrabacionConfiguracion
 }
 
 /// <summary>
-/// Graba los cuatro parámetros de negocio juntos y, si cambian la alícuota, la condición fiscal o el múltiplo (D-07),
+/// Graba los parámetros de negocio juntos y, si cambian la alícuota, la condición fiscal o el múltiplo (D-07),
 /// recalcula el precio de venta de todo el catálogo, activos e inactivos, en la misma transacción (FR-01, FR-02 y AC-03
 /// de FEAT-002c). Es un caso de uso de Catálogo porque Catálogo depende de Configuración y no al revés (D-10).
 /// </summary>
 /// <remarks>
 /// <para>
-/// Si algún campo incumple la política devuelve <see cref="ResultadoGrabacionConfiguracion.Invalido"/> con todos los
-/// errores, sin leer ni grabar nada. Si no, dentro de <see cref="IUnidadDeTrabajo.EjecutarEnTransaccionAsync"/>
-/// (ADR-013): lee la vigente y, si los parámetros de precio cambian, lista los artículos y recalcula cada uno. Si alguno
+/// Si algún campo incumple la política de escritura (con las 6 alícuotas de ARCA, FR-26 de FEAT-007) devuelve
+/// <see cref="ResultadoGrabacionConfiguracion.Invalido"/> con todos los errores, sin leer ni grabar nada. Si no, dentro de
+/// <see cref="IUnidadDeTrabajo.EjecutarEnTransaccionAsync"/> (ADR-013): lee la vigente, arma la nueva con
+/// <see cref="ConfiguracionNegocio.ParaGrabar"/> tomando el punto de venta guardado si el pedido no trae uno (D-27 y D-33
+/// de FEAT-007) y, si los parámetros de precio cambian, lista los artículos y recalcula cada uno. Si alguno
 /// queda fuera de rango, devuelve inválido con el error de D-01 en el múltiplo sin registrar nada (D-03). Si no,
 /// reemplaza la configuración, registra solo los precios que cambian (D-04) y confirma todo junto. La última grabación
 /// gana (D-03 de FEAT-001c).
 /// </para>
 /// <para>
 /// Después del commit, y solo si se grabó, registra en el log con la categoría <see cref="CategoriaRegistro"/> los
-/// valores anteriores y nuevos, la fecha y hora UTC y la cantidad de precios cambiados; nunca códigos ni importes de
+/// valores anteriores y nuevos (con el punto de venta), la fecha y hora UTC y la cantidad de precios cambiados; nunca códigos ni importes de
 /// artículos (R-04 de FEAT-001c, D-11 y D-17). Sin fila de configuración y ante cualquier falla al confirmar (en
 /// <see cref="IUnidadDeTrabajo.ConfirmarAsync"/> o en el commit de la operación), la transacción se revierte, la
 /// excepción se propaga y no se registra la grabación.
@@ -95,15 +97,8 @@ public sealed partial class GrabarConfiguracionConRecalculo(
             return ResultadoGrabacionConfiguracion.Invalido(errores);
         }
 
-        // La política ya aceptó los cuatro: los valores existen y la condición es un texto conocido.
-        var nueva = new ConfiguracionNegocio(
-            datos.AlicuotaIva!.Value,
-            PoliticaConfiguracionNegocio.LeerCondicion(datos.CondicionFiscal)!.Value,
-            datos.MultiploRedondeo!.Value,
-            datos.TopeIdentificacion);
-
         var desenlace = await unidadDeTrabajo.EjecutarEnTransaccionAsync(
-            operacion => GrabarEnTransaccionAsync(nueva, operacion), cancelacion);
+            operacion => GrabarEnTransaccionAsync(datos, operacion), cancelacion);
         if (desenlace.Error is { } error)
         {
             return ResultadoGrabacionConfiguracion.Invalido([error]);
@@ -111,16 +106,19 @@ public sealed partial class GrabarConfiguracionConRecalculo(
 
         // Después del commit de la operación: se registra solo lo confirmado (D-11).
         var anterior = desenlace.Anterior!;
+        var nueva = desenlace.Nueva!;
         RegistrarGrabacion(
             _registro,
             anterior.AlicuotaIva,
             PoliticaConfiguracionNegocio.TextoDe(anterior.CondicionFiscal),
             anterior.MultiploRedondeo,
             anterior.TopeIdentificacion,
+            anterior.PuntoVenta,
             nueva.AlicuotaIva,
             PoliticaConfiguracionNegocio.TextoDe(nueva.CondicionFiscal),
             nueva.MultiploRedondeo,
             nueva.TopeIdentificacion,
+            nueva.PuntoVenta,
             desenlace.PreciosCambiados,
             reloj.GetUtcNow().UtcDateTime);
 
@@ -128,9 +126,18 @@ public sealed partial class GrabarConfiguracionConRecalculo(
     }
 
     // Todo lo que lee y graba, dentro de la transacción de escritura (ADR-013, D-05).
-    private async Task<Desenlace> GrabarEnTransaccionAsync(ConfiguracionNegocio nueva, CancellationToken cancelacion)
+    private async Task<Desenlace> GrabarEnTransaccionAsync(DatosConfiguracion datos, CancellationToken cancelacion)
     {
         var anterior = await configuracion.ObtenerAsync(cancelacion);
+
+        // La política ya aceptó los datos: los valores existen y la condición es un texto conocido. Sin punto de venta en
+        // el pedido se conserva el guardado, leído en esta misma transacción (D-27 y D-33 de FEAT-007).
+        var nueva = ConfiguracionNegocio.ParaGrabar(
+            datos.AlicuotaIva!.Value,
+            PoliticaConfiguracionNegocio.LeerCondicion(datos.CondicionFiscal)!.Value,
+            datos.MultiploRedondeo!.Value,
+            datos.TopeIdentificacion,
+            datos.PuntoVenta ?? anterior.PuntoVenta);
 
         var recalculados = new List<Articulo>();
         if (nueva.CambiaParametrosDePrecioRespectoDe(anterior))
@@ -164,7 +171,7 @@ public sealed partial class GrabarConfiguracionConRecalculo(
 
         // D-03: la configuración y los precios en una sola confirmación.
         await unidadDeTrabajo.ConfirmarAsync(cancelacion);
-        return Desenlace.Grabado(anterior, recalculados.Count);
+        return Desenlace.Grabado(anterior, nueva, recalculados.Count);
     }
 
     // Solo los valores de la configuración, la cantidad y la fecha: nunca el cuerpo del pedido, códigos ni importes de
@@ -172,28 +179,34 @@ public sealed partial class GrabarConfiguracionConRecalculo(
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Configuración de negocio grabada. Anterior: alícuota {AlicuotaIvaAnterior}, condición " +
-            "{CondicionFiscalAnterior}, múltiplo {MultiploRedondeoAnterior}, tope {TopeIdentificacionAnterior}. " +
-            "Nueva: alícuota {AlicuotaIva}, condición {CondicionFiscal}, múltiplo {MultiploRedondeo}, tope " +
-            "{TopeIdentificacion}. Precios de venta cambiados: {PreciosCambiados}. Fecha y hora UTC: {FechaHoraUtc:O}.")]
+            "{CondicionFiscalAnterior}, múltiplo {MultiploRedondeoAnterior}, tope {TopeIdentificacionAnterior}, punto " +
+            "de venta {PuntoVentaAnterior}. Nueva: alícuota {AlicuotaIva}, condición {CondicionFiscal}, múltiplo " +
+            "{MultiploRedondeo}, tope {TopeIdentificacion}, punto de venta {PuntoVenta}. Precios de venta cambiados: " +
+            "{PreciosCambiados}. Fecha y hora UTC: {FechaHoraUtc:O}.")]
     private static partial void RegistrarGrabacion(
         ILogger registro,
         decimal alicuotaIvaAnterior,
         string condicionFiscalAnterior,
         decimal multiploRedondeoAnterior,
         decimal? topeIdentificacionAnterior,
+        int? puntoVentaAnterior,
         decimal alicuotaIva,
         string condicionFiscal,
         decimal multiploRedondeo,
         decimal? topeIdentificacion,
+        int? puntoVenta,
         int preciosCambiados,
         DateTime fechaHoraUtc);
 
-    /// <summary>Lo que devuelve la operación: grabada, con la anterior y la cantidad, o rechazada, con el error.</summary>
-    private sealed record Desenlace(ConfiguracionNegocio? Anterior, int PreciosCambiados, ErrorValidacion? Error)
+    /// <summary>
+    /// Lo que devuelve la operación: grabada, con la anterior, la nueva y la cantidad, o rechazada, con el error.
+    /// </summary>
+    private sealed record Desenlace(
+        ConfiguracionNegocio? Anterior, ConfiguracionNegocio? Nueva, int PreciosCambiados, ErrorValidacion? Error)
     {
-        public static Desenlace Grabado(ConfiguracionNegocio anterior, int preciosCambiados) =>
-            new(anterior, preciosCambiados, null);
+        public static Desenlace Grabado(ConfiguracionNegocio anterior, ConfiguracionNegocio nueva, int preciosCambiados) =>
+            new(anterior, nueva, preciosCambiados, null);
 
-        public static Desenlace Rechazado(ErrorValidacion error) => new(null, 0, error);
+        public static Desenlace Rechazado(ErrorValidacion error) => new(null, null, 0, error);
     }
 }

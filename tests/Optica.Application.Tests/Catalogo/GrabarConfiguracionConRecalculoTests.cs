@@ -37,7 +37,8 @@ public class GrabarConfiguracionConRecalculoTests
         decimal? alicuota = 21m,
         string? condicion = "responsable_inscripto",
         decimal? multiplo = 0.01m,
-        decimal? tope = 10_000_000m) => new(alicuota, condicion, multiplo, tope);
+        decimal? tope = 10_000_000m,
+        int? puntoVenta = null) => new(alicuota, condicion, multiplo, tope, puntoVenta);
 
     private static ErrorValidacion ErrorMultiplo(string accion) => new("multiploRedondeo", accion);
 
@@ -78,7 +79,7 @@ public class GrabarConfiguracionConRecalculoTests
 
         Assert.False(resultado.EsGrabado);
         var error = Assert.Single(resultado.Errores);
-        Assert.Equal(new ErrorValidacion("alicuotaIva", "La alícuota de IVA debe estar entre 0 y 100."), error);
+        Assert.Equal(new ErrorValidacion("alicuotaIva", "La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27."), error);
         Assert.Same(anterior, _almacen.Guardada);
         Assert.Equal(0, _almacen.Reemplazos);
         Assert.Equal(0, Articulos.Confirmaciones);
@@ -114,7 +115,7 @@ public class GrabarConfiguracionConRecalculoTests
         Assert.False(resultado.EsGrabado);
         Assert.Equal(
             [
-                new ErrorValidacion("alicuotaIva", "La alícuota de IVA debe estar entre 0 y 100."),
+                new ErrorValidacion("alicuotaIva", "La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27."),
                 new ErrorValidacion("condicionFiscal", "Elegí Responsable Inscripto o Monotributo."),
                 new ErrorValidacion("topeIdentificacion", "El tope debe ser mayor a 0."),
             ],
@@ -395,7 +396,7 @@ public class GrabarConfiguracionConRecalculoTests
     public async Task Grabar_TopeAusente_GrabaSinTope()
     {
         // D-02 de FEAT-001c: también se puede vaciar un tope ya cargado.
-        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 5_000_000m);
+        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 5_000_000m, puntoVenta: null);
 
         var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(tope: null));
 
@@ -410,7 +411,7 @@ public class GrabarConfiguracionConRecalculoTests
     [Fact]
     public async Task Grabar_Exitoso_RegistraValoresAnterioresYNuevos()
     {
-        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
         Articulos.Sembrar("ABC-1", costo: 1210m);
 
         await CrearCasoDeUso().EjecutarAsync(Validos(
@@ -454,8 +455,8 @@ public class GrabarConfiguracionConRecalculoTests
         Assert.Equal(
             [
                 "AlicuotaIva", "AlicuotaIvaAnterior", "CondicionFiscal", "CondicionFiscalAnterior", "FechaHoraUtc",
-                "MultiploRedondeo", "MultiploRedondeoAnterior", "PreciosCambiados", "TopeIdentificacion",
-                "TopeIdentificacionAnterior", "{OriginalFormat}",
+                "MultiploRedondeo", "MultiploRedondeoAnterior", "PreciosCambiados", "PuntoVenta", "PuntoVentaAnterior",
+                "TopeIdentificacion", "TopeIdentificacionAnterior", "{OriginalFormat}",
             ],
             entrada.Valores.Keys.Order(StringComparer.Ordinal));
         Assert.DoesNotContain("Zq7", entrada.Mensaje, StringComparison.Ordinal);
@@ -473,6 +474,109 @@ public class GrabarConfiguracionConRecalculoTests
 
         Assert.False(resultado.EsGrabado);
         Assert.Empty(_registros.Entradas);
+    }
+
+    // ---- FEAT-007: alícuotas de ARCA (FR-26, D-06) y punto de venta (FR-28, D-27, D-33) ----
+
+    [Fact]
+    public async Task Grabar_Alicuota19_RechazadoSinGrabar()
+    {
+        // AC-27: 19 no es una de las alícuotas de ARCA; no se lee ni se graba nada.
+        var anterior = _almacen.Guardada;
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(alicuota: 19m));
+
+        Assert.False(resultado.EsGrabado);
+        Assert.Equal(
+            [new ErrorValidacion("alicuotaIva", "La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.")],
+            resultado.Errores);
+        Assert.Same(anterior, _almacen.Guardada);
+        Assert.Equal(0, _almacen.Lecturas);
+        Assert.Equal(0, _almacen.Reemplazos);
+        Assert.Empty(_registros.Entradas);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100000)]
+    public async Task Grabar_PuntoVentaFueraDeRango_RechazadoSinGrabar(int puntoVenta)
+    {
+        // AC-31.
+        var anterior = _almacen.Guardada;
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(puntoVenta: puntoVenta));
+
+        Assert.False(resultado.EsGrabado);
+        Assert.Equal(
+            [new ErrorValidacion("puntoVenta", "El punto de venta debe ser un número entero de 1 a 99999.")],
+            resultado.Errores);
+        Assert.Same(anterior, _almacen.Guardada);
+        Assert.Equal(0, _almacen.Reemplazos);
+    }
+
+    [Fact]
+    public async Task Grabar_PuntoVentaNuevo_LoReemplaza()
+    {
+        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: 3);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(puntoVenta: 99999));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(99999, _almacen.Guardada!.PuntoVenta);
+        Assert.Equal(99999, (await CrearConsulta().EjecutarAsync()).PuntoVenta);
+    }
+
+    [Fact]
+    public async Task Grabar_PuntoVentaAusente_ConservaElGuardado()
+    {
+        // D-27: ausente o null conserva el punto de venta guardado; no se vuelve a "sin valor".
+        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: 3);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(tope: 4_500_000m, puntoVenta: null));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(3, _almacen.Guardada!.PuntoVenta);
+        Assert.Equal(4_500_000m, _almacen.Guardada.TopeIdentificacion);
+        // D-33: el punto de venta guardado se toma dentro de la transacción de grabado.
+        Assert.Equal(1, _almacen.Lecturas);
+        Assert.All(Articulos.Accesos, acceso => Assert.True(acceso.DentroDeOperacion));
+    }
+
+    [Fact]
+    public async Task Grabar_PuntoVentaAusente_RegistroConAnteriorYNuevo()
+    {
+        _almacen.Guardada = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: 3);
+
+        await CrearCasoDeUso().EjecutarAsync(Validos(puntoVenta: null));
+
+        var entrada = Assert.Single(_registros.Entradas);
+        Assert.Equal(3, entrada.Valores["PuntoVentaAnterior"]);
+        Assert.Equal(3, entrada.Valores["PuntoVenta"]);
+    }
+
+    [Fact]
+    public async Task Grabar_PuntoVentaNuevo_RegistroConAnteriorYNuevo()
+    {
+        await CrearCasoDeUso().EjecutarAsync(Validos(puntoVenta: 7));
+
+        var entrada = Assert.Single(_registros.Entradas);
+        Assert.Null(entrada.Valores["PuntoVentaAnterior"]);
+        Assert.Equal(7, entrada.Valores["PuntoVenta"]);
+    }
+
+    [Fact]
+    public async Task Grabar_AlicuotaGuardada19_GrabaUnaAdmitidaYRecalcula()
+    {
+        // D-06: una configuración con alícuota 19 guardada antes de FR-26 no frena la grabación ni el recálculo.
+        _almacen.Guardada = new ConfiguracionNegocio(19m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
+        Articulos.Sembrar("ABC-1", costo: 1210m);
+
+        var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(multiplo: 50m));
+
+        Assert.True(resultado.EsGrabado);
+        Assert.Equal(1, resultado.PreciosCambiados);
+        Assert.Equal(21m, _almacen.Guardada!.AlicuotaIva);
+        Assert.True(_almacen.Guardada.AlicuotaAdmitidaPorArca);
     }
 
     [Fact]

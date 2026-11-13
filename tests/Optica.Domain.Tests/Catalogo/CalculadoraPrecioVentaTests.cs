@@ -7,10 +7,10 @@ namespace Optica.Domain.Tests.Catalogo;
 public class CalculadoraPrecioVentaTests
 {
     private static ConfiguracionNegocio ResponsableInscripto(decimal alicuota = 21m, decimal multiplo = 0.01m) =>
-        new(alicuota, CondicionFiscal.ResponsableInscripto, multiplo, null);
+        new(alicuota, CondicionFiscal.ResponsableInscripto, multiplo, null, puntoVenta: null);
 
     private static ConfiguracionNegocio Monotributo(decimal alicuota = 21m, decimal multiplo = 0.01m) =>
-        new(alicuota, CondicionFiscal.Monotributo, multiplo, null);
+        new(alicuota, CondicionFiscal.Monotributo, multiplo, null, puntoVenta: null);
 
     private static PrecioCalculado Precio(decimal costo, decimal margen, ConfiguracionNegocio configuracion)
     {

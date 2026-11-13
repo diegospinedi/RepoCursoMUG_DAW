@@ -91,6 +91,9 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("INTEGER")
                         .HasColumnName("MultiploRedondeoCentavos");
 
+                    b.Property<int?>("PuntoVenta")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("TopeIdentificacion")
                         .HasColumnType("INTEGER")
                         .HasColumnName("TopeIdentificacionCentavos");
@@ -106,6 +109,8 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("CK_ConfiguracionNegocio_Id", "\"Id\" = 1");
 
                             t.HasCheckConstraint("CK_ConfiguracionNegocio_Multiplo", "\"MultiploRedondeoCentavos\" >= 1");
+
+                            t.HasCheckConstraint("CK_ConfiguracionNegocio_PuntoVenta", "\"PuntoVenta\" IS NULL OR \"PuntoVenta\" BETWEEN 1 AND 99999");
 
                             t.HasCheckConstraint("CK_ConfiguracionNegocio_Tope", "\"TopeIdentificacionCentavos\" IS NULL OR \"TopeIdentificacionCentavos\" > 0");
                         });

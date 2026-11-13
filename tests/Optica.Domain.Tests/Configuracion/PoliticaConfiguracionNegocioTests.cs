@@ -11,7 +11,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_ValoresIniciales_SinInfracciones()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Empty(infracciones);
     }
@@ -19,7 +19,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_Alicuota101_Rechazado()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(101m, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(101m, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.AlicuotaFueraDeRango], infracciones);
     }
@@ -27,7 +27,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_AlicuotaMenos1_Rechazado()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(-1m, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(-1m, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.AlicuotaFueraDeRango], infracciones);
     }
@@ -39,7 +39,7 @@ public class PoliticaConfiguracionNegocioTests
     public void Evaluar_AlicuotaBordes0y100y10coma5_Validos(string alicuota)
     {
         var infracciones = PoliticaConfiguracionNegocio.Evaluar(
-            decimal.Parse(alicuota, CultureInfo.InvariantCulture), Monotributo, 0.01m, null);
+            decimal.Parse(alicuota, CultureInfo.InvariantCulture), Monotributo, 0.01m, null, puntoVenta: null);
 
         Assert.Empty(infracciones);
     }
@@ -47,7 +47,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_Alicuota21coma555_Invalido()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21.555m, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21.555m, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.AlicuotaConMasDeDosDecimales], infracciones);
     }
@@ -55,7 +55,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_AlicuotaAusente_Faltante()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(null, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(null, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.AlicuotaFaltante], infracciones);
     }
@@ -63,7 +63,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_Multiplo0coma001_RechazadoPorMinimo()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.001m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.001m, null, puntoVenta: null);
 
         // D-01: el mínimo se evalúa antes que la escala.
         Assert.Equal([InfraccionConfiguracion.MultiploMenorAlMinimo], infracciones);
@@ -75,7 +75,7 @@ public class PoliticaConfiguracionNegocioTests
     public void Evaluar_Multiplo0coma015_Invalido(string multiplo)
     {
         var infracciones = PoliticaConfiguracionNegocio.Evaluar(
-            21m, ResponsableInscripto, decimal.Parse(multiplo, CultureInfo.InvariantCulture), null);
+            21m, ResponsableInscripto, decimal.Parse(multiplo, CultureInfo.InvariantCulture), null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.MultiploConMasDeDosDecimales], infracciones);
     }
@@ -86,7 +86,7 @@ public class PoliticaConfiguracionNegocioTests
     public void Evaluar_MultiploCeroONegativo_RechazadoPorMinimo(string multiplo)
     {
         var infracciones = PoliticaConfiguracionNegocio.Evaluar(
-            21m, ResponsableInscripto, decimal.Parse(multiplo, CultureInfo.InvariantCulture), null);
+            21m, ResponsableInscripto, decimal.Parse(multiplo, CultureInfo.InvariantCulture), null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.MultiploMenorAlMinimo], infracciones);
     }
@@ -94,7 +94,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_Tope0coma01_Valido()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 0.01m);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 0.01m, puntoVenta: null);
 
         Assert.Empty(infracciones);
     }
@@ -103,7 +103,7 @@ public class PoliticaConfiguracionNegocioTests
     public void Evaluar_Alicuota100coma01_RechazadoPorRango()
     {
         // El rango se evalúa antes que la escala.
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(100.01m, ResponsableInscripto, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(100.01m, ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.AlicuotaFueraDeRango], infracciones);
     }
@@ -111,7 +111,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_MultiploAusente_Faltante()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, null, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, null, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.MultiploFaltante], infracciones);
     }
@@ -119,7 +119,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_Tope0_Rechazado()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 0m);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 0m, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.TopeNoPositivo], infracciones);
     }
@@ -127,7 +127,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_TopeNegativo_Rechazado()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, -5m);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, -5m, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.TopeNoPositivo], infracciones);
     }
@@ -135,7 +135,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_TopeConTresDecimales_Invalido()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 1000.005m);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, 1000.005m, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.TopeConMasDeDosDecimales], infracciones);
     }
@@ -143,7 +143,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_TopeAusente_Valido()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, Monotributo, 10m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, Monotributo, 10m, null, puntoVenta: null);
 
         Assert.Empty(infracciones);
     }
@@ -156,7 +156,7 @@ public class PoliticaConfiguracionNegocioTests
     [InlineData(" monotributo")]
     public void Evaluar_CondicionDesconocida_Invalido(string? condicion)
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, condicion, 0.01m, null);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, condicion, 0.01m, null, puntoVenta: null);
 
         Assert.Equal([InfraccionConfiguracion.CondicionFiscalInvalida], infracciones);
     }
@@ -166,7 +166,7 @@ public class PoliticaConfiguracionNegocioTests
     {
         var sobreElMaximo = PoliticaConfiguracionNegocio.ImporteMaximo + 0.01m;
 
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, sobreElMaximo, sobreElMaximo);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, sobreElMaximo, sobreElMaximo, puntoVenta: null);
 
         Assert.Equal(
             [InfraccionConfiguracion.MultiploFueraDeRango, InfraccionConfiguracion.TopeFueraDeRango],
@@ -178,7 +178,7 @@ public class PoliticaConfiguracionNegocioTests
     {
         var maximo = PoliticaConfiguracionNegocio.ImporteMaximo;
 
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, maximo, maximo);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, maximo, maximo, puntoVenta: null);
 
         Assert.Empty(infracciones);
     }
@@ -196,7 +196,7 @@ public class PoliticaConfiguracionNegocioTests
     [Fact]
     public void Evaluar_VariosCamposInvalidos_DevuelveUnaInfraccionPorCampo()
     {
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(101m, "otro", 0.001m, 25_000m);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(101m, "otro", 0.001m, 25_000m, puntoVenta: null);
 
         Assert.Equal(
             [
@@ -217,9 +217,135 @@ public class PoliticaConfiguracionNegocioTests
         Assert.Equal(3, alicuota.Scale);
         Assert.Equal(3, multiplo.Scale);
 
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(alicuota, ResponsableInscripto, multiplo, tope);
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(alicuota, ResponsableInscripto, multiplo, tope, puntoVenta: null);
 
         Assert.Empty(infracciones);
+    }
+
+    // ---- FEAT-007: las 6 alícuotas de ARCA al grabar (FR-26, D-06) y el punto de venta (FR-28, D-33) ----
+
+    [Fact]
+    public void EvaluarParaGrabar_Alicuota19_Rechazado()
+    {
+        // AC-27: 19 está entre 0 y 100, pero ARCA no la acepta.
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(19m, ResponsableInscripto, 0.01m, null, null);
+
+        Assert.Equal([InfraccionConfiguracion.AlicuotaNoAdmitida], infracciones);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("2.5")]
+    [InlineData("5")]
+    [InlineData("10.5")]
+    [InlineData("21")]
+    [InlineData("27")]
+    [InlineData("21.00")]
+    public void EvaluarParaGrabar_LasSeisAlicuotas_Validas(string alicuota)
+    {
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(
+            decimal.Parse(alicuota, CultureInfo.InvariantCulture), ResponsableInscripto, 0.01m, null, 3);
+
+        Assert.Empty(infracciones);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100000)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    [InlineData(int.MaxValue)]
+    public void EvaluarParaGrabar_PuntoVentaFueraDeRango_Rechazado(int puntoVenta)
+    {
+        // AC-31: de 1 a 99999.
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(
+            21m, ResponsableInscripto, 0.01m, null, puntoVenta);
+
+        Assert.Equal([InfraccionConfiguracion.PuntoVentaFueraDeRango], infracciones);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(99999)]
+    [InlineData(null)]
+    public void EvaluarParaGrabar_PuntoVentaBordesOSinValor_Validos(int? puntoVenta)
+    {
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(
+            21m, ResponsableInscripto, 0.01m, null, puntoVenta);
+
+        Assert.Empty(infracciones);
+    }
+
+    [Fact]
+    public void Evaluar_Alicuota19_ValidaAlLeer()
+    {
+        // D-06: la regla de las 6 es de escritura; una alícuota de 0 a 100 ya guardada se sigue leyendo.
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(19m, ResponsableInscripto, 0.01m, null, null);
+
+        Assert.Empty(infracciones);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100000)]
+    public void Evaluar_PuntoVentaFueraDeRango_RechazadoTambienAlLeer(int puntoVenta)
+    {
+        // D-33: el rango del punto de venta es invariante de lectura y escritura.
+        var infracciones = PoliticaConfiguracionNegocio.Evaluar(21m, ResponsableInscripto, 0.01m, null, puntoVenta);
+
+        Assert.Equal([InfraccionConfiguracion.PuntoVentaFueraDeRango], infracciones);
+    }
+
+    [Fact]
+    public void EvaluarParaGrabar_Alicuota101_UnaInfraccionPorCampo()
+    {
+        // Decisión del usuario (2026-11-13): al grabar, toda alícuota fuera de las 6 informa la lista de ARCA.
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(101m, "otro", 0.01m, null, 0);
+
+        Assert.Equal(
+            [
+                InfraccionConfiguracion.AlicuotaNoAdmitida,
+                InfraccionConfiguracion.CondicionFiscalInvalida,
+                InfraccionConfiguracion.PuntoVentaFueraDeRango,
+            ],
+            infracciones);
+    }
+
+    [Theory]
+    [InlineData("101")]
+    [InlineData("50")]
+    [InlineData("-1")]
+    [InlineData("21.555")]
+    [InlineData("100.01")]
+    [InlineData("19")]
+    public void EvaluarParaGrabar_AlicuotaFueraDeLasSeis_SiempreNoAdmitida(string alicuota)
+    {
+        // Al grabar no se informan el rango ni los decimales: solo la lista de ARCA (decisión del usuario, 2026-11-13).
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(
+            decimal.Parse(alicuota, CultureInfo.InvariantCulture), ResponsableInscripto, 0.01m, null, null);
+
+        Assert.Equal([InfraccionConfiguracion.AlicuotaNoAdmitida], infracciones);
+    }
+
+    [Fact]
+    public void EvaluarParaGrabar_AlicuotaAusente_Faltante()
+    {
+        // La excepción: sin alícuota se pide cargarla.
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(null, ResponsableInscripto, 0.01m, null, null);
+
+        Assert.Equal([InfraccionConfiguracion.AlicuotaFaltante], infracciones);
+    }
+
+    [Fact]
+    public void AlicuotasAdmitidas_SonLasSeisDeArca()
+    {
+        Assert.Equal([0m, 2.5m, 5m, 10.5m, 21m, 27m], AlicuotasAdmitidas.Todas);
+        Assert.True(AlicuotasAdmitidas.EsAdmitida(decimal.Parse("10.50", CultureInfo.InvariantCulture)));
+        Assert.False(AlicuotasAdmitidas.EsAdmitida(19m));
+        Assert.False(AlicuotasAdmitidas.EsAdmitida(100m));
+        Assert.False(AlicuotasAdmitidas.EsAdmitida(-21m));
+        // La lista no se puede modificar desde afuera.
+        Assert.Throws<NotSupportedException>(() => ((IList<decimal>)AlicuotasAdmitidas.Todas)[0] = 19m);
     }
 
     [Theory]

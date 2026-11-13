@@ -147,7 +147,7 @@ public class AltaArticuloTests
         // AC-04: Responsable Inscripto, alícuota 21, múltiplo 0,01.
         var primero = await alta.EjecutarAsync(Validos(codigo: "A-1", costo: 1210m, margen: 150m));
         // AC-07 con el múltiplo cambiado entre las dos altas: el mismo caso de uso lee la configuración nueva.
-        _configuracion.Vigente = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 50m, null);
+        _configuracion.Vigente = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 50m, null, puntoVenta: null);
         var segundo = await alta.EjecutarAsync(Validos(codigo: "A-2", costo: 1210m, margen: 50m));
 
         Assert.True(primero.EsGrabado);
@@ -160,7 +160,7 @@ public class AltaArticuloTests
     [Fact]
     public async Task Alta_Monotributo_PrecioSinDescontarIva()
     {
-        _configuracion.Vigente = new ConfiguracionNegocio(21m, CondicionFiscal.Monotributo, 0.01m, null);
+        _configuracion.Vigente = new ConfiguracionNegocio(21m, CondicionFiscal.Monotributo, 0.01m, null, puntoVenta: null);
 
         var resultado = await CrearCasoDeUso().EjecutarAsync(Validos(costo: 1210m, margen: 50m));
 

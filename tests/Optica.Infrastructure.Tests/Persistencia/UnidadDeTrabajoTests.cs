@@ -38,7 +38,7 @@ public class UnidadDeTrabajoTests
 
     /// <summary>La configuración inicial con múltiplo 50 (AC-02): 1.815,00 pasa a 1.850,00.</summary>
     private static ConfiguracionNegocio Multiplo50() =>
-        new(21m, CondicionFiscal.ResponsableInscripto, 50m, null);
+        new(21m, CondicionFiscal.ResponsableInscripto, 50m, null, puntoVenta: null);
 
     [Fact]
     public async Task EjecutarEnTransaccion_Anidada_LanzaError()

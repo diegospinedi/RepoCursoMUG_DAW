@@ -77,6 +77,13 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint(
                     "CK_ConfiguracionNegocio_Tope",
                     "\"TopeIdentificacionCentavos\" IS NULL OR \"TopeIdentificacionCentavos\" > 0");
+
+                // FEAT-007 (D-07): la migración ConfiguracionPuntoVenta lo crea como CHECK de la columna, con ALTER TABLE
+                // ADD COLUMN, para no reconstruir la tabla (ADR-012); el modelo y el snapshot declaran el mismo nombre y
+                // la misma expresión.
+                tabla.HasCheckConstraint(
+                    "CK_ConfiguracionNegocio_PuntoVenta",
+                    "\"PuntoVenta\" IS NULL OR \"PuntoVenta\" BETWEEN 1 AND 99999");
             });
             configuracion.HasKey(c => c.Id);
             configuracion.Property(c => c.Id).ValueGeneratedNever();
@@ -87,6 +94,7 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 .HasColumnName("MultiploRedondeoCentavos").IsRequired().HasConversion(Centesimos);
             configuracion.Property(c => c.TopeIdentificacion)
                 .HasColumnName("TopeIdentificacionCentavos").HasConversion(Centesimos);
+            configuracion.Property(c => c.PuntoVenta);
         });
 
         modelBuilder.Entity<ArticuloFila>(articulo =>
@@ -280,6 +288,9 @@ public sealed class ConfiguracionNegocioFila
 
     /// <summary>Importe, o null mientras no se cargue (D-02); columna <c>TopeIdentificacionCentavos</c>.</summary>
     public decimal? TopeIdentificacion { get; set; }
+
+    /// <summary>Punto de venta de ARCA, de 1 a 99999, o null mientras no se cargue (D-07 de FEAT-007).</summary>
+    public int? PuntoVenta { get; set; }
 }
 
 /// <summary>

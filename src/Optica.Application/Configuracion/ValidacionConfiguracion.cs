@@ -14,25 +14,28 @@ public static class ValidacionConfiguracion
     public const string CampoCondicionFiscal = "condicionFiscal";
     public const string CampoMultiploRedondeo = "multiploRedondeo";
     public const string CampoTopeIdentificacion = "topeIdentificacion";
+    public const string CampoPuntoVenta = "puntoVenta";
 
     public const string AccionAlicuotaFaltante = "Ingresá la alícuota de IVA.";
-    public const string AccionAlicuotaFueraDeRango = "La alícuota de IVA debe estar entre 0 y 100.";
     public const string AccionHastaDosDecimales = AccionesNumericas.HastaDosDecimales;
     public const string AccionCondicionFiscal = "Elegí Responsable Inscripto o Monotributo.";
     public const string AccionMultiploFaltante = "Ingresá el múltiplo de redondeo comercial.";
     public const string AccionMultiploMinimo = "El valor mínimo es 0,01.";
     public const string AccionTopeNoPositivo = "El tope debe ser mayor a 0.";
     public const string AccionValorMenor = AccionesNumericas.ValorMenor;
+    public const string AccionAlicuotaNoAdmitida = "La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.";
+    public const string AccionPuntoVenta = "El punto de venta debe ser un número entero de 1 a 99999.";
 
     /// <summary>
-    /// Evalúa los cuatro campos con la política y devuelve todos los errores, uno por campo como máximo, en el orden
-    /// alícuota, condición, múltiplo, tope. Vacío si los datos cumplen la política.
+    /// Evalúa los campos con la política de escritura (las 6 alícuotas de ARCA, FR-26 de FEAT-007) y devuelve todos los
+    /// errores, uno por campo como máximo, en el orden alícuota, condición, múltiplo, tope, punto de venta. Vacío si los
+    /// datos cumplen la política.
     /// </summary>
     public static IReadOnlyList<ErrorValidacion> Validar(DatosConfiguracion datos)
     {
         ArgumentNullException.ThrowIfNull(datos);
-        var infracciones = PoliticaConfiguracionNegocio.Evaluar(
-            datos.AlicuotaIva, datos.CondicionFiscal, datos.MultiploRedondeo, datos.TopeIdentificacion);
+        var infracciones = PoliticaConfiguracionNegocio.EvaluarParaGrabar(
+            datos.AlicuotaIva, datos.CondicionFiscal, datos.MultiploRedondeo, datos.TopeIdentificacion, datos.PuntoVenta);
         return [.. infracciones.Select(Traducir)];
     }
 
@@ -43,8 +46,11 @@ public static class ValidacionConfiguracion
     public static ErrorValidacion Traducir(InfraccionConfiguracion infraccion) => infraccion switch
     {
         InfraccionConfiguracion.AlicuotaFaltante => new(CampoAlicuotaIva, AccionAlicuotaFaltante),
-        InfraccionConfiguracion.AlicuotaFueraDeRango => new(CampoAlicuotaIva, AccionAlicuotaFueraDeRango),
-        InfraccionConfiguracion.AlicuotaConMasDeDosDecimales => new(CampoAlicuotaIva, AccionHastaDosDecimales),
+        // Decisión del usuario (2026-11-13): toda alícuota inválida que llega a la Api informa la lista de ARCA. Validar
+        // ya no produce estas dos (solo la lectura, D-06), pero la traducción queda total.
+        InfraccionConfiguracion.AlicuotaFueraDeRango
+            or InfraccionConfiguracion.AlicuotaConMasDeDosDecimales
+            or InfraccionConfiguracion.AlicuotaNoAdmitida => new(CampoAlicuotaIva, AccionAlicuotaNoAdmitida),
         InfraccionConfiguracion.CondicionFiscalInvalida => new(CampoCondicionFiscal, AccionCondicionFiscal),
         InfraccionConfiguracion.MultiploFaltante => new(CampoMultiploRedondeo, AccionMultiploFaltante),
         InfraccionConfiguracion.MultiploMenorAlMinimo => new(CampoMultiploRedondeo, AccionMultiploMinimo),
@@ -53,6 +59,7 @@ public static class ValidacionConfiguracion
         InfraccionConfiguracion.TopeNoPositivo => new(CampoTopeIdentificacion, AccionTopeNoPositivo),
         InfraccionConfiguracion.TopeConMasDeDosDecimales => new(CampoTopeIdentificacion, AccionHastaDosDecimales),
         InfraccionConfiguracion.TopeFueraDeRango => new(CampoTopeIdentificacion, AccionValorMenor),
+        InfraccionConfiguracion.PuntoVentaFueraDeRango => new(CampoPuntoVenta, AccionPuntoVenta),
         _ => throw new UnreachableException("Infracción de configuración sin campo ni acción asignados."),
     };
 }

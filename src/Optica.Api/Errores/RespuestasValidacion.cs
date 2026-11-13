@@ -56,17 +56,26 @@ public static class RespuestasValidacion
     /// textos elegiría esta sobrecarga en lugar de la anterior.
     /// </summary>
     public static ActionResult CuerpoIlegible(
-        this ControllerBase controller, string accion, string campoPorDefecto, IReadOnlyList<string> campos)
+        this ControllerBase controller, string accion, string campoPorDefecto, IReadOnlyList<string> campos) =>
+        controller.Invalido(new ErrorValidacion(controller.CampoIlegible(campoPorDefecto, campos), accion));
+
+    /// <summary>
+    /// El campo que <see cref="CuerpoIlegible(ControllerBase, string, string, IReadOnlyList{string})"/> nombraría: el
+    /// primero de <paramref name="campos"/> que nombra una clave con error de ModelState o, si ninguno, el de
+    /// <paramref name="campoPorDefecto"/>. Para un controlador que elige la acción según el campo (por ejemplo, el punto de
+    /// venta de la configuración, FEAT-007). Solo mira las claves, nunca los mensajes ni los valores.
+    /// </summary>
+    public static string CampoIlegible(
+        this ControllerBase controller, string campoPorDefecto, IReadOnlyList<string> campos)
     {
         var claves = controller.ModelState
             .Where(entrada => entrada.Value is { Errors.Count: > 0 })
             .Select(entrada => entrada.Key)
             .ToList();
-        var campo = claves
+        return claves
             .Select(clave => campos.FirstOrDefault(candidato => NombraElCampo(clave, candidato)))
             .FirstOrDefault(candidato => candidato is not null)
             ?? campoPorDefecto;
-        return controller.Invalido(new ErrorValidacion(campo, accion));
     }
 
     /// <summary>
