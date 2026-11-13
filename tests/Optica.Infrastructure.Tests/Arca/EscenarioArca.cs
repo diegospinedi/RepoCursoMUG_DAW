@@ -112,7 +112,11 @@ internal sealed class EscenarioArca : IDisposable
             "Optica.Arca.Ticket",
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
             {
-                token, firma, vencimiento, cuit, huellaCertificado = huella ?? ClienteWsaa.Huella(Certificado),
+                token,
+                firma,
+                vencimiento,
+                cuit,
+                huellaCertificado = huella ?? ClienteWsaa.Huella(Certificado),
             }));
 
     /// <summary>Espera (en tiempo real, hasta 10 s) que se cumpla la condición.</summary>

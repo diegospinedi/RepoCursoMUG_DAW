@@ -146,13 +146,17 @@ public sealed class ClienteWsaaTests : IDisposable
                 "Otro.Proposito",
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
                 {
-                    token = "otro", firma = "otra", vencimiento = EscenarioArca.VencimientoTicket,
+                    token = "otro",
+                    firma = "otra",
+                    vencimiento = EscenarioArca.VencimientoTicket,
                 }))),
             "json-invalido" => Proteger("{ no es json"),
             "json-sin-token" => Proteger(JsonSerializer.Serialize(new { vencimiento = EscenarioArca.VencimientoTicket })),
             "vencido" => Proteger(JsonSerializer.Serialize(new
             {
-                token = "vencido", firma = "vencida", vencimiento = EscenarioArca.Ahora.AddHours(-1),
+                token = "vencido",
+                firma = "vencida",
+                vencimiento = EscenarioArca.Ahora.AddHours(-1),
             })),
             // Ronda 2: un ticket vigente de otro CUIT o de otro certificado no sirve para esta configuración.
             "otro-cuit" => _escenario.TicketGuardado("otro", EscenarioArca.VencimientoTicket, cuit: "20000000028"),

@@ -310,24 +310,24 @@ internal static class FacturasPrueba
     /// <summary>Las columnas de una Factura B válida de 3.000 al 21 %, con una sola línea.</summary>
     public static Dictionary<string, object?> ValoresFactura(long presupuestoNumero, long id, long numero) =>
         new(StringComparer.Ordinal)
-    {
-        ["Id"] = id,
-        ["PresupuestoNumero"] = presupuestoNumero,
-        ["Tipo"] = "b",
-        ["PuntoVenta"] = 3L,
-        ["Numero"] = numero,
-        ["Fecha"] = "2026-10-30",
-        ["Concepto"] = "productos",
-        ["ReceptorDni"] = Dni,
-        ["TotalCentavos"] = 300000L,
-        ["NetoCentavos"] = 247934L,
-        ["IvaCentavos"] = 52066L,
-        ["AlicuotaCentesimas"] = 2100L,
-        ["Cae"] = Cae,
-        ["VencimientoCae"] = "2026-11-09",
-        ["Entorno"] = "homologacion",
-        ["CantidadLineas"] = 1L,
-    };
+        {
+            ["Id"] = id,
+            ["PresupuestoNumero"] = presupuestoNumero,
+            ["Tipo"] = "b",
+            ["PuntoVenta"] = 3L,
+            ["Numero"] = numero,
+            ["Fecha"] = "2026-10-30",
+            ["Concepto"] = "productos",
+            ["ReceptorDni"] = Dni,
+            ["TotalCentavos"] = 300000L,
+            ["NetoCentavos"] = 247934L,
+            ["IvaCentavos"] = 52066L,
+            ["AlicuotaCentesimas"] = 2100L,
+            ["Cae"] = Cae,
+            ["VencimientoCae"] = "2026-11-09",
+            ["Entorno"] = "homologacion",
+            ["CantidadLineas"] = 1L,
+        };
 
     public static Dictionary<string, object?> ValoresLinea(long facturaId, long orden, long precioFinalCentavos) =>
         new(StringComparer.Ordinal)
