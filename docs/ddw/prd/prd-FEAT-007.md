@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-13 |
 | PRD de origen | `docs/ddw/prd/prd-DISC-001-06.md` (PRD 06 de DISC-001) |
-| PRD loops | 3 |
+| PRD loops | 4 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001 del que proviene. Los
@@ -14,7 +14,7 @@
 > `prd-DISC-001-06.md`.
 >
 > **Alcance decidido.** El usuario decidió el 2026-11-13 implementar el PRD 06 en un solo ticket, sin dividir, con
-> sus 26 AC (W-PRD-06 aceptado). Se descartó la división propuesta en cuatro partes (emisión e importes contra el
+> sus 26 AC (W-PRD-06 aceptado); al volver de PLAN se sumaron AC-27 a AC-29 (29 en total). Se descartó la división propuesta en cuatro partes (emisión e importes contra el
 > simulador; reglas de la emisión; concepto y receptor; ARCA real, errores y no funcionales).
 >
 > **Sin certificado de homologación.** El usuario no tiene todavía el certificado digital de homologación de ARCA
@@ -24,6 +24,12 @@
 >
 > **Navegadores.** NFR-03 y AC-26 se reducen a la versión estable vigente de Chrome y de Edge (2 combinaciones), como
 > en FEAT-003d y FEAT-006 (decisión del usuario del 2026-11-13).
+>
+> **Alícuotas de ARCA.** Para la Factura B, ARCA solo acepta las alícuotas de IVA 0, 2,5, 5, 10,5, 21 y 27, y la
+> configuración del PRD 01 admitía cualquier porcentaje de 0 a 100 (FR-10 de `prd-DISC-001-01.md`). El usuario decidió
+> el 2026-11-13, al volver de PLAN, limitar la configuración a esas 6 alícuotas (FR-26, AC-27, AC-28). FR-27 y AC-29
+> cubren una base que ya tenga guardada una alícuota fuera de la tabla; es un **supuesto** de este PRD, porque la
+> configuración pudo grabarse antes de este cambio.
 
 ## Context and Problem
 Hoy la óptica factura entrando al sitio de ARCA con el usuario y la contraseña de la empresa, y
@@ -121,6 +127,14 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 - FR-25: El sistema no debe permitir modificar ni eliminar una factura autorizada con CAE, por
   ninguna vía. [PRD-001 RF-32]
 
+### Alícuota de IVA
+- FR-26: El sistema debe admitir como alícuota de IVA de la configuración únicamente uno de los valores que acepta
+  ARCA para la Factura B: 0, 2,5, 5, 10,5, 21 y 27, y debe ofrecerlos a la operadora como una lista para elegir.
+  [Decisión del usuario del 2026-11-13; reemplaza, para la alícuota, el rango de 0 a 100 de FR-10 del PRD 01]
+- FR-27: El sistema no debe emitir una Factura B mientras la alícuota guardada no sea uno de los valores de FR-26, y
+  debe indicar a la operadora que elija una alícuota válida en la configuración. [Supuesto: alícuota grabada antes
+  de FR-26]
+
 ## Non-Functional Requirements
 - NFR-01: El sistema debe dar por no disponible el web service de ARCA tras 30 segundos sin
   respuesta. [PRD-001 RNF-10]
@@ -210,6 +224,13 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
 - AC-26 (NFR-03): WHEN se ejecutan los criterios de este documento en Chrome y en Edge, en su
   versión estable vigente, THE sistema SHALL cumplirlos en las 2 combinaciones. [PRD-001 AC-56, reducido
   a la versión estable por decisión del usuario del 2026-11-13]
+- AC-27 (FR-26): IF la operadora pide grabar en la configuración la alícuota 19, desde la pantalla o con un pedido
+  directo a la API, THEN THE sistema SHALL no grabarla e indicar que la alícuota debe ser 0, 2,5, 5, 10,5, 21 o 27.
+- AC-28 (FR-26): WHEN la operadora abre la configuración, THE sistema SHALL mostrar la alícuota de IVA como una lista
+  con las opciones 0, 2,5, 5, 10,5, 21 y 27, con la alícuota guardada seleccionada.
+- AC-29 (FR-27): IF la alícuota guardada es 19, la condición fiscal es Responsable Inscripto y la operadora presiona
+  Facturar, THEN THE sistema SHALL no enviar ninguna solicitud a ARCA e indicar que debe elegir una alícuota válida en
+  la configuración.
 
 ## Out of Scope
 - Verificación de una emisión sin respuesta (consulta del último comprobante, recuperación del CAE
@@ -242,7 +263,8 @@ con neto e IVA discriminados, y Factura C como Monotributo, solo con el total.
   (FR-14).
 
 ## Dependencies
-- PRD 01 (DISC-001): sesión iniciada, condición fiscal, alícuota de IVA y tope de identificación
+- PRD 01 (DISC-001), implementado en FEAT-001a a FEAT-001c: este PRD cambia la validación y la pantalla de la alícuota de
+  IVA (FR-26). Además: sesión iniciada, condición fiscal, alícuota de IVA y tope de identificación
   (FR-08 a FR-13 y FR-20), y certificado y punto de venta fuera de la interfaz (FR-14).
 - PRD 04 (DISC-001): presupuestos en Final inmodificables, con total, líneas y DNI guardado sin
   puntos.
