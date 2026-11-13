@@ -8,11 +8,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
 using Optica.Application.Marca;
+using Optica.Application.Presupuestos;
 using Optica.Domain.Acceso;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
 using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Marca;
+using Optica.Infrastructure.Pdf;
 using Optica.Infrastructure.Persistencia;
 using Optica.Infrastructure.Seguridad;
 
@@ -52,6 +54,10 @@ public static class ConfiguracionInfraestructura
         // Presupuestos: comparte el contexto (y la unidad de trabajo) del alcance, así el alta lee el último número y
         // graba dentro de la misma transacción (ADR-013, ADR-015).
         servicios.AddScoped<IPresupuestoRepository, PresupuestoRepository>();
+
+        // PDF del presupuesto con QuestPDF (ADR-018). Singleton: no guarda estado y la configuración de QuestPDF es
+        // global, fijada una vez en su constructor estático (D-13).
+        servicios.AddSingleton<IGeneradorPdfPresupuesto, GeneradorPdfPresupuesto>();
 
         // Marca: la instalada en Optica:Marca:Directorio o la de ejemplo copiada junto a los binarios. Singleton: se lee
         // una vez y queda en memoria hasta reiniciar la Api.
