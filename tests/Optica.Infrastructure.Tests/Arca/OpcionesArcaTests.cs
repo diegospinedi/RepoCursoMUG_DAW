@@ -246,26 +246,67 @@ public sealed class OpcionesArcaTests : IDisposable
     }
 
     /// <summary>
-    /// Temporal hasta Block 6: con credenciales completas el autorizador sigue siendo el que no envía, con su propio
-    /// motivo. Block 6 tiene que cambiar esta prueba a propósito cuando registre el cliente de WSAA y WSFEv1.
+    /// Block 6 (cambiada a propósito, D-54): con credenciales completas, homologación y producción usan el cliente de
+    /// WSAA y WSFEv1, con el protector de datos que registra la Api. Ya no existe el motivo "todavía no está disponible".
     /// </summary>
-    [Fact]
-    public async Task Arranque_ConCredenciales_AutorizadorTemporal()
+    /// <remarks>
+    /// Sin red, sin depender del orden de los controles del autorizador (ronda 2): el <see cref="HttpClient"/> propio de
+    /// ARCA se reemplaza en el contenedor por uno con <see cref="ManejadorSinRed"/>, que cuenta y rechaza todo intento.
+    /// La emisión corre con un plazo abierto y el PFX no existe: termina "no enviada" por el certificado, y aunque el
+    /// orden cambiara, ningún pedido podría salir del proceso.
+    /// </remarks>
+    [Theory]
+    [InlineData("Homologacion", EntornoArca.Homologacion)]
+    [InlineData("Produccion", EntornoArca.Produccion)]
+    public async Task Arranque_ConCredenciales_AutorizadorWsfe(string texto, EntornoArca entorno)
     {
-        using var servicios = Servicios(Configuracion(
-            (OpcionesArca.ClaveEntorno, "Homologacion"),
-            (OpcionesArca.ClaveCuit, CuitValido),
-            (OpcionesArca.ClaveCertificadoRuta, Path.Combine(_directorio, "homologacion.pfx")),
-            (OpcionesArca.ClaveCertificadoClave, "clave-de-prueba")));
+        var manejador = new ManejadorSinRed();
+        using var clienteSinRed = new HttpClient(manejador);
+        using var servicios = new ServiceCollection()
+            .AddLogging(registro => registro.AddProvider(_registro).SetMinimumLevel(LogLevel.Trace))
+            .AddSingleton<Optica.Application.Comun.IProtectorDatos, ProtectorDePrueba>()
+            .AgregarInfraestructura(Configuracion(
+                (OpcionesArca.ClaveEntorno, texto),
+                (OpcionesArca.ClaveCuit, CuitValido),
+                (OpcionesArca.ClaveCertificadoRuta, Path.Combine(_directorio, "homologacion.pfx")),
+                (OpcionesArca.ClaveCertificadoClave, "clave-de-prueba")))
+            .AddKeyedSingleton(ConfiguracionInfraestructura.ClaveClienteHttpArca, clienteSinRed)
+            .BuildServiceProvider();
+        servicios.ValidarArca();
 
         var autorizador = servicios.GetRequiredService<IAutorizadorComprobantes>();
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
+        using var plazo = new CancellationTokenSource();
+        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
 
-        Assert.IsType<AutorizadorNoConfigurado>(autorizador);
-        Assert.Equal(EntornoArca.Homologacion, autorizador.Entorno);
+        Assert.Same(clienteSinRed, servicios.GetRequiredKeyedService<HttpClient>(ConfiguracionInfraestructura.ClaveClienteHttpArca));
+        Assert.IsType<AutorizadorWsfe>(autorizador);
+        Assert.Same(autorizador, servicios.GetRequiredService<IAutorizadorComprobantes>());
+        Assert.Equal(entorno, autorizador.Entorno);
+        Assert.Equal(TimeSpan.FromSeconds(30), autorizador.TiempoMaximo);
         Assert.Equal(
-            "La facturación con ARCA todavía no está disponible en esta versión.",
-            Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
+            AutorizadorWsfe.MotivoCertificado, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
+        Assert.Equal(0, manejador.Intentos);
+        Assert.DoesNotContain(_registro.Entradas, e => e.Texto.Contains("todavía no está disponible", StringComparison.Ordinal));
+        Assert.False(File.Exists(Path.Combine(_directorio, $"arca-ta-{texto.ToLowerInvariant()}.json")));
+    }
+
+    /// <summary>Ronda 2: facturar en producción también queda advertido en el log al arrancar, sin valores.</summary>
+    [Fact]
+    public void Arranque_Produccion_AdvierteEnElLog()
+    {
+        using var servicios = Servicios(Configuracion(
+            (OpcionesArca.ClaveEntorno, "Produccion"),
+            (OpcionesArca.ClaveCuit, CuitValido),
+            (OpcionesArca.ClaveCertificadoRuta, Path.Combine(_directorio, "produccion.pfx")),
+            (OpcionesArca.ClaveCertificadoClave, "clave-de-prueba")));
+
+        servicios.ValidarArca();
+
+        Assert.Contains(_registro.Entradas, e => e.Nivel == LogLevel.Warning
+            && e.Texto.Contains("producción", StringComparison.Ordinal)
+            && e.Texto.Contains(OpcionesArca.ClaveEntorno, StringComparison.Ordinal));
+        Assert.DoesNotContain(_registro.Entradas, e => e.Texto.Contains(CuitValido, StringComparison.Ordinal)
+            || e.Texto.Contains("clave-de-prueba", StringComparison.Ordinal));
     }
 
     [Theory]

@@ -20,6 +20,9 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.12" />
     <!-- PDF del presupuesto (ADR-018, D-01): licencia Community, fijada en GeneradorPdfPresupuesto (D-13). -->
     <PackageReference Include="QuestPDF" Version="2026.9.1" />
+    <!-- Firma CMS del pedido de acceso a WSAA de ARCA (ADR-023, D-12). 10.0.13 y no 10.0.12: la 10.0.12 tiene dos
+         avisos de denegación de servicio (GHSA-846f-f764-76mx, alto, y GHSA-2fmv-rv2c-59x7), corregidos en 10.0.13. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

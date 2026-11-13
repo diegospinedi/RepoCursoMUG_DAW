@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <loginCmsResponse xmlns="http://wsaa.view.sua.dvadac.desein.afip.gov">
+      <loginCmsReturn>&lt;?xml version="1.0" encoding="UTF-8" standalone="yes"?&gt;
+&lt;loginTicketResponse version="1.0"&gt;
+    &lt;header&gt;
+        &lt;source&gt;CN=wsaahomo, O=AFIP, C=AR, SERIALNUMBER=CUIT 00000000000&lt;/source&gt;
+        &lt;destination&gt;SERIALNUMBER=CUIT 00000000000, CN=optica-pruebas&lt;/destination&gt;
+        &lt;uniqueId&gt;1234567890&lt;/uniqueId&gt;
+        &lt;generationTime&gt;2026-10-30T11:50:00.000-03:00&lt;/generationTime&gt;
+        &lt;expirationTime&gt;2026-10-31T00:00:00.000-03:00&lt;/expirationTime&gt;
+    &lt;/header&gt;
+    &lt;credentials&gt;
+        &lt;token&gt;VE9LRU4tQ0VOVElORUxBLWFyY2EtN2YzYQ==&lt;/token&gt;
+        &lt;sign&gt;RklSTUEtQ0VOVElORUxBLWFyY2EtOWMxZQ==&lt;/sign&gt;
+    &lt;/credentials&gt;
+&lt;/loginTicketResponse&gt;
+</loginCmsReturn>
+    </loginCmsResponse>
+  </soapenv:Body>
+</soapenv:Envelope>

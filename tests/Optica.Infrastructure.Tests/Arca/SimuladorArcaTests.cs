@@ -19,6 +19,10 @@ public sealed class SimuladorArcaTests : IDisposable
 
     private readonly RegistroCapturadoArca _registro = new();
 
+    // Un token que se puede cancelar y nunca se cancela: como el plazo de EmitirFactura sin vencer (ronda 3: sin plazo,
+    // el simulador no autoriza, igual que el cliente real).
+    private readonly CancellationTokenSource _abierto = new();
+
     public SimuladorArcaTests()
     {
         Directory.CreateDirectory(_directorio);
@@ -28,6 +32,7 @@ public sealed class SimuladorArcaTests : IDisposable
 
     public void Dispose()
     {
+        _abierto.Dispose();
         if (Directory.Exists(_directorio))
         {
             Directory.Delete(_directorio, recursive: true);
@@ -40,13 +45,13 @@ public sealed class SimuladorArcaTests : IDisposable
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
         var b1 = Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None));
+            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token));
         var b2 = Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None));
+            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token));
         var c1 = Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await simulador.AutorizarAsync(SolicitudesArca.FacturaC(3), CancellationToken.None));
+            await simulador.AutorizarAsync(SolicitudesArca.FacturaC(3), _abierto.Token));
         var b1OtroPunto = Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(4), CancellationToken.None));
+            await simulador.AutorizarAsync(SolicitudesArca.FacturaB(4), _abierto.Token));
 
         Assert.Equal(1, b1.Numero);
         Assert.Equal(2, b2.Numero);
@@ -64,7 +69,7 @@ public sealed class SimuladorArcaTests : IDisposable
         // El contador sobrevive a un reinicio: otra instancia sobre el mismo directorio sigue con el 3.
         var otro = Crear(RespuestaSimulador.Autorizar);
         var b3 = Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await otro.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None));
+            await otro.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token));
         Assert.Equal(3, b3.Numero);
 
         // Escritura atómica: no quedan temporales en el directorio de datos.
@@ -76,7 +81,7 @@ public sealed class SimuladorArcaTests : IDisposable
     {
         var simulador = Crear(RespuestaSimulador.Rechazar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(), _abierto.Token);
 
         var rechazada = Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
         Assert.Equal(10016, rechazada.Codigo);
@@ -127,7 +132,7 @@ public sealed class SimuladorArcaTests : IDisposable
         await File.WriteAllTextAsync(Archivo, contenido);
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(), _abierto.Token);
 
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado);
         Assert.Contains(_registro.Entradas, e => e.Nivel == LogLevel.Error
@@ -143,24 +148,35 @@ public sealed class SimuladorArcaTests : IDisposable
         await File.WriteAllTextAsync(Archivo, """{ "contadores": { "B-3": 124 } }""");
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token);
 
         Assert.Equal(125, Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado).Numero);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(Archivo));
         Assert.Equal(125, json.RootElement.GetProperty("contadores").GetProperty("B-3").GetInt64());
     }
 
-    [Fact]
-    public async Task Simulador_NoResponder_TokenNoCancelable_SinRespuestaSinColgar()
+    /// <summary>
+    /// Ronda 3 (alineado con <see cref="AutorizadorWsfe"/>): con un token que no se puede cancelar no hay plazo, así que
+    /// no se "envía" nada: no enviada con el mismo motivo fijo, en cualquier respuesta configurada, sin colgarse y sin
+    /// numerar. "Sin respuesta" dejaría una emisión pendiente por un error de programación.
+    /// </summary>
+    [Theory]
+    [InlineData(RespuestaSimulador.Autorizar)]
+    [InlineData(RespuestaSimulador.Rechazar)]
+    [InlineData(RespuestaSimulador.NoResponder)]
+    public async Task Simulador_TokenNoCancelable_NoEnviadaSinColgar(RespuestaSimulador respuesta)
     {
-        var simulador = Crear(RespuestaSimulador.NoResponder);
+        var simulador = Crear(respuesta);
 
-        // Con un token que nunca se cancela no hay plazo que esperar: no se cuelga ni agrega un plazo propio.
         var tarea = simulador.AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
         await Task.Yield();
 
         Assert.True(tarea.IsCompleted);
-        Assert.IsType<ResultadoAutorizacion.SinRespuesta>(await tarea);
+        Assert.Equal(
+            "La emisión no tiene un tiempo máximo de espera de ARCA.",
+            Assert.IsType<ResultadoAutorizacion.NoEnviada>(await tarea).Motivo);
+        Assert.Equal(AutorizadorWsfe.MotivoSinPlazo, SimuladorArca.MotivoSinPlazo);
+        Assert.False(File.Exists(Archivo));
     }
 
     [Fact]
@@ -169,7 +185,7 @@ public sealed class SimuladorArcaTests : IDisposable
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
         var resultados = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(
-            () => simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None))));
+            () => simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token))));
 
         var numeros = resultados.Select(r => Assert.IsType<ResultadoAutorizacion.Autorizada>(r).Numero).Order();
         Assert.Equal(Enumerable.Range(1, 20).Select(n => (long)n), numeros);
@@ -185,7 +201,7 @@ public sealed class SimuladorArcaTests : IDisposable
         await File.WriteAllTextAsync(Archivo, contenido);
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token);
 
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado);
         Assert.Contains(_registro.Entradas, e => e.Nivel == LogLevel.Error
@@ -200,7 +216,7 @@ public sealed class SimuladorArcaTests : IDisposable
         Directory.CreateDirectory(Archivo);
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token);
 
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado);
         Assert.Contains(_registro.Entradas, e => e.Nivel == LogLevel.Error
@@ -216,7 +232,7 @@ public sealed class SimuladorArcaTests : IDisposable
         await File.WriteAllTextAsync(Archivo, contenido);
         var simulador = Crear(RespuestaSimulador.Autorizar);
 
-        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), CancellationToken.None);
+        var resultado = await simulador.AutorizarAsync(SolicitudesArca.FacturaB(3), _abierto.Token);
 
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado);
         Assert.Contains(_registro.Entradas, e => e.Nivel == LogLevel.Error
@@ -224,7 +240,7 @@ public sealed class SimuladorArcaTests : IDisposable
         Assert.Equal(contenido, await File.ReadAllTextAsync(Archivo));
 
         // Otro tipo en el mismo punto de venta sigue numerando.
-        var c = await simulador.AutorizarAsync(SolicitudesArca.FacturaC(3), CancellationToken.None);
+        var c = await simulador.AutorizarAsync(SolicitudesArca.FacturaC(3), _abierto.Token);
         Assert.Equal(1, Assert.IsType<ResultadoAutorizacion.Autorizada>(c).Numero);
     }
 

@@ -68,6 +68,10 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton(_ => OpcionesArca.Leer(configuracion));
         servicios.AddSingleton<IAutorizadorComprobantes>(CrearAutorizador);
 
+        // El HttpClient propio de ARCA (spec FEAT-007, Block 6): uno solo para toda la Api, con la validación TLS por
+        // defecto (sin callback de certificados, R-12). Solo lo pide el autorizador de homologación o producción.
+        servicios.AddKeyedSingleton(ClaveClienteHttpArca, (_, _) => ServiciosArca.CrearClienteHttp());
+
         // PDF del presupuesto con QuestPDF (ADR-018). Singleton: no guarda estado y la configuración de QuestPDF es
         // global, fijada una vez en su constructor estático (D-13).
         servicios.AddSingleton<IGeneradorPdfPresupuesto, GeneradorPdfPresupuesto>();
@@ -84,27 +88,40 @@ public static class ConfiguracionInfraestructura
         return servicios;
     }
 
+    /// <summary>La clave del <see cref="HttpClient"/> propio de ARCA en el contenedor.</summary>
+    internal const string ClaveClienteHttpArca = "Optica.Arca";
+
     /// <summary>
-    /// Elige el autorizador por <see cref="OpcionesArca.Entorno"/>: el simulador en el directorio de datos, o, en
-    /// homologación y producción, <see cref="AutorizadorNoConfigurado"/> mientras el cliente de WSAA y WSFEv1 no esté
-    /// disponible (spec FEAT-007, Block 6) o si faltan el CUIT, el certificado o su clave.
+    /// Elige el autorizador por <see cref="OpcionesArca.Entorno"/>: el simulador en el directorio de datos; en
+    /// homologación y producción, el cliente de WSAA y WSFEv1 (<see cref="AutorizadorWsfe"/>, con el ticket cifrado por el
+    /// <see cref="IProtectorDatos"/> que registra la Api, D-30), o <see cref="AutorizadorNoConfigurado"/> si faltan el
+    /// CUIT, el certificado o su clave.
     /// </summary>
     private static IAutorizadorComprobantes CrearAutorizador(IServiceProvider proveedor)
     {
         var opciones = proveedor.GetRequiredService<OpcionesArca>();
-        return opciones.Entorno == EntornoArca.Simulado
-            ? new SimuladorArca(
+        if (opciones.Entorno == EntornoArca.Simulado)
+        {
+            return new SimuladorArca(
                 proveedor.GetRequiredService<FabricaConexion>().Directorio,
                 opciones.RespuestaSimulado,
                 opciones.TiempoMaximo,
-                proveedor.GetRequiredService<ILogger<SimuladorArca>>())
-            : new AutorizadorNoConfigurado(
-                opciones.Entorno,
-                opciones.TiempoMaximo,
-                // Temporal: con credenciales completas, Block 6 registra acá el cliente de WSAA y WSFEv1.
-                opciones.CredencialesCompletas
-                    ? AutorizadorNoConfigurado.MotivoNoDisponible
-                    : AutorizadorNoConfigurado.MotivoNoConfigurada);
+                proveedor.GetRequiredService<ILogger<SimuladorArca>>());
+        }
+
+        if (!opciones.CredencialesCompletas)
+        {
+            return new AutorizadorNoConfigurado(
+                opciones.Entorno, opciones.TiempoMaximo, AutorizadorNoConfigurado.MotivoNoConfigurada);
+        }
+
+        return AutorizadorWsfe.Crear(
+            opciones,
+            proveedor.GetRequiredService<FabricaConexion>().Directorio,
+            proveedor.GetRequiredKeyedService<HttpClient>(ClaveClienteHttpArca),
+            proveedor.GetRequiredService<IProtectorDatos>(),
+            proveedor.GetRequiredService<TimeProvider>(),
+            proveedor.GetRequiredService<ILoggerFactory>());
     }
 
     /// <summary>
@@ -158,12 +175,20 @@ public static class ConfiguracionInfraestructura
                 opciones.Entorno,
                 string.Join(", ", opciones.ClavesFaltantes));
         }
+        else if (opciones.Entorno == EntornoArca.Homologacion)
+        {
+            // Homologación es el entorno de prueba de ARCA: sus CAE no tienen validez fiscal.
+            registro.LogWarning(
+                "La facturación usa ARCA de homologación ({Clave} = {Entorno}): los comprobantes emitidos no tienen " +
+                "validez fiscal.",
+                OpcionesArca.ClaveEntorno,
+                opciones.Entorno);
+        }
         else
         {
-            // Spec FEAT-007, Block 6: hasta que esté el cliente de WSAA y WSFEv1, también con credenciales.
+            // Warning y no Information (ronda 2): cada comprobante es fiscal y no se puede anular desde el sistema.
             registro.LogWarning(
-                "La facturación con ARCA ({Clave} = {Entorno}) todavía no está disponible en esta versión: cada emisión " +
-                "va a terminar sin enviarse.",
+                "La facturación usa ARCA de producción ({Clave} = {Entorno}): los comprobantes emitidos son fiscales.",
                 OpcionesArca.ClaveEntorno,
                 opciones.Entorno);
         }

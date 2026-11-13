@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
+    <!-- Reloj controlado para el plazo de la emisión en las pruebas del cliente de ARCA (AC-21, NFR-01). -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
     <!-- Lectura del PDF del presupuesto en las pruebas: textos, colores, imágenes y metadatos (D-02). -->
     <PackageReference Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
@@ -31,6 +33,11 @@
     <Compile Include="..\Compartido\EncuentroDeAltas.cs" Link="Compartido\EncuentroDeAltas.cs" />
     <!-- La siembra de presupuestos de las pruebas de volumen, compartida con Optica.Api.Tests (NFR-03 de FEAT-003d). -->
     <Compile Include="..\Compartido\SiembraPresupuestos.cs" Link="Compartido\SiembraPresupuestos.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Respuestas grabadas de WSAA y WSFEv1, con datos ficticios (spec FEAT-007, Block 6). -->
+    <None Include="Arca\Respuestas\*.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

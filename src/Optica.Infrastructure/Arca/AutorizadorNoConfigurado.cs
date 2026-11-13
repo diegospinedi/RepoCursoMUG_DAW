@@ -5,18 +5,14 @@ namespace Optica.Infrastructure.Arca;
 
 /// <summary>
 /// El autorizador de homologación o producción que no envía nada: cada emisión termina "no enviada" con un motivo fijo,
-/// sin llamar a nadie, y la Api arranca igual. Se usa en dos casos: faltan el CUIT, el certificado o su clave
-/// (<see cref="MotivoNoConfigurada"/>), y, de forma temporal, con las credenciales completas
-/// (<see cref="MotivoNoDisponible"/>) hasta que Block 6 de la spec FEAT-007 registre el cliente de WSAA y WSFEv1 en su
-/// lugar.
+/// sin llamar a nadie, y la Api arranca igual. Se usa cuando faltan el CUIT, el certificado o su clave
+/// (<see cref="MotivoNoConfigurada"/>); con las credenciales completas, la raíz de composición registra
+/// <see cref="AutorizadorWsfe"/>.
 /// </summary>
 public sealed class AutorizadorNoConfigurado : IAutorizadorComprobantes
 {
     /// <summary>El motivo cuando faltan credenciales.</summary>
     public const string MotivoNoConfigurada = "La facturación con ARCA no está configurada.";
-
-    /// <summary>El motivo con credenciales completas, temporal hasta Block 6.</summary>
-    public const string MotivoNoDisponible = "La facturación con ARCA todavía no está disponible en esta versión.";
 
     private readonly string _motivo;
 

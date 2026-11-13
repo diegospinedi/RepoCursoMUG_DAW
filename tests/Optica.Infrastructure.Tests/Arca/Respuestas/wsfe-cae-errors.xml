@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <Errors>
+          <Err>
+            <Code>10015</Code>
+            <Msg>Factura B (CbteDesde igual a CbteHasta), DocTipo: 96 (DNI), DocNro 718294 no se encuentra registrado en los padrones de AFIP.</Msg>
+          </Err>
+          <Err>
+            <Code>10001</Code>
+            <Msg>Segundo error que no se informa.</Msg>
+          </Err>
+        </Errors>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>

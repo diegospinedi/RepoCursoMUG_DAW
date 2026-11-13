@@ -13,8 +13,9 @@ namespace Optica.Infrastructure.Arca;
 /// <c>Arca:Simulado:Respuesta</c>. Sus comprobantes no tienen validez fiscal: la factura guarda el entorno simulado y el
 /// PDF lleva la leyenda (AGENTS.md). Singleton: un candado propio serializa la lectura y la escritura del contador.
 /// No aplica un plazo propio: con <see cref="RespuestaSimulador.NoResponder"/> espera hasta que se cancela el token que
-/// recibe (el plazo de <c>EmitirFactura</c>, D-32); con un token que no se puede cancelar responde "sin respuesta"
-/// enseguida, en lugar de colgarse. Nunca registra la solicitud ni el contenido del archivo.
+/// recibe (el plazo de <c>EmitirFactura</c>, D-32). Con un token que no se puede cancelar responde "no enviada" con
+/// <see cref="MotivoSinPlazo"/>, sea cual sea la respuesta configurada, igual que el cliente real. Nunca registra la
+/// solicitud ni el contenido del archivo.
 /// </summary>
 public sealed class SimuladorArca : IAutorizadorComprobantes
 {
@@ -29,6 +30,11 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
 
     /// <summary>Lo que se informa cuando el contador no se puede leer o grabar.</summary>
     public const string MotivoContador = "No se pudo usar el contador del simulador de ARCA.";
+
+    /// <summary>
+    /// Lo que se informa con un token que no se puede cancelar: sin plazo no se "envía" nada, igual que el cliente real.
+    /// </summary>
+    public const string MotivoSinPlazo = AutorizadorWsfe.MotivoSinPlazo;
 
     /// <summary>Lo que se informa cuando la emisión se cancela antes de empezar.</summary>
     public const string MotivoCancelada = "La emisión se canceló antes de enviar la solicitud.";
@@ -66,6 +72,12 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
     {
         ArgumentNullException.ThrowIfNull(solicitud);
 
+        // Como el cliente real (ronda 3): sin plazo no se "envía" nada. "Sin respuesta" dejaría una emisión pendiente.
+        if (!cancelacion.CanBeCanceled)
+        {
+            return new ResultadoAutorizacion.NoEnviada(MotivoSinPlazo);
+        }
+
         // Como el cliente real: cancelado antes de "enviar", no se envió nada.
         if (cancelacion.IsCancellationRequested)
         {
@@ -83,13 +95,6 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
                 return new ResultadoAutorizacion.Rechazada(CodigoRechazo, DescripcionRechazo);
 
             case RespuestaSimulador.NoResponder:
-                // Un token que no se puede cancelar no trae plazo: esperar sería colgar la emisión para siempre. No se
-                // agrega un plazo propio (D-32); se responde "sin respuesta" enseguida.
-                if (!cancelacion.CanBeCanceled)
-                {
-                    return new ResultadoAutorizacion.SinRespuesta();
-                }
-
                 try
                 {
                     await Task.Delay(Timeout.InfiniteTimeSpan, cancelacion);

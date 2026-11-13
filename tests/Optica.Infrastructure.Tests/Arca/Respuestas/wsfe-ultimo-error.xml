@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECompUltimoAutorizadoResult>
+        <PtoVta>3</PtoVta>
+        <CbteTipo>6</CbteTipo>
+        <CbteNro>0</CbteNro>
+        <Errors>
+          <Err>
+            <Code>11002</Code>
+            <Msg>El punto de venta no se encuentra habilitado a usar en el presente WS.</Msg>
+          </Err>
+        </Errors>
+      </FECompUltimoAutorizadoResult>
+    </FECompUltimoAutorizadoResponse>
+  </soap:Body>
+</soap:Envelope>

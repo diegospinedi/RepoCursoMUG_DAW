@@ -169,6 +169,10 @@ public partial class Program
             proteccion.ProtectKeysWithDpapi();
         }
 
+        // Las mismas claves, por un puerto neutro, para lo que la infraestructura guarda cifrado en el directorio de
+        // datos (el ticket de acceso de ARCA, D-30). La Api no conoce qué protege.
+        builder.Services.AddSingleton<IProtectorDatos, ProtectorDatos>();
+
         // Sesión: cookie HttpOnly, Secure y SameSite=Strict que vence a los 60 minutos del último pedido. Sin sesión,
         // 401 sin cuerpo, nunca una redirección.
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

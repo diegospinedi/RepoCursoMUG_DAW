@@ -28,6 +28,7 @@ public sealed class FabricaApiArcaTests
             using var cliente = fabrica.CreateClient();
 
             var autorizador = fabrica.Services.GetRequiredService<IAutorizadorComprobantes>();
+            using var plazo = new CancellationTokenSource(TimeSpan.FromSeconds(30)); // sin plazo, no se autoriza
 
             Assert.Equal(EntornoArca.Simulado, autorizador.Entorno);
             var resultado = await autorizador.AutorizarAsync(
@@ -38,7 +39,7 @@ public sealed class FabricaApiArcaTests
                     ConceptoFactura.Productos,
                     ReceptorFactura.SinIdentificar,
                     ImportesFactura.ParaFacturaC(1000m)),
-                CancellationToken.None);
+                plazo.Token);
             Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
         }
         finally
