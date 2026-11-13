@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Optica.Infrastructure.Arca;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Api.Tests;
@@ -221,6 +223,14 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Production");
         builder.UseSetting(FabricaConexion.ClaveDirectorio, DirectorioDatos);
+        // R-14: ARCA simulada, que autoriza, fijada en memoria y agregada al final (le gana a las variables de entorno
+        // Arca__*): las pruebas de la Api nunca emiten contra homologación ni producción por la configuración de la PC.
+        builder.ConfigureAppConfiguration(configuracion => configuracion.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                [OpcionesArca.ClaveEntorno] = "Simulado",
+                [OpcionesArca.ClaveRespuestaSimulado] = "autorizar",
+            }));
         // Salvo que se pidan los niveles de la configuración, el registro de captura ve todos los niveles, incluido
         // Debug, sin importar los filtros de appsettings: así las pruebas detectan datos sensibles también en los
         // niveles que hoy no se escriben.
