@@ -152,6 +152,8 @@ public partial class Program
         // FEAT-003c: la modificación en Borrador y el paso a Final, con versión (D-01) y en su transacción de escritura.
         builder.Services.AddScoped<ModificarPresupuesto>();
         builder.Services.AddScoped<PasarPresupuestoAFinal>();
+        // FEAT-006: la búsqueda, una lectura sin transacción de escritura; los filtros llegan en el cuerpo (ADR-019).
+        builder.Services.AddScoped<BuscarPresupuestos>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

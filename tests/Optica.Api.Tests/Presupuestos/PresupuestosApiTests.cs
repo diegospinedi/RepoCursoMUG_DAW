@@ -23,6 +23,7 @@ public sealed class PresupuestosApiTests
     private const string Ruta = "/api/presupuestos";
     private const string RutaArticulos = "/api/articulos";
     private const string AccionCuerpoIlegible = "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
+    private const string AccionCuerpoIlegibleBusqueda = "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";
     private const string TituloNoEncontrado = "No se encontró el presupuesto.";
 
     private const string TextoCantidadInvalida = "La cantidad debe ser un número entero mayor a 0";
@@ -1522,7 +1523,277 @@ public sealed class PresupuestosApiTests
         Assert.Equal(antes.GetRawText(), despues.GetRawText());
     }
 
+    // FEAT-006: búsqueda de presupuestos (POST /api/presupuestos/busqueda, ADR-019).
+
+    /// <summary>
+    /// AC-01 y AC-09 por la Api: con presupuestos de "González" (en Final) y "Gómez", la búsqueda por Apellido "ONZALEZ"
+    /// responde 200 solo con el de "González", con sus siete datos, la página, el tamaño 50 y el total.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_GonzalezYGomez_SoloGonzalez()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var gonzalez = await AltaDeAsync(cliente, cookie, "González", "María José", "99.999.998", codigo);
+        await AltaDeAsync(cliente, cookie, "Gómez", "Ana", "99999997", codigo);
+        // Un Final se graba en Borrador y después pasa a Final, como en la app.
+        using (var final = await PutEstadoAsync(cliente, cookie, gonzalez, CuerpoEstado("final", 0)))
+        {
+            Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+        }
+
+        using var respuesta = await PostBusquedaAsync(cliente, cookie, "{\"apellido\":\"ONZALEZ\"}");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("application/json", respuesta.Content.Headers.ContentType?.MediaType);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposBusqueda, Nombres(json));
+        Assert.Equal(1, json.GetProperty("pagina").GetInt32());
+        Assert.Equal(50, json.GetProperty("tamanoPagina").GetInt32());
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        var encontrado = Assert.Single(json.GetProperty("presupuestos").EnumerateArray());
+        Assert.Equal(CamposListado, Nombres(encontrado));
+        Assert.Equal(gonzalez, encontrado.GetProperty("numero").GetInt64());
+        Assert.Equal(
+            DateOnly.FromDateTime(fabrica.Reloj.GetLocalNow().DateTime).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            encontrado.GetProperty("fecha").GetString());
+        Assert.Equal("González", encontrado.GetProperty("apellido").GetString());
+        Assert.Equal("María José", encontrado.GetProperty("nombre").GetString());
+        Assert.Equal("99999998", encontrado.GetProperty("dni").GetString());
+        Assert.Equal("final", encontrado.GetProperty("estado").GetString());
+        Assert.Equal(1815m, encontrado.GetProperty("total").GetDecimal());
+    }
+
+    /// <summary>
+    /// FR-07, FR-08: sin filtros (cuerpo vacío o con nulos) trae todos, por número de mayor a menor; una página después
+    /// de la última trae la lista vacía y el total.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_SinFiltrosYPaginaPosterior_ListaVaciaConTotal()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var primero = await AltaAsync(cliente, cookie, codigo);
+        var segundo = await AltaAsync(cliente, cookie, codigo);
+
+        foreach (var cuerpo in new[] { "{}", "{\"apellido\":null,\"desde\":null,\"pagina\":null}", "null" })
+        {
+            using var todos = await PostBusquedaAsync(cliente, cookie, cuerpo);
+            Assert.Equal(HttpStatusCode.OK, todos.StatusCode);
+            var json = await Http.JsonAsync(todos);
+            Assert.Equal(
+                new[] { segundo, primero },
+                json.GetProperty("presupuestos").EnumerateArray().Select(p => p.GetProperty("numero").GetInt64()));
+            Assert.Equal(2, json.GetProperty("total").GetInt32());
+        }
+
+        using var posterior = await PostBusquedaAsync(cliente, cookie, "{\"pagina\":2}");
+        Assert.Equal(HttpStatusCode.OK, posterior.StatusCode);
+        var vacia = await Http.JsonAsync(posterior);
+        Assert.Empty(vacia.GetProperty("presupuestos").EnumerateArray());
+        Assert.Equal(2, vacia.GetProperty("pagina").GetInt32());
+        Assert.Equal(2, vacia.GetProperty("total").GetInt32());
+    }
+
+    /// <summary>
+    /// Sad path: un cuerpo ilegible (JSON roto, un arreglo, la página como texto, decimal o fuera de un entero, un DNI
+    /// como número, una fecha como número) responde 400 con un solo error y la acción fija, en el campo que nombra el
+    /// lector o en <c>apellido</c>, sin los mensajes del lector ni lo enviado.
+    /// </summary>
+    [Theory]
+    [InlineData("esto no es json", "apellido")]
+    [InlineData("[1,2,3]", "apellido")]
+    [InlineData("{\"apellido\":\"Zq7-marcado", "apellido")]
+    [InlineData("{\"apellido\":\"Zq7-marcado\",\"pagina\":\"2\"}", "pagina")]
+    [InlineData("{\"apellido\":\"Zq7-marcado\",\"pagina\":1.5}", "pagina")]
+    [InlineData("{\"apellido\":\"Zq7-marcado\",\"pagina\":99999999999}", "pagina")]
+    [InlineData("{\"dni\":30111222}", "dni")]
+    [InlineData("{\"nombre\":[\"Zq7-marcado\"]}", "nombre")]
+    [InlineData("{\"desde\":20260310}", "desde")]
+    [InlineData("{\"hasta\":{\"dia\":10}}", "hasta")]
+    public async Task PostBusqueda_CuerpoIlegible_400(string cuerpo, string campo)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        using var respuesta = await PostBusquedaAsync(cliente, cookie, cuerpo);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(
+            new Dictionary<string, string[]> { [campo] = [AccionCuerpoIlegibleBusqueda] }, await ErroresAsync(respuesta));
+        AfirmarSinDetallesDelLector(
+            await respuesta.Content.ReadAsStringAsync(), "Zq7-marcado", "30111222", "20260310", "99999999999");
+    }
+
+    /// <summary>
+    /// Sad path: un Apellido con un sustituto UTF-16 suelto escapado en el JSON (<c>\ud800</c>). El lector de JSON de
+    /// ASP.NET Core no lo convierte en texto: responde 400 de cuerpo ilegible en <c>apellido</c>, con la acción fija de la
+    /// búsqueda y sin el valor; el caso de uso (que rechaza UTF-16 inválido con su propio texto) no llega a ejecutarse.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_ApellidoConSustitutoSuelto_400SinElValor()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        using var respuesta = await PostBusquedaAsync(cliente, cookie, "{\"apellido\":\"Zq7\\ud800\"}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(
+            new Dictionary<string, string[]> { ["apellido"] = [AccionCuerpoIlegibleBusqueda] },
+            await ErroresAsync(respuesta));
+        var texto = await respuesta.Content.ReadAsStringAsync();
+        AfirmarSinDetallesDelLector(texto, "Zq7");
+        Assert.DoesNotContain("ud800", texto, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Un cuerpo vacío con <c>Content-Type: application/json</c> responde distinto según cómo llega, y esta prueba fija
+    /// las dos respuestas tal como son hoy:
+    /// <list type="bullet">
+    /// <item>con <c>Content-Length: 0</c>, MVC lo reconoce como vacío y, como la solicitud es nullable, la enlaza como
+    /// null: 200 con todos los presupuestos, como <c>{}</c>;</item>
+    /// <item>en partes (sin <c>Content-Length</c>), MVC no sabe de antemano que está vacío, el lector de JSON no encuentra
+    /// ningún valor y responde 400 de cuerpo ilegible en <c>apellido</c>, con la acción fija de la búsqueda y sin
+    /// detalles del lector.</item>
+    /// </list>
+    /// La pantalla siempre envía un objeto JSON; la búsqueda sin filtros se pide con <c>{}</c>.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_CuerpoVacioConJson_SegunLargo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+
+        using var conLargoCero = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, Json(string.Empty), cookie);
+        Assert.Equal(0, conLargoCero.RequestMessage?.Content?.Headers.ContentLength);
+        Assert.Equal(HttpStatusCode.OK, conLargoCero.StatusCode);
+        var json = await Http.JsonAsync(conLargoCero);
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        Assert.Equal(
+            numero, Assert.Single(json.GetProperty("presupuestos").EnumerateArray()).GetProperty("numero").GetInt64());
+
+        using var enPartes = await Http.EnviarAsync(
+            cliente, HttpMethod.Post, RutaBusqueda, new Http.ContenidoSinLargo(string.Empty, "application/json"), cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, enPartes.StatusCode);
+        Assert.Equal("application/problem+json", enPartes.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(
+            new Dictionary<string, string[]> { ["apellido"] = [AccionCuerpoIlegibleBusqueda] }, await ErroresAsync(enPartes));
+        AfirmarSinDetallesDelLector(await enPartes.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// Sad path (AC-07, D-07, D-17): fechas inválidas, Desde posterior a Hasta, textos largos y página fuera de rango
+    /// responden 400 con todos los errores por campo y textos fijos, sin repetir lo enviado.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_DatosInvalidos_400PorCampo()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        using var todos = await PostBusquedaAsync(
+            cliente,
+            cookie,
+            JsonSerializer.Serialize(new
+            {
+                apellido = "Zq7" + new string('a', 98),
+                nombre = "Zq7" + new string('b', 98),
+                dni = "Zq7" + new string('1', 18),
+                desde = "2026-02-30",
+                hasta = "Zq7-fecha",
+                pagina = 1_000_001,
+            }));
+
+        await AfirmarRechazoAsync(todos, new Dictionary<string, string[]>
+        {
+            ["apellido"] = ["Usá hasta 100 caracteres."],
+            ["nombre"] = ["Usá hasta 100 caracteres."],
+            ["dni"] = ["Usá hasta 20 caracteres."],
+            ["desde"] = ["La fecha no es válida."],
+            ["hasta"] = ["La fecha no es válida."],
+            ["pagina"] = ["Pedí una página entre 1 y 1.000.000."],
+        });
+        var texto = await todos.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Zq7", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("2026-02-30", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("1000001", texto, StringComparison.Ordinal);
+
+        using var rango = await PostBusquedaAsync(
+            cliente, cookie, "{\"desde\":\"2026-03-20\",\"hasta\":\"2026-03-10\",\"pagina\":0}");
+        await AfirmarRechazoAsync(rango, new Dictionary<string, string[]>
+        {
+            ["desde"] = ["La fecha Desde no puede ser posterior a Hasta."],
+            ["pagina"] = ["Pedí una página entre 1 y 1.000.000."],
+        });
+    }
+
+    /// <summary>
+    /// ADR-019 y R-02 (Ley 25.326): con la captura del log en Trace, ni una búsqueda válida ni una rechazada ni un
+    /// cuerpo ilegible dejan Apellido, Nombre o DNI en ningún mensaje. Datos ficticios.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_Registro_SinDatosPersonales()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        using var valida = await PostBusquedaAsync(
+            cliente, cookie, "{\"apellido\":\"Zq7Apellido\",\"nombre\":\"Zq7Nombre\",\"dni\":\"30.111.222\"}");
+        Assert.Equal(HttpStatusCode.OK, valida.StatusCode);
+        using var invalida = await PostBusquedaAsync(
+            cliente, cookie, "{\"apellido\":\"Zq7Apellido\",\"dni\":\"30.111.222\",\"desde\":\"2026-02-30\"}");
+        Assert.Equal(HttpStatusCode.BadRequest, invalida.StatusCode);
+        using var ilegible = await PostBusquedaAsync(cliente, cookie, "{\"apellido\":\"Zq7Apellido\",\"dni\":\"ZZMARCA");
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+
+        var lineas = fabrica.Registro.Lineas;
+        // Control: la captura ve Trace, y MVC registró la ejecución de la acción de la búsqueda.
+        // Atención: este control depende del texto que MVC escribe en Trace al ejecutar la acción (hoy incluye
+        // "Optica.Api.Controllers.PresupuestosController.Buscar"). Si una versión de ASP.NET Core cambia ese mensaje, falla
+        // el control y no la protección de los datos: hay que actualizar el texto buscado, no quitar el control.
+        Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+        Assert.Contains(lineas, l => l.Mensaje.Contains("PresupuestosController.Buscar", StringComparison.Ordinal));
+        foreach (var secreto in new[] { "Zq7", "zq7", "30111222", "30.111.222", "ZZMARCA" })
+        {
+            var conElDato = lineas.Where(l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal))
+                .Select(l => $"{l.Categoria} ({l.Nivel})")
+                .ToList();
+            Assert.True(conElDato.Count == 0, $"\"{secreto}\" llegó al log en: {string.Join(", ", conElDato)}");
+        }
+    }
+
     // Ayudas.
+
+    private const string RutaBusqueda = Ruta + "/busqueda";
+
+    private static readonly string[] CamposBusqueda = ["presupuestos", "pagina", "tamanoPagina", "total"];
+
+    private static readonly string[] CamposListado = ["numero", "fecha", "apellido", "nombre", "dni", "estado", "total"];
+
+    private static Task<HttpResponseMessage> PostBusquedaAsync(HttpClient cliente, string cookie, string cuerpo) =>
+        Http.PostJsonAsync(cliente, RutaBusqueda, cuerpo, cookie);
+
+    /// <summary>Da de alta un presupuesto con ese cliente ficticio y una línea, y devuelve su número.</summary>
+    private static async Task<long> AltaDeAsync(
+        HttpClient cliente, string cookie, string apellido, string nombre, string dni, long codigo)
+    {
+        using var respuesta = await PostAsync(cliente, cookie, Cuerpo(apellido, nombre, dni, null, null, null, codigo));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        return (await Http.JsonAsync(respuesta)).GetProperty("numero").GetInt64();
+    }
 
     /// <summary>Agrega al objeto JSON una propiedad que se ignora, hasta que ocupe <paramref name="bytes"/> en UTF-8.</summary>
     private static string ConRelleno(string cuerpo, int bytes)

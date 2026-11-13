@@ -207,6 +207,81 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
                 .GetProperty("cliente").GetProperty("apellido").GetString());
     }
 
+    /// <summary>
+    /// AC-16 de FEAT-006 (NFR-01, D-03): con 10.000 presupuestos sembrados, 20 búsquedas por Apellido por la Api, medidas
+    /// como la respuesta HTTP completa: 10 de "Ficticio", que coincide con los 10.000 (el peor caso; la primera y la
+    /// última página entre ellas), y 10 de textos que no coinciden con ninguno. Al menos 19 de las 20 responden en menos
+    /// de 2 s. Cada respuesta confirma con el total y las filas que la búsqueda recorrió lo que dice recorrer.
+    /// </summary>
+    [Fact]
+    [Trait("Categoria", "Volumen")]
+    public async Task Volumen_20BusquedasPorApellido_19BajoDosSegundos()
+    {
+        const int Paginas = SiembraPresupuestos.Volumen / 50;
+        using var fabrica = new FabricaApi();
+        using var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        Sembrar(fabrica);
+
+        // Las páginas de "Ficticio": la primera, la última y ocho intermedias.
+        var paginas = new[] { 1, Paginas, 2, 50, 100, 150, Paginas - 1, 3, 75, 125 };
+        var busquedas = paginas
+            .Select(pagina => (Apellido: "Ficticio", Pagina: pagina, Total: SiembraPresupuestos.Volumen, Filas: 50))
+            .Concat(Enumerable.Range(1, 10).Select(i => (
+                Apellido: string.Create(CultureInfo.InvariantCulture, $"Zqxnoexiste{i:D2}"), Pagina: 1, Total: 0, Filas: 0)))
+            .ToList();
+        Assert.Equal(20, busquedas.Count);
+        Assert.Contains(busquedas, b => b.Pagina == 1 && b.Total > 0);
+        Assert.Contains(busquedas, b => b.Pagina == Paginas);
+
+        // Calentamiento, sin medir ni contar: "Ficticio" página 1, un texto sin coincidencias y la página 200.
+        foreach (var (apellido, pagina) in new[] { ("Ficticio", 1), ("Zqxcalentamiento", 1), ("Ficticio", Paginas) })
+        {
+            using var previa = await Http.PostJsonAsync(
+                cliente, RutaBusqueda, JsonSerializer.Serialize(new { apellido, pagina }), cookie);
+            Assert.Equal(HttpStatusCode.OK, previa.StatusCode);
+        }
+
+        var tabla = new StringBuilder("Apellido | Página | Tiempo (ms)\n");
+        var bajoDosSegundos = 0;
+        foreach (var (apellido, pagina, total, filas) in busquedas)
+        {
+            var cuerpo = JsonSerializer.Serialize(new { apellido, pagina });
+            var reloj = Stopwatch.StartNew();
+            using var respuesta = await Http.PostJsonAsync(cliente, RutaBusqueda, cuerpo, cookie);
+            var texto = await respuesta.Content.ReadAsStringAsync();
+            reloj.Stop();
+
+            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+            using var documento = JsonDocument.Parse(texto);
+            var json = documento.RootElement;
+            Assert.Equal(total, json.GetProperty("total").GetInt32());
+            var presupuestos = json.GetProperty("presupuestos");
+            Assert.Equal(filas, presupuestos.GetArrayLength());
+            if (filas > 0)
+            {
+                // Por número de mayor a menor: la página p empieza en 10.000 − 50·(p − 1).
+                Assert.Equal(
+                    SiembraPresupuestos.Volumen - (50L * (pagina - 1)), presupuestos[0].GetProperty("numero").GetInt64());
+            }
+
+            if (reloj.Elapsed < LimiteBusqueda)
+            {
+                bajoDosSegundos++;
+            }
+
+            tabla.Append(CultureInfo.InvariantCulture, $"{apellido} | {pagina} | {reloj.Elapsed.TotalMilliseconds:F1}\n");
+        }
+
+        salida.WriteLine(tabla.ToString());
+        Assert.True(bajoDosSegundos >= 19, $"Solo {bajoDosSegundos} de 20 búsquedas respondieron en menos de 2 s.\n{tabla}");
+    }
+
+    private const string RutaBusqueda = Ruta + "/busqueda";
+
+    /// <summary>El límite de AC-16: la grilla en menos de 2 segundos.</summary>
+    private static readonly TimeSpan LimiteBusqueda = TimeSpan.FromSeconds(2);
+
     /// <summary>Siembra los 10.000 presupuestos (1.000 Finales) y comprueba los conteos; anota la duración.</summary>
     private void Sembrar(FabricaApi fabrica)
     {

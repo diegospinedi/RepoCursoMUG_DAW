@@ -183,6 +183,9 @@ public sealed class CierrePorDefectoPresupuestosTests
                 .ToString(),
             new SolicitudEstadoPresupuesto("Zq7-estado", 987654321).ToString(),
             new DatosLinea(987654321, 7531, 12.34m, 7531).ToString(),
+            // FEAT-006: la solicitud de la búsqueda (ADR-019).
+            new SolicitudBusquedaPresupuestos("Zq7Apellido", "Zq7Nombre", "30111222", "2026-03-10", "2026-03-20", 7531)
+                .ToString(),
         };
 
         foreach (var texto in textos)
@@ -198,12 +201,57 @@ public sealed class CierrePorDefectoPresupuestosTests
         }
     }
 
+    /// <summary>
+    /// FEAT-006 (ADR-019, Ley 25.326): la solicitud de la búsqueda y la respuesta de la página no muestran Apellido,
+    /// Nombre, DNI, fechas, página ni importes en <see cref="object.ToString"/>; MVC registra en Trace los argumentos de la
+    /// acción. Datos ficticios.
+    /// </summary>
+    [Fact]
+    public void SolicitudBusqueda_ToString_SinValores()
+    {
+        var textos = new[]
+        {
+            new SolicitudBusquedaPresupuestos("Zq7Apellido", "Zq7Nombre", "30111222", "2026-03-10", "2026-03-20", 7531)
+                .ToString(),
+            new ListadoPresupuestos(
+                [new PresupuestoListado(
+                    987654321, new DateOnly(2026, 3, 10), "Zq7Apellido", "Zq7Nombre", "30111222", "final", 12.34m)],
+                7531,
+                50,
+                7531).ToString(),
+        };
+
+        foreach (var texto in textos)
+        {
+            Assert.DoesNotContain("Zq7", texto, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("30111222", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("2026", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("987654321", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("7531", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12.34", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12,34", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("=", texto, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>El traductor de la búsqueda es cerrado por defecto: un resultado no previsto lanza; inválido, 400.</summary>
+    [Fact]
+    public void ResponderBusqueda_Cerrado()
+    {
+        var controller = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderBusqueda(null));
+        var invalido = Assert.IsType<ObjectResult>(controller.ResponderBusqueda(ResultadoBusquedaPresupuestos.Invalido(
+            [new ErrorValidacion(ValidacionPresupuesto.CampoPagina, ValidacionPresupuesto.AccionPaginaFueraDeRango)])));
+        Assert.Equal(StatusCodes.Status400BadRequest, invalido.StatusCode);
+    }
+
     private static PresupuestosController Crear()
     {
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

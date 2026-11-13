@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Optica.Application.Comun;
+using Optica.Domain.Catalogo;
 using Optica.Domain.Comun;
 using Optica.Domain.Presupuestos;
 
@@ -102,6 +103,127 @@ public static class ValidacionPresupuesto
     /// (<c>ReglasImporte.ImporteMaximo</c>).
     /// </summary>
     public const decimal ImporteMaximoContrato = 90_071_992_547_409.91m;
+
+    // FEAT-006: la búsqueda de presupuestos (Block 2, D-07, D-17).
+
+    /// <summary>La fecha Desde de la búsqueda, <c>yyyy-MM-dd</c>.</summary>
+    public const string CampoDesde = "desde";
+
+    /// <summary>La fecha Hasta de la búsqueda, <c>yyyy-MM-dd</c>.</summary>
+    public const string CampoHasta = "hasta";
+
+    /// <summary>La página pedida de la búsqueda.</summary>
+    public const string CampoPagina = "pagina";
+
+    /// <summary>El formato exacto de las fechas de la búsqueda.</summary>
+    public const string FormatoFechaBusqueda = "yyyy-MM-dd";
+
+    /// <summary>Largo máximo de Apellido y Nombre en la búsqueda, después de recortar (D-07).</summary>
+    public const int LargoMaximoNombreBusqueda = 100;
+
+    /// <summary>Largo máximo del DNI en la búsqueda, después de recortar (D-07).</summary>
+    public const int LargoMaximoDniBusqueda = 20;
+
+    /// <summary>Páginas que se pueden pedir en la búsqueda (D-17).</summary>
+    public const int PaginaMaximaBusqueda = 1_000_000;
+
+    /// <summary>Una fecha de la búsqueda que no tiene el formato <c>yyyy-MM-dd</c> o no existe; no repite el valor.</summary>
+    public const string AccionFechaInvalida = "La fecha no es válida.";
+
+    /// <summary>El texto de AC-07, junto a Desde (FR-06).</summary>
+    public const string AccionDesdePosteriorAHasta = "La fecha Desde no puede ser posterior a Hasta.";
+
+    /// <summary>Un DNI de búsqueda de más de <see cref="LargoMaximoDniBusqueda"/> caracteres (D-07).</summary>
+    public const string AccionDniBusquedaLargo = "Usá hasta 20 caracteres.";
+
+    /// <summary>Una página fuera de 1 a <see cref="PaginaMaximaBusqueda"/> (D-17); no repite el valor.</summary>
+    public const string AccionPaginaFueraDeRango = "Pedí una página entre 1 y 1.000.000.";
+
+    /// <summary>
+    /// Los parámetros de la búsqueda de presupuestos (FR-01, FR-06, D-07, D-17), sin leer la base: Apellido y Nombre de
+    /// hasta <see cref="LargoMaximoNombreBusqueda"/> caracteres y DNI de hasta <see cref="LargoMaximoDniBusqueda"/>,
+    /// medidos después de recortar, y antes del largo, UTF-16 válido (si no, <see cref="AccionCaracteresInvalidos"/>); Desde y Hasta con el formato exacto <see cref="FormatoFechaBusqueda"/> y una fecha
+    /// real; Desde no posterior a Hasta, en <c>desde</c> (solo si las dos son válidas); la página de 1 a
+    /// <see cref="PaginaMaximaBusqueda"/>. Un parámetro null no se cargó. Devuelve todos los errores, uno por campo como
+    /// máximo, en el orden apellido, nombre, DNI, desde, hasta, página, con textos fijos que no repiten el valor.
+    /// </summary>
+    public static IReadOnlyList<ErrorValidacion> ValidarBusqueda(
+        string? apellido, string? nombre, string? dni, string? desde, string? hasta, int? pagina)
+    {
+        var errores = new List<ErrorValidacion>();
+        AgregarErrorDeTexto(errores, apellido, CampoApellido, LargoMaximoNombreBusqueda, AccionApellidoLargo);
+        AgregarErrorDeTexto(errores, nombre, CampoNombre, LargoMaximoNombreBusqueda, AccionNombreLargo);
+        AgregarErrorDeTexto(errores, dni, CampoDni, LargoMaximoDniBusqueda, AccionDniBusquedaLargo);
+
+        var desdeValida = LeerFechaBusqueda(desde, out var inicio);
+        var hastaValida = LeerFechaBusqueda(hasta, out var fin);
+        if (!desdeValida)
+        {
+            errores.Add(new ErrorValidacion(CampoDesde, AccionFechaInvalida));
+        }
+        else if (hastaValida && inicio is { } d && fin is { } h && d > h)
+        {
+            errores.Add(new ErrorValidacion(CampoDesde, AccionDesdePosteriorAHasta));
+        }
+
+        if (!hastaValida)
+        {
+            errores.Add(new ErrorValidacion(CampoHasta, AccionFechaInvalida));
+        }
+
+        if (pagina is < 1 or > PaginaMaximaBusqueda)
+        {
+            errores.Add(new ErrorValidacion(CampoPagina, AccionPaginaFueraDeRango));
+        }
+
+        return errores;
+    }
+
+    /// <summary>
+    /// Lee una fecha de la búsqueda: null es una fecha no cargada (válida, <paramref name="fecha"/> null); cualquier otro
+    /// texto tiene que tener exactamente el formato <see cref="FormatoFechaBusqueda"/>, sin espacios, y ser una fecha
+    /// real. Devuelve false si no lo es.
+    /// </summary>
+    public static bool LeerFechaBusqueda(string? texto, out DateOnly? fecha)
+    {
+        fecha = null;
+        if (texto is null)
+        {
+            return true;
+        }
+
+        if (!DateOnly.TryParseExact(
+                texto, FormatoFechaBusqueda, CultureInfo.InvariantCulture, DateTimeStyles.None, out var leida))
+        {
+            return false;
+        }
+
+        fecha = leida;
+        return true;
+    }
+
+    /// <summary>
+    /// El error de un texto de la búsqueda, como la búsqueda de artículos: primero UTF-16 inválido
+    /// (<see cref="AccionCaracteresInvalidos"/>), después el largo tras recortar. Un texto null no se cargó.
+    /// </summary>
+    private static void AgregarErrorDeTexto(
+        List<ErrorValidacion> errores, string? texto, string campo, int largoMaximo, string accionLargo)
+    {
+        if (texto is null)
+        {
+            return;
+        }
+
+        var recortado = NormalizacionCodigo.Recortar(texto);
+        if (!NormalizacionCodigo.EsUtf16Valido(recortado))
+        {
+            errores.Add(new ErrorValidacion(campo, AccionCaracteresInvalidos));
+        }
+        else if (recortado.Length > largoMaximo)
+        {
+            errores.Add(new ErrorValidacion(campo, accionLargo));
+        }
+    }
 
     /// <summary>El campo de la cantidad de la línea <paramref name="indice"/>: <c>lineas[i].cantidad</c> (D-06).</summary>
     public static string CampoCantidad(int indice) =>

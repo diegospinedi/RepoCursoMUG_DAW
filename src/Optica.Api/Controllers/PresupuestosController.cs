@@ -78,6 +78,31 @@ public sealed record SolicitudEstadoPresupuesto(string? Estado, long? Version)
 }
 
 /// <summary>
+/// Cuerpo de <c>POST /api/presupuestos/busqueda</c> (FEAT-006, ADR-019): los filtros viajan en el cuerpo, nunca en la
+/// URL. Todos son opcionales: Apellido, Nombre y DNI como texto, Desde y Hasta como texto <c>yyyy-MM-dd</c> (los valida
+/// el caso de uso) y la página como entero; ausente vale 1. Números JSON estrictos: una página como texto o decimal, o un
+/// texto enviado como número, es un cuerpo ilegible en su campo.
+/// </summary>
+/// <remarks>Datos personales (Ley 25.326): <see cref="object.ToString"/> no muestra ningún valor, como las demás.</remarks>
+[JsonNumberHandling(JsonNumberHandling.Strict)]
+public sealed record SolicitudBusquedaPresupuestos(
+    string? Apellido, string? Nombre, string? Dni, string? Desde, string? Hasta, int? Pagina)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
+/// Respuesta 200 de la búsqueda de presupuestos: <c>{ presupuestos, pagina, tamanoPagina, total }</c>. Una página
+/// posterior a la última trae la lista vacía y el total.
+/// </summary>
+/// <remarks>Lleva Apellido, Nombre y DNI en los resultados: <see cref="object.ToString"/> no muestra ningún valor.</remarks>
+public sealed record ListadoPresupuestos(
+    IReadOnlyList<PresupuestoListado> Presupuestos, int Pagina, int TamanoPagina, int Total)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
 /// Presupuestos: alta en Borrador y consulta por número (FEAT-003a); modificación en Borrador y paso a Final
 /// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>. Solo traduce HTTP: delega en los casos de uso, que validan, leen
 /// los artículos, numeran y graban. Exige sesión por la política por defecto (no está en
@@ -99,10 +124,25 @@ public sealed class PresupuestosController(
     AltaPresupuesto altaPresupuesto,
     ObtenerPresupuesto obtenerPresupuesto,
     ModificarPresupuesto modificarPresupuesto,
-    PasarPresupuestoAFinal pasarPresupuestoAFinal) : ControllerBase
+    PasarPresupuestoAFinal pasarPresupuestoAFinal,
+    BuscarPresupuestos buscarPresupuestos) : ControllerBase
 {
     /// <summary>Tamaño máximo del cuerpo del POST y de los dos PUT (D-16); más grande, 413.</summary>
     public const long CuerpoMaximo = 16 * 1024;
+
+    /// <summary>Tamaño máximo del cuerpo de la búsqueda (FEAT-006, ADR-019); más grande, 413.</summary>
+    public const long CuerpoMaximoBusqueda = 4 * 1024;
+
+    /// <summary>Los campos del cuerpo de la búsqueda, en el orden en que se buscan en un error de lectura.</summary>
+    private static readonly IReadOnlyList<string> CamposBusqueda =
+    [
+        ValidacionPresupuesto.CampoApellido,
+        ValidacionPresupuesto.CampoNombre,
+        ValidacionPresupuesto.CampoDni,
+        ValidacionPresupuesto.CampoDesde,
+        ValidacionPresupuesto.CampoHasta,
+        ValidacionPresupuesto.CampoPagina,
+    ];
 
     /// <summary>El <c>title</c> fijo del 404 de un presupuesto inexistente (D-24).</summary>
     private const string TituloNoEncontrado = "No se encontró el presupuesto.";
@@ -196,6 +236,35 @@ public sealed class PresupuestosController(
     }
 
     /// <summary>
+    /// Busca presupuestos por Apellido, Nombre, DNI y rango de fechas y responde 200 con la página de 50, por número de
+    /// mayor a menor (FEAT-006, FR-01 a FR-09). Los filtros viajan en el cuerpo y no se registran (ADR-019). Un cuerpo
+    /// ilegible (incluido uno vacío) responde 400 con un solo error y la acción fija de la búsqueda
+    /// (<see cref="RespuestasValidacion.AccionCuerpoIlegibleBusqueda"/>), en el campo que nombra el
+    /// lector o en <c>apellido</c>, sin el valor; fechas inválidas, Desde posterior a Hasta, textos largos o una página
+    /// fuera de rango, 400 con todos los errores del caso de uso. Sin sesión, 401 antes de leer el cuerpo.
+    /// </summary>
+    [HttpPost("busqueda")]
+    [RequestSizeLimit(CuerpoMaximoBusqueda)]
+    public async Task<IActionResult> Buscar(
+        [FromBody] SolicitudBusquedaPresupuestos? solicitud, CancellationToken cancelacion)
+    {
+        if (!ModelState.IsValid)
+        {
+            return this.CuerpoIlegible(
+                RespuestasValidacion.AccionCuerpoIlegibleBusqueda, ValidacionPresupuesto.CampoApellido, CamposBusqueda);
+        }
+
+        return ResponderBusqueda(await buscarPresupuestos.EjecutarAsync(
+            solicitud?.Apellido,
+            solicitud?.Nombre,
+            solicitud?.Dni,
+            solicitud?.Desde,
+            solicitud?.Hasta,
+            solicitud?.Pagina,
+            cancelacion));
+    }
+
+    /// <summary>
     /// Los datos del caso de uso: el cliente y las líneas tal como llegaron (ausentes, null). Con
     /// <paramref name="conOrden"/>, cada línea lleva su <c>orden</c>.
     /// </summary>
@@ -236,6 +305,19 @@ public sealed class PresupuestosController(
             CreatedAtAction(nameof(Obtener), new { numero = presupuesto.Numero }, presupuesto),
         { EsGrabado: false, Errores.Count: > 0 } => this.Invalido([.. resultado.Errores]),
         _ => throw new InvalidOperationException("Resultado del alta de un presupuesto no previsto."),
+    };
+
+    /// <summary>
+    /// Traduce el resultado de la búsqueda (FEAT-006). Cerrado por defecto: solo una búsqueda válida responde 200 con la
+    /// página, y solo una inválida con errores, 400 con todos; cualquier otro resultado lanza, y el manejador de errores
+    /// responde 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderBusqueda(ResultadoBusquedaPresupuestos? resultado) => resultado switch
+    {
+        { EsValido: true } => Ok(new ListadoPresupuestos(
+            resultado.Presupuestos, resultado.Pagina, resultado.TamanoPagina, resultado.Total)),
+        { EsValido: false, Errores.Count: > 0 } => this.Invalido([.. resultado.Errores]),
+        _ => throw new InvalidOperationException("Resultado de la búsqueda de presupuestos no previsto."),
     };
 
     /// <summary>

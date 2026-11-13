@@ -93,6 +93,8 @@ public sealed class ProteccionTests
             // FEAT-003c: la modificación y el paso a Final también llevan datos personales.
             (HttpMethods.Put, RutaPresupuestos + "/{numero:long}"),
             (HttpMethods.Put, RutaPresupuestos + "/{numero:long}/estado"),
+            // FEAT-006: la búsqueda lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (ADR-019, R-03).
+            (HttpMethods.Post, RutaBusqueda),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -139,6 +141,11 @@ public sealed class ProteccionTests
                 HttpMethod.Put,
                 $"{RutaPresupuestos}/1/estado",
                 new StringContent("{\"estado\":\"final\",\"version\":0}", Encoding.UTF8, "text/plain"))),
+            ("POST busqueda", EnviarJsonAsync(cliente, HttpMethod.Post, RutaBusqueda, CuerpoBusqueda)),
+            ("POST busqueda texto plano", Http.EnviarAsync(
+                cliente, HttpMethod.Post, RutaBusqueda, new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"))),
+            ("POST busqueda grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, RutaBusqueda, CuerpoBusquedaDeBytes(LimiteBusqueda + 1))),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -161,6 +168,116 @@ public sealed class ProteccionTests
     }
 
     private const string RutaPresupuestos = "/api/presupuestos";
+
+    // FEAT-006: la búsqueda de presupuestos (ADR-019).
+
+    private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    /// <summary>El límite del cuerpo de la búsqueda: 4 KB (<c>[RequestSizeLimit]</c>).</summary>
+    private const int LimiteBusqueda = 4 * 1024;
+
+    /// <summary>Una búsqueda válida con datos ficticios.</summary>
+    private const string CuerpoBusqueda = "{\"apellido\":\"Ficticio\",\"dni\":\"99.999\",\"pagina\":1}";
+
+    /// <summary>
+    /// Sad path (R-03): sin sesión, <c>POST /api/presupuestos/busqueda</c> responde 401 sin cuerpo, antes de leer el
+    /// cuerpo y antes del 415 y del 413; la ruta existe y no es anónima.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_SinSesion_401NoAutorizado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        AfirmarQueElEndpointExiste(fabrica, RutaBusqueda);
+        Assert.False(RutasAnonimas.Contiene(HttpMethods.Post, RutaBusqueda));
+
+        foreach (var contenido in new HttpContent?[]
+        {
+            new StringContent(CuerpoBusqueda, Encoding.UTF8, "application/json"),
+            new StringContent("esto no es json", Encoding.UTF8, "application/json"),
+            new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
+            new StringContent(CuerpoBusquedaDeBytes(LimiteBusqueda + 1), Encoding.UTF8, "application/json"),
+            null,
+        })
+        {
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, contenido);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>
+    /// La búsqueda exige <c>Content-Type: application/json</c> (<see cref="LimitesDelCuerpo"/>): texto plano, ningún tipo,
+    /// o ningún tipo y ningún cuerpo, 415 sin cuerpo.
+    /// </summary>
+    [Theory]
+    [InlineData("textoPlano")]
+    [InlineData("sinTipo")]
+    [InlineData("sinTipoNiCuerpo")]
+    public async Task PostBusqueda_SinJson_415(string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoBusqueda)),
+            _ => new ByteArrayContent([]),
+        };
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        AfirmarQueElEndpointExiste(fabrica, RutaBusqueda);
+    }
+
+    /// <summary>
+    /// La búsqueda acepta hasta 4 KB (<c>[RequestSizeLimit]</c>): un byte más, 413, con <c>Content-Length</c> y sin él (en
+    /// partes); en el límite exacto, el pedido llega a la acción y responde 200.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PostBusqueda_DemasiadoGrande_413(bool conLargo)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var rechazo = await EnviarBusquedaAsync(cliente, CuerpoBusquedaDeBytes(LimiteBusqueda + 1), conLargo, cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, rechazo.StatusCode);
+        var texto = await rechazo.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Ficticio", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("99.999", texto, StringComparison.Ordinal);
+
+        // Control del 413: el mismo cuerpo en el límite exacto se acepta.
+        var aceptado = await EnviarBusquedaAsync(cliente, CuerpoBusquedaDeBytes(LimiteBusqueda), conLargo, cookie);
+        Assert.Equal(HttpStatusCode.OK, aceptado.StatusCode);
+    }
+
+    /// <summary><see cref="CuerpoBusqueda"/> con una propiedad que se ignora, hasta ocupar <paramref name="bytes"/>.</summary>
+    private static string CuerpoBusquedaDeBytes(int bytes)
+    {
+        var sinRelleno = CuerpoBusqueda[..^1] + ",\"relleno\":\"\"}";
+        var faltan = bytes - Encoding.UTF8.GetByteCount(sinRelleno);
+        Assert.True(faltan >= 0, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = CuerpoBusqueda[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
+    private static Task<HttpResponseMessage> EnviarBusquedaAsync(
+        HttpClient cliente, string cuerpo, bool conLargo, string cookie)
+    {
+        HttpContent contenido = conLargo
+            ? new StringContent(cuerpo, Encoding.UTF8, "application/json")
+            : new Http.ContenidoSinLargo(cuerpo, "application/json");
+        return Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, contenido, cookie);
+    }
 
     /// <summary>
     /// <c>POST /api/presupuestos</c> exige <c>Content-Type: application/json</c> (R-02, D-16): texto plano, ningún tipo,

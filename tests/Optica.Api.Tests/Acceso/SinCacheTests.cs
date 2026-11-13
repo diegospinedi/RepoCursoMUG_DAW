@@ -220,6 +220,37 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-006 (ADR-019, R-02): la búsqueda de presupuestos trae Apellido, Nombre y DNI; su 200, su 400 por validación y
+    /// su 400 por cuerpo ilegible responden con <c>no-store</c>.
+    /// </summary>
+    [Fact]
+    public async Task PostBusqueda_RespuestaNoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await Http.PostJsonAsync(cliente, RutaPresupuestos, CuerpoPresupuesto(codigo), cookie)).StatusCode);
+
+        var encontrada = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"apellido\":\"ficticio\"}", cookie);
+        Assert.Equal(HttpStatusCode.OK, encontrada.StatusCode);
+        Assert.Equal(1, (await Http.JsonAsync(encontrada)).GetProperty("total").GetInt32());
+        AfirmarNoStore(encontrada, "POST /api/presupuestos/busqueda");
+
+        var invalida = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"desde\":\"2026-02-30\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalida.StatusCode);
+        AfirmarNoStore(invalida, "400 de la búsqueda");
+
+        var ilegible = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"pagina\":\"2\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        AfirmarNoStore(ilegible, "400 de un cuerpo de búsqueda ilegible");
+    }
+
+    private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

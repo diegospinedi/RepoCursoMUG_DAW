@@ -22,6 +22,13 @@ public static class RespuestasValidacion
     public const string AccionCuerpoIlegibleConfiguracion =
         "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
 
+    /// <summary>
+    /// Acción para un cuerpo de la búsqueda de presupuestos que no se pudo leer (FEAT-006): JSON roto o vacío, un tipo
+    /// incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice "grabá".
+    /// </summary>
+    public const string AccionCuerpoIlegibleBusqueda =
+        "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";
+
     /// <summary>400 con <c>errors.{campo}</c> y la acción de cada error.</summary>
     public static ActionResult Invalido(this ControllerBase controller, params ErrorValidacion[] errores) =>
         controller.ConErrores(StatusCodes.Status400BadRequest, detalle: null, errores);
