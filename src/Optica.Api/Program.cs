@@ -154,6 +154,8 @@ public partial class Program
         builder.Services.AddScoped<PasarPresupuestoAFinal>();
         // FEAT-006: la búsqueda, una lectura sin transacción de escritura; los filtros llegan en el cuerpo (ADR-019).
         builder.Services.AddScoped<BuscarPresupuestos>();
+        // FEAT-006: el PDF de un Final, una lectura; el generador (QuestPDF) lo registra Infrastructure (ADR-018).
+        builder.Services.AddScoped<GenerarPdfPresupuesto>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

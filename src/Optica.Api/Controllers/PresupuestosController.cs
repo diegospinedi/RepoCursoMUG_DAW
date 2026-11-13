@@ -104,7 +104,8 @@ public sealed record ListadoPresupuestos(
 
 /// <summary>
 /// Presupuestos: alta en Borrador y consulta por número (FEAT-003a); modificación en Borrador y paso a Final
-/// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>. Solo traduce HTTP: delega en los casos de uso, que validan, leen
+/// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>; búsqueda y PDF de un Final (FEAT-006), con 409 <c>borrador</c>
+/// para el PDF de un Borrador. Solo traduce HTTP: delega en los casos de uso, que validan, leen
 /// los artículos, numeran y graban. Exige sesión por la política por defecto (no está en
 /// <see cref="RutasAnonimas"/>): las respuestas traen datos personales del cliente (D-17). Sin sesión, 401 antes del 415
 /// y del 413; el Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (D-16). No registra el
@@ -125,8 +126,12 @@ public sealed class PresupuestosController(
     ObtenerPresupuesto obtenerPresupuesto,
     ModificarPresupuesto modificarPresupuesto,
     PasarPresupuestoAFinal pasarPresupuestoAFinal,
-    BuscarPresupuestos buscarPresupuestos) : ControllerBase
+    BuscarPresupuestos buscarPresupuestos,
+    GenerarPdfPresupuesto generarPdfPresupuesto) : ControllerBase
 {
+    /// <summary>El tipo de contenido del PDF del presupuesto (FEAT-006).</summary>
+    private const string TipoPdf = "application/pdf";
+
     /// <summary>Tamaño máximo del cuerpo del POST y de los dos PUT (D-16); más grande, 413.</summary>
     public const long CuerpoMaximo = 16 * 1024;
 
@@ -294,6 +299,31 @@ public sealed class PresupuestosController(
 
         return Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado);
     }
+
+    /// <summary>
+    /// El PDF del presupuesto en Final (FEAT-006, FR-11): 200 <c>application/pdf</c> como adjunto
+    /// <c>presupuesto-{numero}.pdf</c>, sin datos del cliente en el nombre (R-02). Inexistente, 404 con el título fijo; en
+    /// Borrador, 409 <c>borrador</c> sin generar el PDF (FR-12, AC-12). Una falla del generador llega al manejador de
+    /// errores, que responde el 500 genérico. Sin sesión, 401; la respuesta lleva <c>no-store</c> como todo <c>/api</c>.
+    /// </summary>
+    [HttpGet("{numero:long}/pdf")]
+    public async Task<IActionResult> DescargarPdf(long numero, CancellationToken cancelacion) =>
+        ResponderPdf(numero, await generarPdfPresupuesto.EjecutarAsync(numero, cancelacion));
+
+    /// <summary>
+    /// Traduce el resultado del PDF. Cerrado por defecto: generado, 200 con el archivo; no encontrado, 404; Borrador con
+    /// su texto, 409 <c>borrador</c>. Cualquier otro resultado lanza, y el manejador de errores responde 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderPdf(long numero, ResultadoPdfPresupuesto? resultado) => resultado switch
+    {
+        { EsGenerado: true, Contenido: var contenido } =>
+            File(contenido, TipoPdf, string.Create(CultureInfo.InvariantCulture, $"presupuesto-{numero}.pdf")),
+        { Tipo: TipoPdfPresupuesto.NoEncontrado } =>
+            Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado),
+        { Tipo: TipoPdfPresupuesto.Borrador, Detalle: { } detalle } =>
+            this.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, detalle),
+        _ => throw new InvalidOperationException("Resultado del PDF de un presupuesto no previsto."),
+    };
 
     /// <summary>
     /// Traduce el resultado del alta. Cerrado por defecto: solo un alta grabada responde 201 y solo una inválida con

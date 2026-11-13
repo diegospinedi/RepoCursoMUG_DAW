@@ -2,6 +2,10 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -9,6 +13,8 @@ using Microsoft.Extensions.Time.Testing;
 using Optica.Application.Comun;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Presupuestos;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Graphics.Colors;
 
 namespace Optica.Api.Tests.Presupuestos;
 
@@ -1773,6 +1779,383 @@ public sealed class PresupuestosApiTests
                 .ToList();
             Assert.True(conElDato.Count == 0, $"\"{secreto}\" llegó al log en: {string.Join(", ", conElDato)}");
         }
+    }
+
+    // FEAT-006, Block 5: el PDF del presupuesto (FR-11, FR-12).
+
+    private const string TituloConflictoPdf = "No se pudo generar el PDF del presupuesto.";
+    private const string TextoBorrador = "El presupuesto está en Borrador.";
+
+    /// <summary>
+    /// AC-11: el PDF de un Final responde 200 <c>application/pdf</c> como adjunto, con el nombre
+    /// <c>presupuesto-{numero}.pdf</c> y sin datos del cliente en el encabezado (R-02); con la marca instalada, el número
+    /// está en el color primario #0903A0 sobre el fondo #FFFFFF. Ninguna línea del log (Trace incluido) lleva los datos del
+    /// cliente. Datos ficticios.
+    /// </summary>
+    [Fact]
+    public async Task Pdf_PresupuestoFinal_DevuelvePdf()
+    {
+        var carpeta = InstalarMarca(
+            "{ \"logo\": \"logo.svg\", \"colores\": { \"primario\": \"#0903A0\", \"fondo\": \"#FFFFFF\" } }",
+            ("logo.svg", File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "marca-ejemplo", "logo.svg"))));
+        try
+        {
+            using var fabrica = new FabricaApi();
+            using var conMarca = ConMarca(fabrica, carpeta);
+            var cliente = CrearCliente(conMarca);
+            var cookie = await Http.DefinirAsync(cliente);
+            var codigo = await GrabarArticuloAsync(cliente, cookie);
+            var numero = await AltaDeAsync(cliente, cookie, "Zq7Apellido", "Zq7Nombre", "30.111.222", codigo);
+            await PasarAFinalAsync(cliente, cookie, numero, version: 0);
+
+            using var respuesta = await GetPdfAsync(cliente, cookie, numero);
+
+            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+            Assert.Equal("application/pdf", respuesta.Content.Headers.ContentType?.MediaType);
+            var disposicion = respuesta.Content.Headers.ContentDisposition;
+            Assert.NotNull(disposicion);
+            Assert.Equal("attachment", disposicion.DispositionType);
+            var nombre = $"presupuesto-{numero}.pdf";
+            Assert.Equal(nombre, disposicion.FileName?.Trim('"'));
+            // ASP.NET Core escribe también filename* (RFC 6266) con el mismo nombre, que HttpClient devuelve decodificado.
+            Assert.Equal(nombre, disposicion.FileNameStar);
+            var encabezados = respuesta.Content.Headers.ToString() + respuesta.Headers;
+            Assert.DoesNotContain("Zq7", encabezados, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("30111222", encabezados, StringComparison.Ordinal);
+
+            var pdf = await respuesta.Content.ReadAsByteArrayAsync();
+            Assert.Equal("%PDF-"u8.ToArray(), pdf[..5]);
+            using var documento = PdfDocument.Open(pdf);
+            var pagina = documento.GetPage(1);
+            var titulo = pagina.GetWords().FirstOrDefault(palabra => palabra.Text == "Presupuesto");
+            Assert.NotNull(titulo);
+            Assert.All(titulo.Letters, letra => Assert.True(EsColor(letra.Color, "#0903A0"), "La palabra «Presupuesto» no está en #0903A0."));
+            Assert.Contains(
+                pagina.Paths,
+                camino => camino.IsFilled
+                    && camino.FillColor is not null
+                    && EsColor(camino.FillColor, "#FFFFFF")
+                    && camino.GetBoundingRectangle() is { } rectangulo
+                    && rectangulo.Width >= pagina.Width - 1
+                    && rectangulo.Height >= pagina.Height - 1);
+
+            var lineas = fabrica.Registro.Lineas;
+            Assert.Contains(lineas, l => l.Mensaje.Contains("PresupuestosController.DescargarPdf", StringComparison.Ordinal));
+            foreach (var secreto in new[] { "Zq7", "zq7", "30111222", "30.111.222" })
+            {
+                var conElDato = lineas.Where(l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal))
+                    .Select(l => $"{l.Categoria} ({l.Nivel})")
+                    .ToList();
+                Assert.True(conElDato.Count == 0, $"\"{secreto}\" llegó al log en: {string.Join(", ", conElDato)}");
+            }
+        }
+        finally
+        {
+            BorrarMarca(carpeta);
+        }
+    }
+
+    /// <summary>
+    /// AC-13, AC-14 y AC-15 por la Api, leídos con PdfPig: el presupuesto 155 del 10/03/2026, con Apellido, Nombre, DNI y
+    /// Teléfono y sin Domicilio ni Email; una línea de 6,67 × 3 con 50 % (3,34 y 10,02) y otra de 2.700,00; total
+    /// 2.710,02; la leyenda "Precios finales, IVA incluido" y ningún importe de IVA. El 154 se graba en Borrador por el
+    /// repositorio y el 155 se da de alta y pasa a Final como en la app. Datos ficticios.
+    /// </summary>
+    [Fact]
+    public async Task GetPdf_Final_ContenidoDeAC13AC14AC15()
+    {
+        var reloj = new FakeTimeProvider(new DateTimeOffset(2026, 3, 10, 15, 0, 0, TimeSpan.Zero));
+        reloj.SetLocalTimeZone(TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires"));
+        using var fabrica = new FabricaApi(servicios =>
+        {
+            servicios.RemoveAll<TimeProvider>();
+            servicios.AddSingleton<TimeProvider>(reloj);
+        });
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var lente = await GrabarArticuloAsync(cliente, cookie, "Lente orgánico", "LEN-1", 6.67m, 0m);
+        var armazon = await GrabarArticuloAsync(cliente, cookie, "Armazón metálico", "ARM-1", 2700m, 0m);
+        await GrabarPresupuestoDirectoAsync(fabrica, 154, lente);
+        var cuerpo = JsonSerializer.Serialize(new
+        {
+            cliente = new
+            {
+                apellido = "Ficticio",
+                nombre = "Prueba",
+                dni = "30123456",
+                domicilio = (string?)null,
+                email = (string?)null,
+                telefono = "011 5555-0000",
+            },
+            lineas = new[]
+            {
+                new { codigoArticulo = lente, cantidad = 3, porcentajeDescuento = 50m },
+                new { codigoArticulo = armazon, cantidad = 1, porcentajeDescuento = 0m },
+            },
+        });
+        using var alta = await PostAsync(cliente, cookie, cuerpo);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        Assert.Equal(155, (await Http.JsonAsync(alta)).GetProperty("numero").GetInt64());
+        await PasarAFinalAsync(cliente, cookie, 155, version: 0);
+
+        using var respuesta = await GetPdfAsync(cliente, cookie, 155);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        using var documento = PdfDocument.Open(await respuesta.Content.ReadAsByteArrayAsync());
+        var pagina = documento.GetPage(1);
+        var palabras = pagina.GetWords().Select(palabra => palabra.Text).ToList();
+        var texto = string.Join(' ', palabras);
+
+        // AC-13: número, fecha y los cuatro datos cargados, sin Domicilio ni Email.
+        Assert.Contains("Presupuesto N.º 155", texto, StringComparison.Ordinal);
+        Assert.Contains("Fecha: 10/03/2026", texto, StringComparison.Ordinal);
+        Assert.Contains("Apellido: Ficticio", texto, StringComparison.Ordinal);
+        Assert.Contains("Nombre: Prueba", texto, StringComparison.Ordinal);
+        Assert.Contains("DNI: 30123456", texto, StringComparison.Ordinal);
+        Assert.Contains("Nro. de Teléfono: 011 5555-0000", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("Domicilio", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("Email", texto, StringComparison.Ordinal);
+
+        // AC-14: las dos líneas con sus siete campos, en su orden, y el total.
+        AfirmarSecuencia(palabras, lente.ToString(CultureInfo.InvariantCulture), "Lente", "orgánico", "6,67", "3", "50", "3,34", "10,02");
+        AfirmarSecuencia(
+            palabras, armazon.ToString(CultureInfo.InvariantCulture), "Armazón", "metálico", "2.700,00", "1", "0", "2.700,00", "2.700,00");
+        Assert.True(
+            texto.IndexOf("Lente orgánico", StringComparison.Ordinal) < texto.IndexOf("Armazón metálico", StringComparison.Ordinal),
+            "Las líneas no están en su orden.");
+        Assert.Contains("Total: $ 2.710,02", texto, StringComparison.Ordinal);
+
+        // AC-15: la leyenda y la palabra IVA solo en ella, sin alícuotas ni importes de IVA.
+        Assert.Contains("Precios finales, IVA incluido", texto, StringComparison.Ordinal);
+        Assert.Equal(1, texto.Split("IVA", StringSplitOptions.None).Length - 1);
+        foreach (var prohibido in new[] { "alícuota", "Alícuota", "21 %", "21%", "10,5 %", "Neto", "Subtotal" })
+        {
+            Assert.DoesNotContain(prohibido, texto, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// AC-12 (FR-12, R-07): pedido directo a la Api, el PDF de un Borrador responde 409 <c>borrador</c> con su título y
+    /// su texto fijos, sin cuerpo PDF; el presupuesto sigue en Borrador y con la misma versión.
+    /// </summary>
+    [Fact]
+    public async Task GetPdf_Borrador_409ConflictoBorrador()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaDeAsync(cliente, cookie, "Zq7Apellido", "Zq7Nombre", "30.111.222", codigo);
+
+        using var respuesta = await GetPdfAsync(cliente, cookie, numero);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Null(respuesta.Content.Headers.ContentDisposition);
+        var texto = await respuesta.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Zq7", texto, StringComparison.OrdinalIgnoreCase);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(409, json.GetProperty("status").GetInt32());
+        Assert.Equal(TituloConflictoPdf, json.GetProperty("title").GetString());
+        Assert.Equal(TextoBorrador, json.GetProperty("detail").GetString());
+        Assert.Equal("borrador", json.GetProperty("motivo").GetString());
+        Assert.False(json.TryGetProperty("errors", out _));
+
+        var leido = await LeerAsync(cliente, cookie, numero);
+        Assert.Equal("borrador", leido.GetProperty("estado").GetString());
+        Assert.Equal(0, leido.GetProperty("version").GetInt64());
+    }
+
+    /// <summary>
+    /// Sad path: un número que no existe responde 404 con el título fijo de FEAT-003a y sin detalles; uno que no es un
+    /// entero <c>long</c> no coincide con la ruta (404 del ruteo, sin ProblemDetails de la acción).
+    /// </summary>
+    [Fact]
+    public async Task Pdf_PresupuestoInexistente_NoEncontrado404()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        foreach (var numero in new[] { "999", "0", "-1", long.MaxValue.ToString(CultureInfo.InvariantCulture) })
+        {
+            using var respuesta = await Http.GetAsync(cliente, $"{Ruta}/{numero}/pdf", cookie);
+
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+            var json = await Http.JsonAsync(respuesta);
+            Assert.Equal(TituloNoEncontrado, json.GetProperty("title").GetString());
+            Assert.False(json.TryGetProperty("detail", out _));
+            Assert.False(json.TryGetProperty("motivo", out _));
+        }
+
+        foreach (var ruta in new[] { $"{Ruta}/abc/pdf", $"{Ruta}/1.5/pdf", $"{Ruta}/99999999999999999999/pdf" })
+        {
+            using var respuesta = await Http.GetAsync(cliente, ruta, cookie);
+
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            Assert.NotEqual("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        }
+    }
+
+    /// <summary>
+    /// Sad path (R-03): sin sesión, el PDF responde 401 sin cuerpo, también de un Final que existe; la ruta no es
+    /// anónima.
+    /// </summary>
+    [Fact]
+    public async Task GetPdf_SinSesion_401NoAutorizado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var numero = await AltaAsync(cliente, cookie, codigo);
+        await PasarAFinalAsync(cliente, cookie, numero, version: 0);
+        // La ruta existe (un 401 de una ruta inexistente no probaría nada) y no es anónima.
+        var patron = $"{Ruta}/{{numero:long}}/pdf";
+        var registradas = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains("GET") ?? false)
+            .Select(endpoint => "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/'));
+        Assert.Contains(patron, registradas);
+        Assert.False(Optica.Api.Acceso.RutasAnonimas.Contiene("GET", patron));
+
+        foreach (var cookieEnviada in new string?[] { null, "OpticaSesion=no-es-una-cookie-valida" })
+        {
+            using var respuesta = await Http.GetAsync(cliente, $"{Ruta}/{numero}/pdf", cookieEnviada);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+            Assert.Null(respuesta.Content.Headers.ContentDisposition);
+            Assert.Empty(await respuesta.Content.ReadAsByteArrayAsync());
+        }
+    }
+
+    /// <summary>
+    /// R-10 (Ley 25.326): con el generador real y un logo PNG corrupto en la marca instalada (firma válida, contenido
+    /// roto), el PDF de un Final responde el 500 genérico, y ni la respuesta ni ninguna línea del log (Trace incluido)
+    /// llevan el Apellido, el Nombre ni el DNI del cliente. Datos ficticios e identificables.
+    /// </summary>
+    [Fact]
+    public async Task GetPdf_GeneradorConError_500Generico_LogSinDatosDelCliente()
+    {
+        byte[] corrupto = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02, 0x03, 0x04, 0x05];
+        var carpeta = InstalarMarca(
+            "{ \"logo\": \"logo.png\", \"colores\": { \"primario\": \"#0903A0\", \"fondo\": \"#FFFFFF\" } }",
+            ("logo.png", corrupto));
+        try
+        {
+            using var fabrica = new FabricaApi();
+            using var conMarca = ConMarca(fabrica, carpeta);
+            var cliente = CrearCliente(conMarca);
+            var cookie = await Http.DefinirAsync(cliente);
+
+            // Control: la marca vigente es la instalada (con el logo corrupto), no la de ejemplo.
+            var marca = await Http.JsonAsync(await Http.GetAsync(cliente, "/api/marca", cookie));
+            Assert.False(marca.GetProperty("esEjemplo").GetBoolean());
+
+            var codigo = await GrabarArticuloAsync(cliente, cookie);
+            var numero = await AltaDeAsync(cliente, cookie, "Zq7Corrompido", "Zq7Nombre", "30.111.222", codigo);
+            await PasarAFinalAsync(cliente, cookie, numero, version: 0);
+
+            using var respuesta = await GetPdfAsync(cliente, cookie, numero);
+
+            Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+            Assert.Null(respuesta.Content.Headers.ContentDisposition);
+            var texto = await respuesta.Content.ReadAsStringAsync();
+            var json = JsonDocument.Parse(texto).RootElement;
+            Assert.Equal("No se pudo completar el pedido.", json.GetProperty("title").GetString());
+            foreach (var secreto in new[] { "Zq7", "zq7", "30111222", "30.111.222", "logo.png" })
+            {
+                Assert.DoesNotContain(secreto, texto, StringComparison.Ordinal);
+            }
+
+            var lineas = fabrica.Registro.Lineas;
+            // Control: la captura ve Trace, y el manejador registró el error no controlado del pedido del PDF.
+            Assert.Contains(lineas, l => l.Nivel == LogLevel.Trace);
+            Assert.Contains(lineas, l => l.Nivel == LogLevel.Error
+                && l.TextoCompleto.Contains("InvalidOperationException", StringComparison.Ordinal)
+                && l.TextoCompleto.Contains($"{Ruta}/{numero}/pdf", StringComparison.Ordinal));
+            foreach (var secreto in new[] { "Zq7", "zq7", "30111222", "30.111.222" })
+            {
+                var conElDato = lineas.Where(l => l.TextoCompleto.Contains(secreto, StringComparison.Ordinal))
+                    .Select(l => $"{l.Categoria} ({l.Nivel})")
+                    .ToList();
+                Assert.True(conElDato.Count == 0, $"\"{secreto}\" llegó al log en: {string.Join(", ", conElDato)}");
+            }
+        }
+        finally
+        {
+            BorrarMarca(carpeta);
+        }
+    }
+
+    private static Task<HttpResponseMessage> GetPdfAsync(HttpClient cliente, string cookie, long numero) =>
+        Http.GetAsync(cliente, $"{Ruta}/{numero}/pdf", cookie);
+
+    /// <summary>Pasa a Final, como la pantalla, un presupuesto en Borrador con la versión leída.</summary>
+    private static async Task PasarAFinalAsync(HttpClient cliente, string cookie, long numero, long version)
+    {
+        using var respuesta = await PutEstadoAsync(cliente, cookie, numero, CuerpoEstado("final", version));
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>
+    /// Una carpeta de marca propia (<c>&lt;raíz&gt;/Marca</c>) con ese <c>branding.json</c> y esos archivos. La raíz la
+    /// crea <see cref="FabricaApi.NuevoDirectorioTemporal"/> (nunca bajo <c>/mnt/</c>); la prueba la borra al terminar con
+    /// <see cref="BorrarMarca"/>.
+    /// </summary>
+    private static string InstalarMarca(string branding, params (string Nombre, byte[] Contenido)[] archivos)
+    {
+        var carpeta = Path.Combine(FabricaApi.NuevoDirectorioTemporal(), "Marca");
+        Directory.CreateDirectory(carpeta);
+        File.WriteAllText(Path.Combine(carpeta, "branding.json"), branding);
+        foreach (var (nombre, contenido) in archivos)
+        {
+            File.WriteAllBytes(Path.Combine(carpeta, nombre), contenido);
+        }
+
+        return carpeta;
+    }
+
+    /// <summary>
+    /// Borra la raíz de la marca de <see cref="InstalarMarca"/>. Tolerante: si no se puede borrar, lo informa y sigue, así
+    /// una falla de borrado no tapa la de una aserción.
+    /// </summary>
+    private static void BorrarMarca(string carpeta) =>
+        FabricaApi.BorrarDirectorioDePrueba(Path.GetDirectoryName(carpeta)!);
+
+    /// <summary>La misma Api con <c>Optica:Marca:Directorio</c> en la carpeta de la prueba; el log sigue en la fábrica.</summary>
+    private static WebApplicationFactory<Program> ConMarca(FabricaApi fabrica, string carpeta) =>
+        fabrica.WithWebHostBuilder(constructor => constructor.UseSetting("Optica:Marca:Directorio", carpeta));
+
+    private static HttpClient CrearCliente(WebApplicationFactory<Program> fabrica) =>
+        fabrica.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = false,
+            AllowAutoRedirect = false,
+        });
+
+    private static void AfirmarSecuencia(IReadOnlyList<string> palabras, params string[] secuencia)
+    {
+        for (var inicio = 0; inicio + secuencia.Length <= palabras.Count; inicio++)
+        {
+            if (secuencia.Select((s, i) => palabras[inicio + i] == s).All(coincide => coincide))
+            {
+                return;
+            }
+        }
+
+        Assert.Fail($"No aparece la secuencia: {string.Join(" | ", secuencia)}");
+    }
+
+    private static bool EsColor(IColor color, string hex)
+    {
+        var (r, g, b) = color.ToRGBValues();
+        var esperado = Convert.FromHexString(hex.AsSpan(1));
+        return Cerca(r, esperado[0]) && Cerca(g, esperado[1]) && Cerca(b, esperado[2]);
+
+        static bool Cerca(double valor, byte componente) => Math.Abs((valor * 255) - componente) < 1.5;
     }
 
     // Ayudas.

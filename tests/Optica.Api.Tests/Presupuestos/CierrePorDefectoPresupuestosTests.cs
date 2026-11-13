@@ -66,7 +66,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Equal("El presupuesto está en Final y no se puede modificar.", ValidacionPresupuesto.DetalleFinal);
     }
 
-    /// <summary>El helper del 409 de presupuestos solo acepta sus dos motivos; el de artículos sigue con los suyos.</summary>
+    /// <summary>El helper del 409 de presupuestos solo acepta sus tres motivos; el de artículos sigue con los suyos.</summary>
     [Fact]
     public void ConflictoPresupuesto_MotivoAjeno_Lanza()
     {
@@ -75,6 +75,63 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto("inactivo", "Texto."));
         Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo(RespuestasValidacion.MotivoFinal, "Texto."));
         Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto(RespuestasValidacion.MotivoFinal, " "));
+    }
+
+    /// <summary>
+    /// FEAT-006 (D-11, D-16): el helper del 409 de presupuestos acepta <c>borrador</c>, con su propio título "No se pudo
+    /// generar el PDF del presupuesto." y el texto recibido; <c>final</c> y <c>cambiado</c> conservan el título de la
+    /// grabación. El helper de artículos no acepta <c>borrador</c>.
+    /// </summary>
+    [Fact]
+    public void ConflictoPresupuesto_MotivoBorrador_Aceptado()
+    {
+        var controller = Crear();
+
+        Assert.Equal("borrador", RespuestasValidacion.MotivoBorrador);
+        var borrador = Assert.IsType<ObjectResult>(
+            controller.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, "El presupuesto está en Borrador."));
+        Assert.Equal(StatusCodes.Status409Conflict, borrador.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(borrador.Value);
+        Assert.Equal("No se pudo generar el PDF del presupuesto.", problema.Title);
+        Assert.Equal("El presupuesto está en Borrador.", problema.Detail);
+        Assert.Equal("borrador", problema.Extensions["motivo"]);
+
+        foreach (var motivo in new[] { RespuestasValidacion.MotivoFinal, RespuestasValidacion.MotivoCambiado })
+        {
+            var otro = Assert.IsType<ProblemDetails>(
+                Assert.IsType<ObjectResult>(controller.ConflictoPresupuesto(motivo, "Texto.")).Value);
+            Assert.Equal("No se pudo grabar el presupuesto.", otro.Title);
+        }
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoArticulo(RespuestasValidacion.MotivoBorrador, "Texto."));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, " "));
+    }
+
+    /// <summary>
+    /// FEAT-006: el traductor del PDF es cerrado por defecto. Generado, 200 <c>application/pdf</c> como adjunto
+    /// <c>presupuesto-{numero}.pdf</c>; no encontrado, 404; Borrador, 409 <c>borrador</c> con el texto de la aplicación.
+    /// Cualquier otro resultado lanza.
+    /// </summary>
+    [Fact]
+    public void ResponderPdf_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderPdf(5, null));
+
+        var archivo = Assert.IsType<FileContentResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.Generado([1, 2, 3])));
+        Assert.Equal("application/pdf", archivo.ContentType);
+        Assert.Equal("presupuesto-5.pdf", archivo.FileDownloadName);
+        Assert.Equal([1, 2, 3], archivo.FileContents);
+
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+
+        var borrador = Assert.IsType<ObjectResult>(controller.ResponderPdf(5, ResultadoPdfPresupuesto.Borrador));
+        Assert.Equal(StatusCodes.Status409Conflict, borrador.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(borrador.Value);
+        Assert.Equal("borrador", problema.Extensions["motivo"]);
+        Assert.Equal(GenerarPdfPresupuesto.DetalleBorrador, problema.Detail);
     }
 
     /// <summary>FEAT-003c: <c>version</c> y <c>lineas[i].orden</c> tienen su propio campo en un error de lectura.</summary>
@@ -251,7 +308,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

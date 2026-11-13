@@ -69,9 +69,10 @@ public sealed class ProteccionTests
     private const string RutaArticulos = "/api/articulos";
 
     /// <summary>
-    /// Las tres rutas de FEAT-002b y las dos de presupuestos de FEAT-003a exigen sesión (R-01, D-17): están
-    /// registradas, no figuran en <see cref="RutasAnonimas"/> y, sin sesión, responden 401 sin cuerpo antes del 415 y del
-    /// 413 (el Content-Type y el tamaño no se miran).
+    /// Las tres rutas de FEAT-002b y las dos de presupuestos de FEAT-003a exigen sesión (R-01, D-17), como las de
+    /// FEAT-003c y las dos de FEAT-006 (búsqueda y PDF, R-03): están registradas, no figuran en
+    /// <see cref="RutasAnonimas"/> y, sin sesión, responden 401 sin cuerpo antes del 415 y del 413 (el Content-Type y el
+    /// tamaño no se miran).
     /// </summary>
     [Fact]
     public async Task RutasNuevas_SinSesion_401()
@@ -95,6 +96,8 @@ public sealed class ProteccionTests
             (HttpMethods.Put, RutaPresupuestos + "/{numero:long}/estado"),
             // FEAT-006: la búsqueda lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (ADR-019, R-03).
             (HttpMethods.Post, RutaBusqueda),
+            // FEAT-006: el PDF del presupuesto lleva los datos del cliente (R-03).
+            (HttpMethods.Get, RutaPresupuestos + "/{numero:long}/pdf"),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -146,6 +149,7 @@ public sealed class ProteccionTests
                 cliente, HttpMethod.Post, RutaBusqueda, new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"))),
             ("POST busqueda grande", EnviarJsonAsync(
                 cliente, HttpMethod.Post, RutaBusqueda, CuerpoBusquedaDeBytes(LimiteBusqueda + 1))),
+            ("GET pdf", Http.GetAsync(cliente, $"{RutaPresupuestos}/1/pdf")),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -771,6 +775,39 @@ public sealed class ProteccionTests
             .SelectMany(t => t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => (Tipo: t, p.ParameterType)))
             .Where(u => u.ParameterType.Assembly == infraestructura)
             .Select(u => $"{u.Tipo.Name} recibe {u.ParameterType.Name}")
+            .ToList();
+        Assert.Empty(usos);
+    }
+
+    /// <summary>
+    /// ADR-018: la biblioteca de PDF (QuestPDF) es un detalle de Infrastructure. La Api no compila contra ella ni la
+    /// declara en su proyecto: el PDF le llega como bytes por <c>IGeneradorPdfPresupuesto</c>. Ningún tipo de la Api
+    /// (fuera de los generados) usa un tipo de QuestPDF en su firma.
+    /// </summary>
+    [Fact]
+    public void Api_NoReferenciaQuestPdf()
+    {
+        var api = typeof(Program).Assembly;
+
+        var referencias = api.GetReferencedAssemblies().Select(r => r.Name).ToList();
+        Assert.DoesNotContain(referencias, r => r!.StartsWith("QuestPDF", StringComparison.OrdinalIgnoreCase));
+
+        // Control: la enumeración ve las referencias reales de la Api.
+        Assert.Contains("Optica.Application", referencias);
+
+        var proyecto = File.ReadAllText(Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "Optica.Api.csproj"));
+        Assert.DoesNotContain("QuestPDF", proyecto, StringComparison.OrdinalIgnoreCase);
+
+        var usos = api.GetTypes()
+            .SelectMany(t => t.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.DeclaredOnly)
+                .SelectMany(m => m.GetParameters().Select(p => p.ParameterType).Append(m.ReturnType))
+                .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
+                .Select(usado => (Tipo: t, Usado: usado)))
+            .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith("QuestPDF", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
             .ToList();
         Assert.Empty(usos);
     }

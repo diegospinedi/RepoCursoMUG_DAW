@@ -43,12 +43,23 @@ public sealed class SinDatosArcaTests
             cookie);
         Assert.Equal(System.Net.HttpStatusCode.Created, presupuesto.StatusCode);
         var numero = (await Http.JsonAsync(presupuesto)).GetProperty("numero").GetInt64();
+        // FEAT-006: el PDF solo se genera de un Final; el presupuesto pasa a Final como en la app, así su GET y el de su
+        // PDF responden con éxito.
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            $"{RutaPresupuestos}/{numero}/estado",
+            new System.Net.Http.StringContent(
+                "{\"estado\":\"final\",\"version\":0}", System.Text.Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, final.StatusCode);
         // Cada ruta con parámetros, con los valores con los que se la pide. Una ruta con parámetros que no esté acá
         // hace fallar la prueba: hay que agregarla, no excluirla.
         var valores = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [RutaArticulo] = $"{RutaArticulos}/{codigoArticulo}",
             [RutaPresupuesto] = $"{RutaPresupuestos}/{numero}",
+            [RutaPdf] = $"{RutaPresupuestos}/{numero}/pdf",
         };
 
         // Lo realmente registrado en la Api, no una lista escrita a mano: un GET nuevo entra solo en la revisión.
@@ -67,6 +78,7 @@ public sealed class SinDatosArcaTests
         Assert.Contains("/api/marca", rutas);
 
         var conJson = new List<string>();
+        var conPdf = new List<string>();
         var sinCuerpo = new List<string>();
         var hallazgos = new List<string>();
         foreach (var ruta in rutas)
@@ -90,6 +102,13 @@ public sealed class SinDatosArcaTests
             if (texto.Length == 0)
             {
                 sinCuerpo.Add(ruta);
+                continue;
+            }
+
+            if (string.Equals(tipo, "application/pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                // FEAT-006: el PDF del presupuesto es un documento, no JSON; se acepta su cuerpo sin revisar claves.
+                conPdf.Add(ruta);
                 continue;
             }
 
@@ -123,6 +142,8 @@ public sealed class SinDatosArcaTests
         Assert.Contains(RutaArticulos, conJson);
         // El presupuesto grabado de FEAT-003a.
         Assert.Contains(RutaPresupuesto, conJson);
+        // El PDF del presupuesto en Final (FEAT-006) se pidió y respondió application/pdf.
+        Assert.Equal([RutaPdf], conPdf);
         Assert.Contains("/api/sesion", sinCuerpo);
     }
 
@@ -130,6 +151,7 @@ public sealed class SinDatosArcaTests
     private const string RutaArticulo = "/api/articulos/{codigo:long}";
     private const string RutaPresupuestos = "/api/presupuestos";
     private const string RutaPresupuesto = "/api/presupuestos/{numero:long}";
+    private const string RutaPdf = "/api/presupuestos/{numero:long}/pdf";
 
     [Fact]
     public void ClavesArca_ComparaNombresEnterosSinDistinguirMayusculas()
