@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
@@ -1502,6 +1504,433 @@ public partial class PresupuestoRepositoryTests
         using var comando = conexion.CreateCommand();
         comando.CommandText = sql;
         comando.ExecuteNonQuery();
+    }
+
+    // ---- Búsqueda (Block 1 de FEAT-006). Datos ficticios; los Final se graban en Borrador y después pasan a Final. ----
+
+    private const int TamanoPagina = 50;
+
+    [Fact]
+    public async Task Buscar_ApellidoParcialSinAcentos_SoloGonzalez()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            new Sembrado(1, Fecha, "González", "Luis", "30111222", Final: true),
+            new Sembrado(2, Fecha, "Gómez", "Luis", "30111223"));
+
+        // AC-01: "ONZALEZ" plegado coincide con "González" guardado, y no con "Gómez".
+        var pagina = await Buscar(baseTemporal, FiltroPresupuestos.Crear("ONZALEZ", null, null, null, null));
+
+        var resumen = Assert.Single(pagina.Presupuestos);
+        Assert.Equal(1, resumen.Numero);
+        Assert.Equal("González", resumen.Apellido);
+        Assert.Equal(EstadoPresupuesto.Final, resumen.Estado);
+        Assert.Equal(1, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_NombreSinAcento_SoloMariaJose()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            new Sembrado(1, Fecha, "Ficticio", "María José", "30111222"),
+            new Sembrado(2, Fecha, "Ficticio", "Ana", "30111223"));
+
+        // AC-02.
+        var pagina = await Buscar(baseTemporal, FiltroPresupuestos.Crear(null, "maria", null, null, null));
+
+        var resumen = Assert.Single(pagina.Presupuestos);
+        Assert.Equal(1, resumen.Numero);
+        Assert.Equal("María José", resumen.Nombre);
+        Assert.Equal(EstadoPresupuesto.Borrador, resumen.Estado);
+        Assert.Equal(1, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_DniParcialConPuntos_Coincide()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            new Sembrado(1, Fecha, "Ficticio", "Luis", "23456789"),
+            new Sembrado(2, Fecha, "Ficticio", "Luis", "30111222"));
+
+        // AC-03: los puntos del texto buscado no cuentan.
+        foreach (var dni in new[] { "3456", "23.456" })
+        {
+            var pagina = await Buscar(baseTemporal, FiltroPresupuestos.Crear(null, null, dni, null, null));
+
+            var resumen = Assert.Single(pagina.Presupuestos);
+            Assert.Equal(1, resumen.Numero);
+            Assert.Equal("23456789", resumen.Dni);
+            Assert.Equal(1, pagina.Total);
+        }
+    }
+
+    [Fact]
+    public async Task Buscar_ApellidoYDesde_CombinaConY()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            new Sembrado(1, new DateOnly(2026, 3, 10), "González", "Luis", "30111222"),
+            new Sembrado(2, new DateOnly(2026, 3, 20), "González", "Luis", "30111223"),
+            new Sembrado(3, new DateOnly(2026, 3, 25), "Gómez", "Luis", "30111224"));
+
+        // AC-04: Apellido "González" Y Desde 15/03/2026, sin Hasta.
+        var pagina = await Buscar(baseTemporal,
+            FiltroPresupuestos.Crear("González", null, null, new DateOnly(2026, 3, 15), null));
+
+        var resumen = Assert.Single(pagina.Presupuestos);
+        Assert.Equal(2, resumen.Numero);
+        Assert.Equal(new DateOnly(2026, 3, 20), resumen.Fecha);
+        Assert.Equal(1, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_RangoDesdeHasta_LimitesInclusive()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarFechas(baseTemporal, 9, 10, 20, 21);
+
+        // AC-05: los dos límites inclusive.
+        var pagina = await Buscar(baseTemporal,
+            FiltroPresupuestos.Crear(null, null, null, new DateOnly(2026, 3, 10), new DateOnly(2026, 3, 20)));
+
+        Assert.Equal([3L, 2L], Numeros(pagina));
+        Assert.Equal([new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 10)], pagina.Presupuestos.Select(r => r.Fecha));
+        Assert.Equal(2, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_SoloHasta_IncluyeEseDiaYAnteriores()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarFechas(baseTemporal, 9, 10, 11);
+
+        // AC-06: Hasta 10/03/2026, sin Desde.
+        var pagina = await Buscar(baseTemporal,
+            FiltroPresupuestos.Crear(null, null, null, null, new DateOnly(2026, 3, 10)));
+
+        Assert.Equal([2L, 1L], Numeros(pagina));
+        Assert.Equal(2, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_SinFiltros_120_PaginasDe50Descendente()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            [.. Enumerable.Range(1, 120).Select(i => new Sembrado(i, Fecha, "Ficticio", "Luis", $"{30000000 + i}"))]);
+        var sinFiltros = FiltroPresupuestos.Crear(null, null, null, null, null);
+
+        // AC-08: por número de mayor a menor, de a 50 (FR-07, FR-08).
+        var primera = await Buscar(baseTemporal, sinFiltros, pagina: 1);
+        var tercera = await Buscar(baseTemporal, sinFiltros, pagina: 3);
+        var posterior = await Buscar(baseTemporal, sinFiltros, pagina: 4);
+
+        Assert.Equal(Enumerable.Range(71, 50).Reverse().Select(i => (long)i), Numeros(primera));
+        Assert.Equal(Enumerable.Range(1, 20).Reverse().Select(i => (long)i), Numeros(tercera));
+        Assert.Empty(posterior.Presupuestos);
+        Assert.All([primera, tercera, posterior], pagina => Assert.Equal(120, pagina.Total));
+    }
+
+    [Fact]
+    public async Task Buscar_TotalEsSumaDePreciosFinales()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var codigo = await GrabarArticulo(baseTemporal, "BUS-9", "Lente orgánico", 6.67m);
+        var cliente = new ClientePresupuesto("Ficticiez", "Prueboncia", "23456789", null, null, "11 5555-0199");
+
+        // Las líneas de AC-14: 10,02 + 2.700,00. Otro presupuesto con su propia línea no se suma.
+        await GrabarFinal(baseTemporal, Presupuesto.Nuevo(155, Fecha, cliente,
+        [
+            new LineaPresupuesto(codigo, "Lente orgánico", 6.67m, 3, 50m, 3.34m, 10.02m),
+            new LineaPresupuesto(codigo, "Armazón metálico", 2700m, 1, 0m, 2700m, 2700m),
+        ]));
+        await GrabarPresupuesto(baseTemporal, Presupuesto.Nuevo(156, Fecha, cliente,
+            [new LineaPresupuesto(codigo, "Estuche", 1m, 1, 0m, 1m, 1m)]));
+
+        var comandos = new ComandosObservados();
+        await using var contexto = ContextoCon(baseTemporal, comandos);
+        var pagina = await new PresupuestoRepository(contexto)
+            .BuscarAsync(FiltroPresupuestos.Crear(null, null, null, null, null), 1, TamanoPagina);
+
+        // D-08: la suma se hace en SQL; solo la página y el conteo, sin una lectura por presupuesto ni de las líneas.
+        Assert.Equal(2, comandos.Ejecutados);
+        Assert.Contains("SUM(", comandos.Textos[0], StringComparison.Ordinal);
+        Assert.Equal(2, pagina.Total);
+        Assert.Equal([156L, 155L], Numeros(pagina));
+        var resumen = pagina.Presupuestos[1];
+        Assert.Equal(155, resumen.Numero);
+        Assert.Equal(Fecha, resumen.Fecha);
+        Assert.Equal("Ficticiez", resumen.Apellido);
+        Assert.Equal("Prueboncia", resumen.Nombre);
+        Assert.Equal("23456789", resumen.Dni);
+        Assert.Equal(EstadoPresupuesto.Final, resumen.Estado);
+        Assert.Equal(2710.02m, resumen.Total);
+        Assert.Equal(1m, pagina.Presupuestos[0].Total);
+        Assert.Equal(EstadoPresupuesto.Borrador, pagina.Presupuestos[0].Estado);
+    }
+
+    [Fact]
+    public async Task Buscar_PorcentajeYGuionBajo_NoSonComodines()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal,
+            new Sembrado(1, Fecha, "Pérez", "Ana", "30111222"),
+            new Sembrado(2, Fecha, "Gómez", "Luis", "30111223"));
+
+        // R-01, D-05: instr y no LIKE; "%" y "_" se buscan tal cual y ningún dato guardado los tiene.
+        foreach (var comodin in new[] { "%", "_", "%_%" })
+        {
+            foreach (var filtro in new[]
+                     {
+                         FiltroPresupuestos.Crear(comodin, null, null, null, null),
+                         FiltroPresupuestos.Crear(null, comodin, null, null, null),
+                         FiltroPresupuestos.Crear(null, null, comodin, null, null),
+                     })
+            {
+                var comandos = new ComandosObservados();
+                await using var contexto = ContextoCon(baseTemporal, comandos);
+                var pagina = await new PresupuestoRepository(contexto).BuscarAsync(filtro, 1, TamanoPagina);
+
+                Assert.Empty(pagina.Presupuestos);
+                Assert.Equal(0, pagina.Total);
+
+                // La página y el conteo filtran con instr y el texto viaja como parámetro, nunca en el SQL.
+                Assert.Equal(2, comandos.Textos.Count);
+                Assert.All(comandos.Textos, sql =>
+                {
+                    Assert.Contains("instr(", sql, StringComparison.Ordinal);
+                    Assert.DoesNotContain("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain($"'{comodin}", sql, StringComparison.Ordinal);
+                });
+                Assert.All(comandos.Parametros, valores => Assert.Contains(comodin, valores));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Buscar_DniConLetras_SinCoincidencias()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarParaBuscar(baseTemporal, new Sembrado(1, Fecha, "Ficticio", "Luis", "23456789"));
+
+        // D-06: un DNI con otros caracteres no es un error; simplemente no coincide.
+        var pagina = await Buscar(baseTemporal, FiltroPresupuestos.Crear(null, null, "2345a", null, null));
+
+        Assert.Empty(pagina.Presupuestos);
+        Assert.Equal(0, pagina.Total);
+    }
+
+    [Theory]
+    [InlineData(0, TamanoPagina, "pagina")]
+    [InlineData(-1, TamanoPagina, "pagina")]
+    [InlineData(1, 0, "tamanoPagina")]
+    [InlineData(1, -5, "tamanoPagina")]
+    public async Task Buscar_PaginaInvalida_Rechazada(int pagina, int tamano, string parametro)
+    {
+        using var baseTemporal = new BaseTemporal();
+        var comandos = new ComandosObservados();
+        await using var contexto = ContextoCon(baseTemporal, comandos);
+        var repositorio = new PresupuestoRepository(contexto);
+
+        var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => repositorio.BuscarAsync(FiltroPresupuestos.Crear(null, null, null, null, null), pagina, tamano));
+
+        // Texto fijo: ni el valor recibido ni el "Actual value" que agregan los helpers de .NET.
+        Assert.Equal(parametro, error.ParamName);
+        Assert.Null(error.ActualValue);
+        var recibido = (parametro == "pagina" ? pagina : tamano).ToString(CultureInfo.InvariantCulture);
+        Assert.DoesNotContain(recibido, error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, comandos.Ejecutados);
+    }
+
+    [Fact]
+    public async Task Buscar_PaginaQueDesborda_Rechazada()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var comandos = new ComandosObservados();
+        await using var contexto = ContextoCon(baseTemporal, comandos);
+        var repositorio = new PresupuestoRepository(contexto);
+        var sinFiltros = FiltroPresupuestos.Crear(null, null, null, null, null);
+
+        // (int.MaxValue - 1) × 50 no entra en un int: se rechaza en lugar de desbordar, sin consultar (D-17).
+        var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => repositorio.BuscarAsync(sinFiltros, int.MaxValue, TamanoPagina));
+
+        Assert.Equal("pagina", error.ParamName);
+        Assert.DoesNotContain(int.MaxValue.ToString(CultureInfo.InvariantCulture), error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, comandos.Ejecutados);
+        await Assert.ThrowsAsync<ArgumentNullException>(() => repositorio.BuscarAsync(null!, 1, TamanoPagina));
+        Assert.Equal(0, comandos.Ejecutados);
+    }
+
+    [Fact]
+    public async Task Buscar_TotalMenorQueLaPagina_SeAjusta()
+    {
+        using var baseTemporal = new BaseTemporal();
+        await SembrarFechas(baseTemporal, 9, 10, 11);
+
+        // El doble deja el COUNT en 0, como si una edición entre las dos lecturas sacara del filtro lo que la página
+        // trajo: el total nunca queda menor que la página.
+        var comandos = new ComandosObservados(conteoEnCero: true);
+        await using var contexto = ContextoCon(baseTemporal, comandos);
+        var pagina = await new PresupuestoRepository(contexto)
+            .BuscarAsync(FiltroPresupuestos.Crear(null, null, null, null, null), 1, TamanoPagina);
+
+        Assert.Equal(1, comandos.ConteosReemplazados);
+        Assert.Equal([3L, 2L, 1L], Numeros(pagina));
+        Assert.Equal(3, pagina.Total);
+    }
+
+    [Fact]
+    public async Task Buscar_FechaGuardadaIlegible_ErrorSinValores()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = await GrabarArticulo(baseTemporal, "ARM-1", "Armazón metálico", 1850m);
+
+        // "2026-02-30" pasa el CHECK de formato pero no es una fecha real.
+        var valores = ValoresPresupuesto(numero: 7);
+        valores["Fecha"] = "2026-02-30";
+        InsertarCrudo(cadena, "Presupuesto", valores);
+        InsertarCrudo(cadena, "LineaPresupuesto", ValoresLinea(numero: 7, orden: 1, codigo));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Buscar(baseTemporal, FiltroPresupuestos.Crear(null, null, null, null, null)));
+
+        Assert.Equal(MensajeFilaInvalida, error.Message);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("2026-02-30", error.ToString(), StringComparison.Ordinal);
+        AfirmarSinDatosDelCliente(error.ToString());
+    }
+
+    /// <summary>Un presupuesto a sembrar para la búsqueda, con un cliente ficticio sin datos opcionales.</summary>
+    private sealed record Sembrado(long Numero, DateOnly Fecha, string Apellido, string Nombre, string Dni, bool Final = false);
+
+    /// <summary>
+    /// Graba los presupuestos en Borrador con una línea cada uno y pasa a Final los marcados, como la aplicación
+    /// (AGENTS.md).
+    /// </summary>
+    private static async Task SembrarParaBuscar(BaseTemporal baseTemporal, params Sembrado[] presupuestos)
+    {
+        var codigo = await GrabarArticulo(baseTemporal, "BUS-1", "Armazón de búsqueda", 1850m);
+        var articulo = await LeerArticulo(baseTemporal, codigo);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new PresupuestoRepository(contexto);
+        foreach (var sembrado in presupuestos)
+        {
+            repositorio.Agregar(Presupuesto.Nuevo(
+                sembrado.Numero, sembrado.Fecha,
+                new ClientePresupuesto(sembrado.Apellido, sembrado.Nombre, sembrado.Dni, null, null, null),
+                [Linea(articulo)]));
+        }
+
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        foreach (var sembrado in presupuestos.Where(p => p.Final))
+        {
+            var otro = baseTemporal.CrearContexto();
+            var repositorioFinal = new PresupuestoRepository(otro);
+            var leido = (await repositorioFinal.ObtenerAsync(sembrado.Numero))!;
+            repositorioFinal.CambiarEstado(leido.PasarAFinal(), leido.Version);
+            await new UnidadDeTrabajoEf(otro).ConfirmarAsync();
+        }
+    }
+
+    /// <summary>Un presupuesto por día de marzo de 2026, numerados desde 1 en el orden recibido.</summary>
+    private static Task SembrarFechas(BaseTemporal baseTemporal, params int[] dias) =>
+        SembrarParaBuscar(baseTemporal,
+            [.. dias.Select((dia, indice) =>
+                new Sembrado(indice + 1, new DateOnly(2026, 3, dia), "Ficticio", "Luis", $"{30111222 + indice}"))]);
+
+    private static Task<PaginaPresupuestos> Buscar(
+        BaseTemporal baseTemporal, FiltroPresupuestos filtro, int pagina = 1) =>
+        new PresupuestoRepository(baseTemporal.CrearContexto()).BuscarAsync(filtro, pagina, TamanoPagina);
+
+    private static List<long> Numeros(PaginaPresupuestos pagina) => [.. pagina.Presupuestos.Select(r => r.Numero)];
+
+    /// <summary>Un contexto como el de la infraestructura, con un interceptor agregado (patrón de UnidadDeTrabajoTests).</summary>
+    private static OpticaDbContext ContextoCon(BaseTemporal baseTemporal, IInterceptor interceptor)
+    {
+        var opciones = new DbContextOptionsBuilder<OpticaDbContext>();
+        baseTemporal.Servicios.GetRequiredService<FabricaConexion>().Configurar(opciones);
+        opciones.AddInterceptors(interceptor);
+        return new OpticaDbContext(opciones.Options);
+    }
+
+    /// <summary>
+    /// Cuenta los comandos que EF Core ejecuta y guarda su SQL y los valores de sus parámetros; con
+    /// <paramref name="conteoEnCero"/>, reemplaza cada comando que empieza con <c>SELECT COUNT(</c> por un <c>SELECT 0</c>
+    /// (el doble de conteo).
+    /// </summary>
+    private sealed class ComandosObservados(bool conteoEnCero = false) : DbCommandInterceptor
+    {
+        public int Ejecutados => Textos.Count;
+
+        /// <summary>El SQL de cada comando, tal como lo armó EF Core.</summary>
+        public List<string> Textos { get; } = [];
+
+        /// <summary>Los valores de los parámetros de cada comando, en el mismo orden que <see cref="Textos"/>.</summary>
+        public List<List<object?>> Parametros { get; } = [];
+
+        public int ConteosReemplazados { get; private set; }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Observar(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observar(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<object> ScalarExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result)
+        {
+            Observar(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observar(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+        {
+            Observar(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observar(command);
+            return ValueTask.FromResult(result);
+        }
+
+        private void Observar(DbCommand comando)
+        {
+            Textos.Add(comando.CommandText);
+            Parametros.Add([.. comando.Parameters.Cast<DbParameter>().Select(parametro => parametro.Value)]);
+            if (conteoEnCero && comando.CommandText.StartsWith("SELECT COUNT(", StringComparison.Ordinal))
+            {
+                comando.CommandText = "SELECT 0";
+                comando.Parameters.Clear();
+                ConteosReemplazados++;
+            }
+        }
     }
 
     /// <summary>Todo lo que registra EF Core, en cualquier categoría y nivel, con la excepción si la hay.</summary>

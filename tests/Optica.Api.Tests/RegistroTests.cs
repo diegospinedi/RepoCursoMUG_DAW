@@ -439,6 +439,10 @@ public sealed class RegistroTests
 
         public void CambiarEstado(Presupuesto presupuesto, long versionOriginal) =>
             _real.CambiarEstado(presupuesto, versionOriginal);
+
+        public Task<PaginaPresupuestos> BuscarAsync(
+            FiltroPresupuestos filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default) =>
+            _real.BuscarAsync(filtro, pagina, tamanoPagina, cancelacion);
     }
 
     private static void AfirmarSinContrasenas(FabricaApi fabrica)

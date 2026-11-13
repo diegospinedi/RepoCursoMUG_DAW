@@ -37,4 +37,18 @@ public interface IPresupuestoRepository
     /// unidad de trabajo, con el mismo control de versión que <see cref="Actualizar"/>.
     /// </summary>
     void CambiarEstado(Presupuesto presupuesto, long versionOriginal);
+
+    /// <summary>
+    /// Una página de la búsqueda (FR-01 a FR-08 de FEAT-006): los presupuestos que cumplen todos los filtros cargados de
+    /// <paramref name="filtro"/>, por número de mayor a menor, salteando <c>(pagina - 1) * tamanoPagina</c> y tomando
+    /// <paramref name="tamanoPagina"/>, con el total de cada uno (suma de los Precio Final de sus líneas, D-08) y cuántos
+    /// coinciden en total. Una página posterior a la última viene vacía, con el total.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="filtro"/> es null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="pagina"/> es menor que 1, <paramref name="tamanoPagina"/> no es positivo, o el desplazamiento no
+    /// entra en un <c>int</c>. No se consulta la base.
+    /// </exception>
+    Task<PaginaPresupuestos> BuscarAsync(
+        FiltroPresupuestos filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default);
 }

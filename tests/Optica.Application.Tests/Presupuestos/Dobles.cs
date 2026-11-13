@@ -27,6 +27,7 @@ internal sealed class PresupuestosEnMemoria : IPresupuestoRepository, IUnidadDeT
     public const string AccesoObtener = "ObtenerPresupuesto";
     public const string AccesoActualizar = "ActualizarPresupuesto";
     public const string AccesoCambiarEstado = "CambiarEstadoPresupuesto";
+    public const string AccesoBuscar = "BuscarPresupuestos";
 
     private readonly List<Presupuesto> _pendientes = [];
 
@@ -140,6 +141,60 @@ internal sealed class PresupuestosEnMemoria : IPresupuestoRepository, IUnidadDeT
             throw new ArgumentException("La versión leída del presupuesto no es válida.", nameof(versionOriginal));
         }
     }
+
+    /// <summary>
+    /// La misma regla que el repositorio real (Block 1 de FEAT-006): sobre los guardados, Apellido y Nombre plegados con
+    /// <see cref="PlegadoBusqueda.Plegar"/> que contienen el texto, DNI que lo contiene, fechas con los dos límites
+    /// inclusive, todo con "Y"; por número de mayor a menor, de a <paramref name="tamanoPagina"/>, con el total de cada
+    /// presupuesto y el de coincidencias.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Página menor que 1, tamaño no positivo o desplazamiento que no entra en un <c>int</c>, como en el repositorio real.
+    /// </exception>
+    public Task<PaginaPresupuestos> BuscarAsync(
+        FiltroPresupuestos filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(filtro);
+        if (pagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), "La página pedida no es válida.");
+        }
+
+        if (tamanoPagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tamanoPagina), "El tamaño de página no es válido.");
+        }
+
+        var desplazamiento = (pagina - 1L) * tamanoPagina;
+        if (desplazamiento > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), "La página pedida no es válida.");
+        }
+
+        cancelacion.ThrowIfCancellationRequested();
+        Articulos.Anotar(AccesoBuscar);
+        var coincidencias = Guardados
+            .Where(presupuesto => Coincide(presupuesto, filtro))
+            .OrderByDescending(presupuesto => presupuesto.Numero)
+            .ToList();
+        var resumenes = coincidencias
+            .Skip((int)desplazamiento)
+            .Take(tamanoPagina)
+            .Select(presupuesto => new ResumenPresupuesto(
+                presupuesto.Numero, presupuesto.Fecha, presupuesto.Cliente.Apellido, presupuesto.Cliente.Nombre,
+                presupuesto.Cliente.Dni, presupuesto.Estado, presupuesto.Lineas.Sum(linea => linea.PrecioFinal)))
+            .ToList();
+        return Task.FromResult(new PaginaPresupuestos(resumenes, coincidencias.Count));
+    }
+
+    private static bool Coincide(Presupuesto presupuesto, FiltroPresupuestos filtro) =>
+        (filtro.Apellido is not { } apellido
+            || PlegadoBusqueda.Plegar(presupuesto.Cliente.Apellido).Contains(apellido, StringComparison.Ordinal))
+        && (filtro.Nombre is not { } nombre
+            || PlegadoBusqueda.Plegar(presupuesto.Cliente.Nombre).Contains(nombre, StringComparison.Ordinal))
+        && (filtro.Dni is not { } dni || presupuesto.Cliente.Dni.Contains(dni, StringComparison.Ordinal))
+        && (filtro.Desde is not { } desde || presupuesto.Fecha >= desde)
+        && (filtro.Hasta is not { } hasta || presupuesto.Fecha <= hasta);
 
     public async Task<T> EjecutarEnTransaccionAsync<T>(
         Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)

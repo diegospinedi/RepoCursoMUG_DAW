@@ -22,6 +22,8 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
     private const string MensajeNoFinal = "Solo se registra el paso a Final de un presupuesto en Final.";
     private const string MensajeVersionOriginal = "La versión leída del presupuesto no es válida.";
     private const string MensajeAltaNoBorrador = "Un presupuesto nuevo se graba en Borrador.";
+    private const string MensajePaginaInvalida = "La página pedida no es válida.";
+    private const string MensajeTamanoPaginaInvalido = "El tamaño de página no es válido.";
 
     private const string MensajeEntradaConOtrosCambios =
         "El presupuesto ya tiene otros cambios registrados en el contexto.";
@@ -199,6 +201,139 @@ public sealed class PresupuestoRepository(OpticaDbContext contexto) : IPresupues
 
         var entrada = AdjuntarEncabezado(presupuesto, versionOriginal, ColumnasDeCambiarEstado);
         Modificar(entrada.Property(p => p.Estado), EstadoFinal);
+    }
+
+    /// <summary>
+    /// Una página de la búsqueda (FR-01 a FR-08 de FEAT-006), sin seguimiento. Combina con "Y" solo los filtros cargados:
+    /// <c>instr(plegar(Apellido), @apellido) &gt; 0</c>, lo mismo con Nombre, <c>instr(Dni, @dni) &gt; 0</c> y
+    /// <c>Fecha &gt;= @desde</c> / <c>Fecha &lt;= @hasta</c>, ambos inclusive. Sin <c>LIKE</c>: <c>%</c> y <c>_</c> se
+    /// buscan tal cual (D-05). Ordena por <c>Numero</c> descendente; el total de cada presupuesto es la suma en SQL de
+    /// <c>PrecioFinalCentavos</c> de sus líneas (D-08) y <see cref="PaginaPresupuestos.Total"/> cuenta con el mismo
+    /// filtro. Los textos viajan como parámetros y llegan ya normalizados por <see cref="FiltroPresupuestos"/>.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="filtro"/> es null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="pagina"/> es menor que 1, <paramref name="tamanoPagina"/> no es positivo, o el desplazamiento de
+    /// la página no entra en un <c>int</c> (D-17). No se consulta la base.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Una fila guardada no se puede leer (una fecha que pasa el CHECK de formato pero no existe, o un estado
+    /// desconocido): estado corrupto. El mensaje es fijo y no lleva valores.
+    /// </exception>
+    public async Task<PaginaPresupuestos> BuscarAsync(
+        FiltroPresupuestos filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(filtro);
+
+        // Textos fijos, sin el valor recibido: ThrowIfLessThan y ThrowIfNegativeOrZero lo agregarían al mensaje.
+        if (pagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), MensajePaginaInvalida);
+        }
+
+        if (tamanoPagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tamanoPagina), MensajeTamanoPaginaInvalido);
+        }
+
+        var desplazamiento = (pagina - 1L) * tamanoPagina;
+        if (desplazamiento > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), MensajePaginaInvalida);
+        }
+
+        var filtradas = Filtrar(contexto.Presupuestos.AsNoTracking(), filtro);
+
+        List<FilaResumen> filas;
+        int total;
+        try
+        {
+            filas = await filtradas
+                .OrderByDescending(p => p.Numero)
+                .Skip((int)desplazamiento)
+                .Take(tamanoPagina)
+                .Select(p => new FilaResumen(
+                    p.Numero, p.Fecha, p.Apellido, p.Nombre, p.Dni, p.Estado, p.Lineas.Sum(l => l.PrecioFinal)))
+                .ToListAsync(cancelacion);
+            total = await filtradas.CountAsync(cancelacion);
+        }
+        catch (FormatException)
+        {
+            // Microsoft.Data.Sqlite no pudo leer la fecha guardada, como en ObtenerAsync. Sin la causa: su mensaje
+            // repite el texto guardado.
+            throw new InvalidOperationException(MensajeFilaInvalida);
+        }
+
+        // Las dos consultas no comparten transacción: una edición de un Borrador entre una y otra puede sacarlo del
+        // filtro. Math.Max solo evita que PaginaPresupuestos lance si el total quedó por debajo de la página
+        // (como ArticuloRepository.BuscarAsync).
+        return new PaginaPresupuestos([.. filas.Select(AResumen)], Math.Max(total, filas.Count));
+    }
+
+    /// <summary>Los filtros cargados, combinados con "Y" (FR-02); sin ninguno, todos (FR-07).</summary>
+    private static IQueryable<PresupuestoFila> Filtrar(IQueryable<PresupuestoFila> presupuestos, FiltroPresupuestos filtro)
+    {
+        // EF Core traduce Contains sobre texto a instr(...) > 0 en SQLite, no a LIKE (D-05).
+        if (filtro.Apellido is { } apellido)
+        {
+            presupuestos = presupuestos.Where(p => FuncionesSqlite.Plegar(p.Apellido).Contains(apellido));
+        }
+
+        if (filtro.Nombre is { } nombre)
+        {
+            presupuestos = presupuestos.Where(p => FuncionesSqlite.Plegar(p.Nombre).Contains(nombre));
+        }
+
+        if (filtro.Dni is { } dni)
+        {
+            presupuestos = presupuestos.Where(p => p.Dni.Contains(dni));
+        }
+
+        if (filtro.Desde is { } desde)
+        {
+            presupuestos = presupuestos.Where(p => p.Fecha >= desde);
+        }
+
+        if (filtro.Hasta is { } hasta)
+        {
+            presupuestos = presupuestos.Where(p => p.Fecha <= hasta);
+        }
+
+        return presupuestos;
+    }
+
+    private static ResumenPresupuesto AResumen(FilaResumen fila)
+    {
+        var estado = fila.Estado switch
+        {
+            EstadoBorrador => EstadoPresupuesto.Borrador,
+            EstadoFinal => EstadoPresupuesto.Final,
+            _ => throw new InvalidOperationException(MensajeFilaInvalida),
+        };
+
+        return new ResumenPresupuesto(fila.Numero, fila.Fecha, fila.Apellido, fila.Nombre, fila.Dni, estado, fila.Total);
+    }
+
+    /// <summary>
+    /// Las columnas de un resultado de la búsqueda, con el total ya sumado en SQL. Una clase y no un record: no muestra
+    /// los datos del cliente en <see cref="object.ToString"/>.
+    /// </summary>
+    private sealed class FilaResumen(
+        long numero, DateOnly fecha, string apellido, string nombre, string dni, string estado, decimal total)
+    {
+        public long Numero { get; } = numero;
+
+        public DateOnly Fecha { get; } = fecha;
+
+        public string Apellido { get; } = apellido;
+
+        public string Nombre { get; } = nombre;
+
+        public string Dni { get; } = dni;
+
+        public string Estado { get; } = estado;
+
+        public decimal Total { get; } = total;
     }
 
     private static void ValidarVersionOriginal(long versionOriginal)

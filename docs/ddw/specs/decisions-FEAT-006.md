@@ -22,3 +22,12 @@ revisar en la aprobación de la spec.
 | D-15 | Si un dato del cliente tiene un carácter que la fuente no incluye (emoji, CJK), el PDF lo dibuja con el símbolo de reemplazo y se genera igual (`ThrowOnMissingTextGlyphs = false`); toda excepción de QuestPDF se relanza con texto fijo y sin causa. | Usuario | FAIL F-01 de la auditoría: QuestPDF copia el texto en su excepción (datos personales en el log) y el Final no se podría descargar nunca. Elegido por el usuario el 2026-11-12. |
 | D-16 | El 409 `borrador` lleva su propio título "No se pudo generar el PDF del presupuesto." y el detalle "El presupuesto está en Borrador."; el total del PDF se rotula "Total" y el IVA aparece solo en la leyenda. | Agente | W-07 y W-03 de la auditoría. |
 | D-17 | `pagina` de la búsqueda entre 1 y 1.000.000; el repositorio copia los resguardos de desborde y de total de `ArticuloRepository`. | Agente | W-04 de la auditoría. |
+
+## Decisiones de CODE
+
+| ID | Decisión | Quién | Motivo |
+|---|---|---|---|
+| D-18 | El DNI buscado descarta, además de `.` y `-`, cualquier espacio en blanco (`char.IsWhiteSpace`: espacio, tabulación, espacio duro); los demás caracteres quedan y no coinciden, sin error. Block 1, 2026-11-13. | Agente (implementador), revisado por ddw-module-verifier y ddw-arch-auditor | Sigue D-06; no cambia nada para un DNI válido. |
+| D-19 | `FiltroPresupuestos`, `ResumenPresupuesto` y la fila privada de la consulta son clases sin `ToString` propio, no records. Block 1, 2026-11-13. | Agente (implementador), revisado por las dos revisiones | El `ToString` de un record mostraría Apellido, Nombre y DNI (Ley 25.326). |
+| D-20 | Las pruebas del repositorio observan el SQL con un `DbCommandInterceptor`: "sin consultar" es 0 comandos ejecutados, el total menor que la página se fuerza reemplazando el `SELECT COUNT(` por `SELECT 0`, y los comodines se verifican como parámetros. Block 1, 2026-11-13. | Agente (implementador), revisado por las dos revisiones | Sin cambiar el código de producción para poder probarlo. |
+| D-21 | Página o tamaño de página inválidos lanzan `ArgumentOutOfRangeException` con texto fijo ("La página pedida no es válida.", "El tamaño de página no es válido."), sin el valor recibido; se aparta de `ArticuloRepository`, que usa `ThrowIfLessThan`. Block 1, 2026-11-13. | Agente, por WARN-1 del verificador | La spec pide texto fijo en los errores. |
