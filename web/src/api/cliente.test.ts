@@ -215,18 +215,22 @@ describe('cliente de la Api', () => {
 });
 
 describe('cliente de la Api: configuración', () => {
+  const ADMITIDAS = [0, 2.5, 5, 10.5, 21, 27];
   const GUARDADA = {
     alicuotaIva: 21,
     condicionFiscal: 'responsable_inscripto',
     multiploRedondeo: 0.01,
     topeIdentificacion: null,
     faltaTope: true,
+    puntoVenta: null,
+    alicuotasAdmitidas: ADMITIDAS,
   };
   const DATOS = {
     alicuotaIva: 21,
     condicionFiscal: 'monotributo',
     multiploRedondeo: 10,
     topeIdentificacion: 250000,
+    puntoVenta: 3,
   } as const;
   const RECHAZADO = { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
 
@@ -246,10 +250,38 @@ describe('cliente de la Api: configuración', () => {
     ['tope de texto', { ...GUARDADA, topeIdentificacion: '1' }],
     ['faltaTope no booleano', { ...GUARDADA, faltaTope: 'si' }],
     ['cuerpo que no es objeto', 'texto'],
+    ['punto de venta ausente', { ...GUARDADA, puntoVenta: undefined }],
+    ['punto de venta 0', { ...GUARDADA, puntoVenta: 0 }],
+    ['punto de venta 100000', { ...GUARDADA, puntoVenta: 100000 }],
+    ['punto de venta con decimales', { ...GUARDADA, puntoVenta: 2.5 }],
+    ['punto de venta de texto', { ...GUARDADA, puntoVenta: '3' }],
+    ['alícuotas admitidas vacías', { ...GUARDADA, alicuotasAdmitidas: [] }],
+    ['alícuotas admitidas que no son lista', { ...GUARDADA, alicuotasAdmitidas: '21' }],
+    ['alícuota admitida de texto', { ...GUARDADA, alicuotasAdmitidas: [0, '21'] }],
+    ['alícuotas admitidas repetidas', { ...GUARDADA, alicuotasAdmitidas: [0, 2.5, 21, 21] }],
   ])('consultarConfiguracion_%s_ErrorGeneral', async (_caso, cuerpo) => {
     servidorFalso({ 'GET /api/configuracion': json(200, cuerpo) });
 
     expect(await consultarConfiguracion()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('leerConfiguracion: respuesta sin alicuotasAdmitidas es inválida', async () => {
+    const { alicuotasAdmitidas: _sinLista, ...sinLista } = GUARDADA;
+    servidorFalso({
+      'GET /api/configuracion': json(200, sinLista),
+      'POST /api/configuracion': json(200, { ...sinLista, preciosCambiados: 0 }),
+    });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('consultarConfiguracion_PuntoVentaYAlicuotaFueraDeLaLista_SeLeen', async () => {
+    // D-06: una alícuota guardada antes de FR-26 se lee igual; el punto de venta llega como entero.
+    const guardada = { ...GUARDADA, alicuotaIva: 19, puntoVenta: 99999 };
+    servidorFalso({ 'GET /api/configuracion': json(200, { ...guardada, otroCampo: 'x' }) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'ok', datos: guardada });
   });
 
   it('consultarConfiguracion_401_SinSesion', async () => {
@@ -283,9 +315,9 @@ describe('cliente de la Api: configuración', () => {
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
   });
 
-  it('grabarConfiguracion_200_EnviaLosCuatroYDevuelveLoGuardado', async () => {
+  it('grabarConfiguracion_200_EnviaLosCincoYDevuelveLoGuardado', async () => {
     // Lo guardado y cuántos precios de venta cambiaron (D-09, D-23).
-    const guardada = { ...DATOS, faltaTope: false, preciosCambiados: 2 };
+    const guardada = { ...DATOS, faltaTope: false, alicuotasAdmitidas: ADMITIDAS, preciosCambiados: 2 };
     const servidor = servidorFalso({ 'POST /api/configuracion': json(200, guardada) });
 
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'ok', datos: guardada });
@@ -293,6 +325,16 @@ describe('cliente de la Api: configuración', () => {
     expect(JSON.parse(String(pedido?.init?.body))).toEqual(DATOS);
     expect(pedido?.init?.credentials).toBe('same-origin');
     expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarConfiguracion_SinPuntoVenta_EnviaNull', async () => {
+    // D-27: null conserva el punto de venta guardado.
+    const servidor = servidorFalso({ 'POST /api/configuracion': json(200, { ...GUARDADA, preciosCambiados: 0 }) });
+
+    await grabarConfiguracion({ ...DATOS, puntoVenta: null });
+
+    const [pedido] = servidor.pedidosA('POST', '/api/configuracion');
+    expect(JSON.parse(String(pedido?.init?.body))).toHaveProperty('puntoVenta', null);
   });
 
   it('grabarConfiguracion_SinTope_EnviaNull', async () => {
@@ -310,8 +352,9 @@ describe('cliente de la Api: configuración', () => {
         status: 400,
         title: 'One or more validation errors occurred.',
         errors: {
-          alicuotaIva: ['La alícuota de IVA debe estar entre 0 y 100.'],
+          alicuotaIva: ['La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.'],
           topeIdentificacion: ['El tope debe ser mayor a 0.'],
+          puntoVenta: ['El punto de venta debe ser un número entero de 1 a 99999.'],
           otro: 'no es una lista',
           vacio: [],
         },
@@ -321,8 +364,9 @@ describe('cliente de la Api: configuración', () => {
     expect(await grabarConfiguracion(DATOS)).toEqual({
       tipo: 'campos',
       errores: [
-        { campo: 'alicuotaIva', mensaje: 'La alícuota de IVA debe estar entre 0 y 100.' },
+        { campo: 'alicuotaIva', mensaje: 'La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.' },
         { campo: 'topeIdentificacion', mensaje: 'El tope debe ser mayor a 0.' },
+        { campo: 'puntoVenta', mensaje: 'El punto de venta debe ser un número entero de 1 a 99999.' },
       ],
     });
   });

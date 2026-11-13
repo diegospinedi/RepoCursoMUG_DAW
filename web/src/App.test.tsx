@@ -72,6 +72,12 @@ describe('App', () => {
  */
 const DATOS_ARCA = /(?<![\p{L}\p{N}])(certificados?|puntos? de venta)(?![\p{L}\p{N}])/iu;
 
+/**
+ * Lo que la configuración tampoco muestra: desde FEAT-007 (D-05, FR-28) la operadora carga ahí el punto de venta, como
+ * D-08 lo permite en `GET /api/configuracion`; el certificado sigue sin aparecer en ninguna pantalla.
+ */
+const CERTIFICADO = /(?<![\p{L}\p{N}])certificados?(?![\p{L}\p{N}])/iu;
+
 /** Atributos que el navegador muestra o que lee un lector de pantalla, además del texto. */
 const ATRIBUTOS_VISIBLES = ['alt', 'title', 'placeholder', 'aria-label', 'value'];
 
@@ -120,6 +126,8 @@ interface Pantalla {
   estadoNavegacion?: unknown;
   /** Lo que hace la persona para llegar a ese estado de la pantalla (por ejemplo, un ingreso bloqueado). */
   interactuar?: () => Promise<void>;
+  /** La pantalla muestra el punto de venta (solo la configuración, FR-28 de FEAT-007); el certificado nunca. */
+  conPuntoVenta?: boolean;
 }
 
 /** El presupuesto 155 en Borrador, con datos ficticios (D-17), su versión y el `orden` de la línea (FEAT-003c). */
@@ -207,28 +215,35 @@ const PANTALLAS: Pantalla[] = [
           multiploRedondeo: 0.01,
           topeIdentificacion: null,
           faltaTope: true,
+          puntoVenta: null,
+          alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
       }),
     titulo: 'Configuración',
+    conPuntoVenta: true,
   },
   {
     ruta: '/configuracion',
-    descripcion: 'configuración con un error junto al campo',
+    descripcion: 'configuración con una alícuota fuera de la lista y un error junto al campo',
     preparar: () =>
       servidorFalso({
         'GET /api/configuracion': json(200, {
-          alicuotaIva: 21,
+          alicuotaIva: 19,
           condicionFiscal: 'monotributo',
           multiploRedondeo: 10,
           topeIdentificacion: 250000,
           faltaTope: false,
+          puntoVenta: 3,
+          alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
       }),
     titulo: 'Configuración',
+    conPuntoVenta: true,
     interactuar: async () => {
-      fireEvent.change(await screen.findByLabelText('Alícuota de IVA (%)'), { target: { value: '101' } });
+      // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía.
+      await screen.findByLabelText('Alícuota de IVA (%)');
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
-      expect(await screen.findByText('La alícuota de IVA debe estar entre 0 y 100.')).toBeTruthy();
+      expect(await screen.findByText('La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.')).toBeTruthy();
     },
   },
   {
@@ -408,11 +423,27 @@ describe('Sin datos de ARCA en pantalla', () => {
       expect(await screen.findByRole('heading', { name: pantalla.titulo })).toBeTruthy();
       await pantalla.interactuar?.();
 
-      const encontrado = DATOS_ARCA.exec(textoDeLaPantalla());
+      const encontrado = (pantalla.conPuntoVenta === true ? CERTIFICADO : DATOS_ARCA).exec(textoDeLaPantalla());
       expect(
         encontrado?.[0] ?? null,
         `La pantalla de ${pantalla.descripcion} (${pantalla.ruta}) muestra un dato de ARCA`,
       ).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('Configuracion_MuestraPuntoDeVentaSinCertificado', async () => {
+    // La excepción de la configuración es solo el punto de venta (D-05): la pantalla lo muestra y no el certificado.
+    const configuracion = PANTALLAS.filter((p) => p.conPuntoVenta === true);
+    expect(configuracion.map((p) => p.ruta)).toEqual(['/configuracion', '/configuracion']);
+    for (const pantalla of configuracion) {
+      pantalla.preparar();
+      renderizarApp(pantalla.ruta);
+      expect(await screen.findByRole('heading', { name: pantalla.titulo })).toBeTruthy();
+      await pantalla.interactuar?.();
+      const texto = textoDeLaPantalla();
+      expect(DATOS_ARCA.exec(texto)?.[0]).toBe('Punto de venta');
+      expect(CERTIFICADO.exec(texto)).toBeNull();
       cleanup();
     }
   });

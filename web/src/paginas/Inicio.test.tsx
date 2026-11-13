@@ -88,6 +88,8 @@ describe('Inicio', () => {
         multiploRedondeo: 0.01,
         topeIdentificacion: null,
         faltaTope: true,
+        puntoVenta: null,
+        alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
       }),
     });
     renderizarApp('/');

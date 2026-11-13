@@ -11,7 +11,12 @@
  *   "sin sesión" y avisa al manejador registrado con {@link alPerderLaSesion}.
  */
 
-import { IMPORTE_MAXIMO_SEGURO, sumarCentesimos } from '../configuracion/numeros';
+import {
+  IMPORTE_MAXIMO_SEGURO,
+  PUNTO_VENTA_MAXIMO,
+  PUNTO_VENTA_MINIMO,
+  sumarCentesimos,
+} from '../configuracion/numeros';
 
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
@@ -47,6 +52,8 @@ export const CAMPO_ALICUOTA = 'alicuotaIva';
 export const CAMPO_CONDICION = 'condicionFiscal';
 export const CAMPO_MULTIPLO = 'multiploRedondeo';
 export const CAMPO_TOPE = 'topeIdentificacion';
+/** El punto de venta (FEAT-007, FR-28). */
+export const CAMPO_PUNTO_VENTA = 'puntoVenta';
 
 /** Campos del cuerpo y de `errors` de `/api/articulos`. */
 export const CAMPO_CODIGO_PROVEEDOR = 'codigoProveedor';
@@ -121,11 +128,21 @@ export interface DatosConfiguracion {
   multiploRedondeo: number;
   /** `null`: sin tope cargado. */
   topeIdentificacion: number | null;
+  /**
+   * Entero de 1 a 99999 (FR-28 de FEAT-007). En la respuesta, `null` mientras no se cargue; al grabar, `null` conserva
+   * el guardado (D-27).
+   */
+  puntoVenta: number | null;
 }
 
 /** Lo que devuelve `GET /api/configuracion`. */
 export interface ConfiguracionNegocio extends DatosConfiguracion {
   faltaTope: boolean;
+  /**
+   * Las alícuotas que acepta ARCA (FR-26), para la lista de la pantalla. La guardada puede no estar entre ellas si se
+   * grabó antes de FR-26 (D-06).
+   */
+  alicuotasAdmitidas: number[];
 }
 
 /**
@@ -359,19 +376,38 @@ const esNumero = (valor: unknown): valor is number => typeof valor === 'number' 
 const esCondicion = (valor: unknown): valor is CondicionFiscal =>
   CONDICIONES_FISCALES.some((condicion) => condicion === valor);
 
+/**
+ * El punto de venta de la respuesta: `null` o un entero de {@link PUNTO_VENTA_MINIMO} a {@link PUNTO_VENTA_MAXIMO},
+ * invariante también al leer (D-33).
+ */
+const esPuntoVenta = (valor: unknown): valor is number | null =>
+  valor === null || (esEnteroEntre(valor, PUNTO_VENTA_MINIMO) && valor <= PUNTO_VENTA_MAXIMO);
+
+/** La lista de alícuotas admitidas: un arreglo no vacío de números, sin repetidos (cada uno es una opción). */
+const esListaDeAlicuotas = (valor: unknown): valor is number[] =>
+  Array.isArray(valor) && valor.length > 0 && valor.every(esNumero) && new Set(valor).size === valor.length;
+
+/**
+ * La configuración vigente. Exige `puntoVenta` (null o entero de 1 a 99999) y `alicuotasAdmitidas` (FEAT-007): sin
+ * ellos la respuesta es ilegible. La alícuota guardada no se compara con la lista (D-06): la pantalla la marca.
+ */
 const leerConfiguracion: Lector<ConfiguracionNegocio> = (cuerpo) =>
   esObjeto(cuerpo) &&
   esNumero(cuerpo.alicuotaIva) &&
   esCondicion(cuerpo.condicionFiscal) &&
   esNumero(cuerpo.multiploRedondeo) &&
   (cuerpo.topeIdentificacion === null || esNumero(cuerpo.topeIdentificacion)) &&
-  typeof cuerpo.faltaTope === 'boolean'
+  typeof cuerpo.faltaTope === 'boolean' &&
+  esPuntoVenta(cuerpo.puntoVenta) &&
+  esListaDeAlicuotas(cuerpo.alicuotasAdmitidas)
     ? {
         alicuotaIva: cuerpo.alicuotaIva,
         condicionFiscal: cuerpo.condicionFiscal,
         multiploRedondeo: cuerpo.multiploRedondeo,
         topeIdentificacion: cuerpo.topeIdentificacion,
         faltaTope: cuerpo.faltaTope,
+        puntoVenta: cuerpo.puntoVenta,
+        alicuotasAdmitidas: [...cuerpo.alicuotasAdmitidas],
       }
     : undefined;
 
@@ -511,8 +547,9 @@ export const cambiarContrasena = (actual: string, nueva: string) =>
 export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/configuracion' }, leerConfiguracion);
 
 /**
- * Graba los cuatro parámetros juntos y devuelve lo que quedó guardado (D-03), con cuántos precios de venta cambiaron
- * al recalcular el catálogo (D-09 y D-23 de FEAT-002c). A diferencia de las pantallas de acceso,
+ * Graba los parámetros juntos (el punto de venta en `null` conserva el guardado, D-27 de FEAT-007) y devuelve lo que
+ * quedó guardado (D-03), con cuántos precios de venta cambiaron al recalcular el catálogo (D-09 y D-23 de FEAT-002c).
+ * A diferencia de las pantallas de acceso,
  * un 400 devuelve TODOS los campos de `errors`, y un 413 es un mensaje general propio (no el de la contraseña): el
  * navegador limita cada número a 32 caracteres, así que solo un cuerpo alterado supera el límite de la Api, y no hay
  * un campo al que atribuirlo.
