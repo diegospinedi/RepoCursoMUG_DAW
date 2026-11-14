@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-14 |
 | PRD de origen | `docs/ddw/prd/prd-DISC-001-07.md` (PRD 07 de DISC-001) |
-| PRD loops | 1 |
+| PRD loops | 2 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001 del que proviene. Los
@@ -17,6 +17,12 @@
 > **Alcance decidido.** El usuario decidió el 2026-11-14 implementar este PRD en un solo ticket, sin dividir, con sus
 > 16 AC (W-PRD-06 aceptado). Se descartó la división propuesta en tres partes (registro del número y verificación;
 > importe distinto, sin número, otro entorno y descarte; aviso al ingresar y navegadores).
+>
+> **Espera antes de verificar.** Al volver de PLAN (2026-11-14), la auditoría de arquitectura señaló que ARCA puede
+> seguir procesando una solicitud que no respondió a tiempo: si la operadora verifica enseguida, la consulta puede
+> decir que el número no está autorizado, el sistema emite con otro número y el envío original se autoriza después,
+> con dos comprobantes para la misma venta. El usuario decidió exigir que pase 1 minuto desde que la emisión quedó
+> pendiente antes de verificar (FR-16, AC-17). Con este agregado el PRD tiene 16 FR y 17 AC.
 >
 > **Sin certificado de homologación.** El usuario sigue sin el certificado digital de homologación de ARCA (decisión
 > del 2026-11-14, como en FEAT-007). La verificación se construye completa, pero en este ticket se prueba contra el
@@ -96,6 +102,11 @@ se revise en ARCA.
   pendiente enviada a un entorno de ARCA distinto del configurado, y debe avisarle que la emisión es de otro entorno,
   indicando cuál. [Decisión del usuario del 2026-11-14]
 
+### Espera antes de verificar
+- FR-16: El sistema no debe consultar a ARCA ni emitir cuando la operadora pida verificar una emisión pendiente antes
+  de que pase 1 minuto desde que quedó pendiente, y debe informarle cuántos segundos faltan para poder verificar.
+  [Decisión del usuario del 2026-11-14: evitar el duplicado por una autorización tardía del envío original]
+
 ## Non-Functional Requirements
 - NFR-01: El sistema debe dar por no disponible el web service de ARCA tras 30 segundos sin respuesta a la consulta de
   verificación. [PRD-001 RNF-10]
@@ -147,6 +158,9 @@ se revise en ARCA.
   enviada al entorno Simulado, THEN THE sistema SHALL no consultar, emitir ni recuperar ningún comprobante, mostrar un
   aviso que diga que la emisión es del entorno Simulado y, si la operadora descarta y confirma, mostrar Facturar en el
   presupuesto y registrar la fecha y la hora del descarte.
+- AC-17 (FR-16): IF la emisión del presupuesto 150 quedó pendiente hace 20 segundos y la operadora pide verificar,
+  THEN THE sistema SHALL no consultar a ARCA ni emitir, dejar la emisión pendiente y avisar que faltan 40 segundos para
+  poder verificar.
 
 ## Out of Scope
 - Verificación automática, sin que la operadora la pida (decisión de las dueñas).
@@ -168,6 +182,8 @@ se revise en ARCA.
 - Riesgo: una pendiente sin número (FR-14) o de otro entorno (FR-15) que sí se autorizó en ARCA real se descarta sin
   conciliar. Mitigación: hasta este ticket solo se emitió contra el simulador (sin certificado, FEAT-007), el aviso pide
   revisar en ARCA antes de descartar y el descarte queda registrado.
+- Riesgo: ARCA autoriza tarde una solicitud que no respondió a tiempo y la verificación, hecha enseguida, emite otro
+  comprobante. Mitigación: la verificación exige 1 minuto desde que la emisión quedó pendiente (FR-16).
 - Riesgo: alguien emite comprobantes en el mismo punto de venta desde otro sistema y el número registrado aparece con
   otro importe. Mitigación: el punto de venta de web services es distinto del de la facturación manual (PRD-001
   Dependencias), y si pasa, cae en el caso de FR-07.
