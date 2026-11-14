@@ -111,3 +111,19 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   se quita la pendiente nueva como en la emisión normal (spec Block 4, FR-21 y FR-22 del PRD 06): no abre un duplicado,
   porque ARCA ya informó que el número viejo no estaba autorizado y el nuevo no se envió o fue rechazado. Se corrige el
   comentario de `ProcesoEmision` para que lo diga.
+- **D-30 (del agente, Block 5, supuestos del implementador, aprobados por D-21).** La espera llega a Application como
+  `OpcionesVerificacion(TimeSpan)` (la registra el Block 6 desde `OpcionesArca.EsperaVerificacion`). Presupuesto
+  inexistente → `NoEncontrado` (404). Sin turno del candado en el plazo → `no_enviada`. Con el turno se relee la
+  pendiente: si cambió → `no_enviada` sin grabar; si desapareció → `sin_pendiente`. Traducción de `ProcesoEmision`:
+  sin respuesta o pendiente de verificación → `sin_respuesta_emision`; no enviada, pendiente, Borrador, sin tope, sin
+  punto de venta, alícuota no admitida → `no_enviada` (la pendiente vieja queda si la solicitud no se puede armar);
+  rechazada → con código y descripción. La factura recuperada toma la fecha de la pendiente; los totales se comparan en
+  centavos. El descarte no toma el candado. AC-13 en Application corre contra un ARCA en memoria; contra el simulador
+  real, en Blocks 6 y 8.
+- **D-31 (del agente por D-21, WARN de la auditoría del Block 5).** La espera de verificación tiene que ser mayor o
+  igual que el plazo de ARCA más el margen: el Block 6 lo valida al arrancar (si `Arca:EsperaVerificacionSegundos` es
+  menor que `Arca:TiempoMaximoSegundos` + margen, error de configuración). Producción usa 60/30 y el harness 3/2.
+- **D-32 (del agente por D-21, INFO de la auditoría del Block 5).** Si una verificación de una pendiente con
+  observación `importe_distinto` termina sin respuesta, la observación anterior queda vigente (FR-12: pendiente
+  intacta); el descarte vuelve a comprobar el número (D-12). La Api no registra el cuerpo de las respuestas 409
+  (la descripción de un rechazo de ARCA puede repetir datos de la solicitud): lo verifica el Block 6.

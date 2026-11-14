@@ -24,8 +24,9 @@ namespace Optica.Application.Tests.Facturacion;
 /// </remarks>
 internal sealed class AlmacenFacturacion :
     IPresupuestoRepository, IConfiguracionNegocioRepository, IFacturaRepository, IEmisionPendienteRepository,
-    IObservacionEmisionRepository, IUnidadDeTrabajo
+    IObservacionEmisionRepository, IDescarteEmisionRepository, IUnidadDeTrabajo
 {
+    private readonly List<DescarteEmision> _descartesRegistrados = [];
     private readonly List<Factura> _facturasRegistradas = [];
     private readonly List<EmisionPendiente> _pendientesRegistradas = [];
     private readonly List<long> _pendientesQuitadas = [];
@@ -43,6 +44,9 @@ internal sealed class AlmacenFacturacion :
     public List<EmisionPendiente> Pendientes { get; } = [];
 
     public List<ObservacionEmision> Observaciones { get; } = [];
+
+    /// <summary>Los descartes confirmados (FEAT-008, FR-10): solo se agregan.</summary>
+    public List<DescarteEmision> Descartes { get; } = [];
 
     public ConcurrentQueue<string> Accesos { get; } = new();
 
@@ -194,6 +198,24 @@ internal sealed class AlmacenFacturacion :
             Observaciones.SingleOrDefault(observacion => observacion.PresupuestoNumero == presupuestoNumero));
     }
 
+    // Descartes (FEAT-008): solo alta y lectura.
+
+    public void Agregar(DescarteEmision descarte)
+    {
+        ArgumentNullException.ThrowIfNull(descarte);
+        Accesos.Enqueue("AgregarDescarte");
+        _descartesRegistrados.Add(descarte);
+    }
+
+    public Task<IReadOnlyList<DescarteEmision>> ListarDescartesAsync(
+        long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ListarDescartes");
+        return Task.FromResult<IReadOnlyList<DescarteEmision>>(
+            Descartes.Where(descarte => descarte.PresupuestoNumero == presupuestoNumero).ToList());
+    }
+
     // Unidad de trabajo.
 
     public async Task<T> EjecutarEnTransaccionAsync<T>(
@@ -210,6 +232,7 @@ internal sealed class AlmacenFacturacion :
         var facturasAlEntrar = new List<Factura>(Facturas);
         var pendientesAlEntrar = new List<EmisionPendiente>(Pendientes);
         var observacionesAlEntrar = new List<ObservacionEmision>(Observaciones);
+        var descartesAlEntrar = new List<DescarteEmision>(Descartes);
         _enEsteFlujo.Value = true;
         EnTransaccion = true;
         Accesos.Enqueue("Transaccion");
@@ -231,6 +254,8 @@ internal sealed class AlmacenFacturacion :
             Pendientes.AddRange(pendientesAlEntrar);
             Observaciones.Clear();
             Observaciones.AddRange(observacionesAlEntrar);
+            Descartes.Clear();
+            Descartes.AddRange(descartesAlEntrar);
             Descartar();
             throw;
         }
@@ -283,6 +308,7 @@ internal sealed class AlmacenFacturacion :
             }
 
             Facturas.AddRange(_facturasRegistradas);
+            Descartes.AddRange(_descartesRegistrados);
             Pendientes.Clear();
             Pendientes.AddRange(pendientes);
             Observaciones.Clear();
@@ -298,10 +324,11 @@ internal sealed class AlmacenFacturacion :
 
     private bool HayRegistrados =>
         _facturasRegistradas.Count > 0 || _pendientesRegistradas.Count > 0 || _pendientesQuitadas.Count > 0
-        || _observacionesRegistradas.Count > 0 || _observacionesQuitadas.Count > 0;
+        || _observacionesRegistradas.Count > 0 || _observacionesQuitadas.Count > 0 || _descartesRegistrados.Count > 0;
 
     private void Descartar()
     {
+        _descartesRegistrados.Clear();
         _facturasRegistradas.Clear();
         _pendientesRegistradas.Clear();
         _pendientesQuitadas.Clear();
@@ -314,6 +341,21 @@ internal sealed class AlmacenFacturacion :
     {
         var observacion = new ObservacionEmision(
             pendiente.PresupuestoNumero, MotivoObservacionEmision.OtroEntorno, pendiente.Numero, pendiente.Total, null,
+            pendiente.Entorno, new DateTimeOffset(2026, 10, 1, 12, 5, 0, TimeSpan.Zero));
+        Observaciones.Add(observacion);
+        return observacion;
+    }
+
+    /// <summary>
+    /// Guarda una observación con <paramref name="motivo"/> sobre la pendiente ya guardada (FEAT-008): con el número de la
+    /// pendiente, otro (<paramref name="numero"/>) o ninguno (<paramref name="sinNumero"/>).
+    /// </summary>
+    public ObservacionEmision SembrarObservacion(
+        EmisionPendiente pendiente, MotivoObservacionEmision motivo, decimal? totalArca = null, long? numero = null,
+        bool sinNumero = false)
+    {
+        var observacion = new ObservacionEmision(
+            pendiente.PresupuestoNumero, motivo, sinNumero ? null : numero ?? pendiente.Numero, pendiente.Total, totalArca,
             pendiente.Entorno, new DateTimeOffset(2026, 10, 1, 12, 5, 0, TimeSpan.Zero));
         Observaciones.Add(observacion);
         return observacion;
@@ -694,10 +736,12 @@ internal sealed class RelojControlado(DateTimeOffset utc) : TimeProvider
 }
 
 /// <summary>
-/// Registro en memoria de la emisión (<see cref="EmitirFactura"/> y <see cref="ProcesoEmision"/>, que comparten la
-/// instancia): el mensaje formateado y las propiedades estructuradas.
+/// Registro en memoria de la emisión (<see cref="EmitirFactura"/>, <see cref="ProcesoEmision"/> y, desde FEAT-008,
+/// <see cref="VerificarEmision"/> y <see cref="DescartarEmision"/>, que comparten la instancia): el mensaje formateado y
+/// las propiedades estructuradas.
 /// </summary>
-internal sealed class RegistroEmision : ILogger<EmitirFactura>, ILogger<ProcesoEmision>
+internal sealed class RegistroEmision :
+    ILogger<EmitirFactura>, ILogger<ProcesoEmision>, ILogger<VerificarEmision>, ILogger<DescartarEmision>
 {
     public ConcurrentQueue<(LogLevel Nivel, string Texto)> Lineas { get; } = new();
 

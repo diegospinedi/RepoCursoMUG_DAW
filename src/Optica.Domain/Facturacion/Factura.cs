@@ -143,6 +143,61 @@ public sealed class Factura
             solicitud.Receptor, solicitud.Importes, cae, vencimientoCae, entorno, lineas);
     }
 
+    /// <summary>
+    /// La factura que ARCA ya había autorizado para <paramref name="pendiente"/> y que la verificación recupera (FR-05 de
+    /// FEAT-008, D-18): toma de la pendiente el tipo, el punto de venta, el número, la fecha, el concepto, los importes y
+    /// el entorno; de ARCA, el CAE y su vencimiento; copia las líneas de <paramref name="presupuesto"/> en su orden; y el
+    /// receptor es el cliente del presupuesto con su DNI si la pendiente dice que se identificó, o sin identificar.
+    /// </summary>
+    /// <param name="entornoConfigurado">El entorno de ARCA configurado: tiene que ser el de la pendiente (D-18).</param>
+    /// <exception cref="ArgumentNullException">El presupuesto, la pendiente o el CAE son null.</exception>
+    /// <exception cref="ArgumentException">
+    /// El presupuesto no está en Final; la pendiente no tiene número, es de otro presupuesto o de otro total; el entorno
+    /// de la pendiente no es el configurado; el vencimiento del CAE es anterior a la fecha del comprobante; o algún dato es
+    /// inválido (igual que el constructor). El mensaje no incluye valores.
+    /// </exception>
+    public static Factura Recuperada(
+        Presupuesto presupuesto, EmisionPendiente pendiente, string cae, DateOnly vencimientoCae,
+        EntornoArca entornoConfigurado)
+    {
+        ArgumentNullException.ThrowIfNull(presupuesto);
+        ArgumentNullException.ThrowIfNull(pendiente);
+        if (presupuesto.Estado != EstadoPresupuesto.Final)
+        {
+            throw new ArgumentException("Solo se factura un presupuesto en Final.", nameof(presupuesto));
+        }
+
+        if (pendiente.Numero is not { } numero || pendiente.Concepto is not { } concepto
+            || pendiente.Importes is not { } importes || pendiente.ReceptorIdentificado is not { } identificado)
+        {
+            throw new ArgumentException("La emisión pendiente no tiene número registrado.", nameof(pendiente));
+        }
+
+        if (pendiente.PresupuestoNumero != presupuesto.Numero || importes.Total != presupuesto.Total)
+        {
+            throw new ArgumentException("La emisión pendiente no es la de este presupuesto.", nameof(pendiente));
+        }
+
+        if (pendiente.Entorno != entornoConfigurado)
+        {
+            throw new ArgumentException(
+                "La emisión pendiente es de otro entorno de ARCA que el configurado.", nameof(entornoConfigurado));
+        }
+
+        if (vencimientoCae < pendiente.Fecha)
+        {
+            throw new ArgumentException(
+                "El vencimiento del CAE es anterior a la fecha del comprobante.", nameof(vencimientoCae));
+        }
+
+        // El DNI es el del cliente del presupuesto (FR-11 de FEAT-007): la pendiente no lo guarda (Ley 25.326).
+        var receptor = identificado ? ReceptorFactura.ConDni(presupuesto.Cliente.Dni) : ReceptorFactura.SinIdentificar;
+        var lineas = presupuesto.Lineas.Select((linea, indice) => LineaFactura.DesdePresupuesto(indice + 1, linea)).ToList();
+        return new Factura(
+            presupuesto.Numero, pendiente.Tipo, pendiente.PuntoVenta, numero, pendiente.Fecha, concepto, receptor,
+            importes, cae, vencimientoCae, pendiente.Entorno, lineas);
+    }
+
     private static void ValidarLineas(IReadOnlyList<LineaFactura> lineas, decimal total)
     {
         ArgumentNullException.ThrowIfNull(lineas);
