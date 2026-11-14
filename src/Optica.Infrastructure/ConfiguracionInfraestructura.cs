@@ -64,6 +64,11 @@ public static class ConfiguracionInfraestructura
         servicios.AddScoped<IFacturaRepository, FacturaRepository>();
         servicios.AddScoped<IEmisionPendienteRepository, EmisionPendienteRepository>();
 
+        // Recuperación de emisiones (FEAT-008, ADR-026): la observación y el descarte comparten el mismo contexto, así la
+        // verificación y el descarte graban y quitan pendiente, observación y descarte en una sola transacción.
+        servicios.AddScoped<IObservacionEmisionRepository, ObservacionEmisionRepository>();
+        servicios.AddScoped<IDescarteEmisionRepository, DescarteEmisionRepository>();
+
         // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
         // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.
         servicios.AddSingleton<ICandadoEmision, CandadoEmision>();

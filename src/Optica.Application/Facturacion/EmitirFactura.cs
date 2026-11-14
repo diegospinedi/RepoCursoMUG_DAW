@@ -130,7 +130,12 @@ public sealed class EmitirFactura(
             return Preparacion.Rechazada(ResultadoEmision.Conflicto(MotivoDe(armado.Motivo.Value)));
         }
 
-        pendientes.Agregar(new EmisionPendiente(numero, reloj.GetUtcNow(), armado.Solicitud, autorizador.Entorno));
+        // Hasta Block 4 de FEAT-008 la emisión sigue el orden de FEAT-007 (sin pedir el próximo número antes de enviar): la
+        // pendiente se graba como las de FEAT-007, sin número.
+        var solicitud = armado.Solicitud;
+        pendientes.Agregar(EmisionPendiente.SinNumero(
+            numero, reloj.GetUtcNow(), solicitud.Tipo, solicitud.PuntoVenta, solicitud.Fecha, solicitud.Importes.Total,
+            autorizador.Entorno));
         try
         {
             await unidadDeTrabajo.ConfirmarAsync(operacion);

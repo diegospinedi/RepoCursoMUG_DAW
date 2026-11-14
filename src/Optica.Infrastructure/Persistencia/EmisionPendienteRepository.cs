@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Optica.Domain.Facturacion;
 
@@ -11,7 +12,9 @@ namespace Optica.Infrastructure.Persistencia;
 /// </summary>
 /// <remarks>
 /// Guarda los datos de la solicitud que verifica el PRD 07 (tipo, punto de venta, fecha, total), el momento en UTC y el
-/// entorno; no guarda el DNI del receptor (Ley 25.326). No registra nada en el log. La base rechaza modificar una
+/// entorno, y desde FEAT-008 el número pedido, el concepto, el neto, el IVA, la alícuota y si el receptor se identificó
+/// (D-15); no guarda el DNI del receptor (Ley 25.326). Una fila de FEAT-007 (las columnas nuevas nulas) se lee como
+/// <see cref="EmisionPendiente.SinNumero"/>; una con algunas nulas y otras no es inválida. No registra nada en el log. La base rechaza modificar una
 /// pendiente (<c>TR_EmisionPendiente_Inmutable</c>); por eso, quitar y volver a agregar la del mismo presupuesto exige
 /// confirmar la baja en el medio, y <see cref="Agregar"/> lo controla.
 /// </remarks>
@@ -19,6 +22,8 @@ public sealed class EmisionPendienteRepository(OpticaDbContext contexto) : IEmis
 {
     private const string MensajeQuitadaSinConfirmar =
         "La emisión pendiente de este presupuesto se quitó y la baja no se confirmó.";
+
+    private const string MensajeFilaInvalida = "Una emisión pendiente guardada no es válida.";
 
     /// <exception cref="ArgumentNullException"><paramref name="pendiente"/> es null.</exception>
     /// <exception cref="InvalidOperationException">
@@ -33,16 +38,21 @@ public sealed class EmisionPendienteRepository(OpticaDbContext contexto) : IEmis
             throw new InvalidOperationException(MensajeQuitadaSinConfirmar);
         }
 
-        var solicitud = pendiente.Solicitud;
         contexto.EmisionesPendientes.Add(new EmisionPendienteFila
         {
             PresupuestoNumero = pendiente.PresupuestoNumero,
             Momento = pendiente.Momento.UtcDateTime,
-            Tipo = TextosFacturacion.TextoDe(solicitud.Tipo),
-            PuntoVenta = solicitud.PuntoVenta,
-            Fecha = solicitud.Fecha,
-            Total = solicitud.Importes.Total,
+            Tipo = TextosFacturacion.TextoDe(pendiente.Tipo),
+            PuntoVenta = pendiente.PuntoVenta,
+            Fecha = pendiente.Fecha,
+            Total = pendiente.Total,
             Entorno = TextosFacturacion.TextoDe(pendiente.Entorno),
+            Numero = pendiente.Numero,
+            Concepto = pendiente.Concepto is { } concepto ? TextosFacturacion.TextoDe(concepto) : null,
+            Neto = pendiente.Importes?.Neto,
+            Iva = pendiente.Importes?.Iva,
+            Alicuota = pendiente.Importes?.Alicuota?.ToString(CultureInfo.InvariantCulture),
+            ReceptorIdentificado = pendiente.ReceptorIdentificado is { } identificado ? (identificado ? 1L : 0L) : null,
         });
     }
 
@@ -62,4 +72,78 @@ public sealed class EmisionPendienteRepository(OpticaDbContext contexto) : IEmis
 
     public Task<bool> ExisteAsync(long presupuestoNumero, CancellationToken cancelacion = default) =>
         contexto.EmisionesPendientes.AsNoTracking().AnyAsync(p => p.PresupuestoNumero == presupuestoNumero, cancelacion);
+
+    /// <exception cref="InvalidOperationException">La fila no es válida. El mensaje es fijo y no lleva datos.</exception>
+    public async Task<EmisionPendiente?> ObtenerPendienteAsync(
+        long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        var fila = await contexto.EmisionesPendientes.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.PresupuestoNumero == presupuestoNumero, cancelacion);
+        return fila is null ? null : Reconstruir(fila);
+    }
+
+    public async Task<IReadOnlyList<long>> ListarNumerosAsync(CancellationToken cancelacion = default) =>
+        await contexto.EmisionesPendientes.AsNoTracking()
+            .OrderBy(p => p.PresupuestoNumero)
+            .Select(p => p.PresupuestoNumero)
+            .ToListAsync(cancelacion);
+
+    /// <summary>
+    /// La pendiente de una fila: sin número si las seis columnas de FEAT-008 son nulas (FR-14); con número si número,
+    /// concepto, neto, IVA y receptor tienen valor (la alícuota la controlan los importes según el tipo). Cualquier otra
+    /// combinación, o un valor que el dominio rechaza, es una fila inválida.
+    /// </summary>
+    private static EmisionPendiente Reconstruir(EmisionPendienteFila fila)
+    {
+        var tipo = TextosFacturacion.TipoDe(fila.Tipo);
+        var entorno = TextosFacturacion.EntornoDe(fila.Entorno);
+        if (tipo is null || entorno is null || fila.PuntoVenta is < 1 or > 99999)
+        {
+            throw new InvalidOperationException(MensajeFilaInvalida);
+        }
+
+        var momento = new DateTimeOffset(DateTime.SpecifyKind(fila.Momento, DateTimeKind.Utc));
+        var puntoVenta = (int)fila.PuntoVenta;
+        try
+        {
+            if (fila is { Numero: null, Concepto: null, Neto: null, Iva: null, Alicuota: null, ReceptorIdentificado: null })
+            {
+                return EmisionPendiente.SinNumero(
+                    fila.PresupuestoNumero, momento, tipo.Value, puntoVenta, fila.Fecha, fila.Total, entorno.Value);
+            }
+
+            if (fila is { Numero: { } numero, Concepto: { } textoConcepto, Neto: { } neto, Iva: { } iva,
+                    ReceptorIdentificado: 0 or 1 }
+                && TextosFacturacion.ConceptoDe(textoConcepto) is { } concepto
+                && LeerAlicuota(fila.Alicuota, out var alicuota))
+            {
+                return EmisionPendiente.Registrada(
+                    fila.PresupuestoNumero, momento, tipo.Value, puntoVenta, fila.Fecha, numero, concepto,
+                    new ImportesFactura(fila.Total, neto, iva, alicuota), fila.ReceptorIdentificado == 1, entorno.Value);
+            }
+        }
+        catch (ArgumentException)
+        {
+            // Sin la excepción adjunta: su mensaje es del dominio y la fila puede venir de cualquier lado.
+        }
+
+        throw new InvalidOperationException(MensajeFilaInvalida);
+    }
+
+    private static bool LeerAlicuota(string? texto, out decimal? alicuota)
+    {
+        alicuota = null;
+        if (texto is null)
+        {
+            return true;
+        }
+
+        if (decimal.TryParse(texto, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var valor))
+        {
+            alicuota = valor;
+            return true;
+        }
+
+        return false;
+    }
 }

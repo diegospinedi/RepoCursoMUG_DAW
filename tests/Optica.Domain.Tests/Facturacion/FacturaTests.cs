@@ -311,7 +311,7 @@ public class FacturaTests
             TipoComprobante.FacturaB, 3, Fecha, ConceptoFactura.Productos, receptor, ImportesFactura.ParaFacturaB(2000m, 21m));
         Assert.DoesNotContain(Dni, solicitud.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(
-            Dni, new EmisionPendiente(41, DateTimeOffset.UnixEpoch, solicitud, EntornoArca.Simulado).ToString(),
+            Dni, new EmisionPendiente(41, DateTimeOffset.UnixEpoch, solicitud, 125, EntornoArca.Simulado).ToString(),
             StringComparison.Ordinal);
     }
 
@@ -348,27 +348,31 @@ public class FacturaTests
     }
 
     [Fact]
-    public void EmisionPendiente_GuardaPresupuestoMomentoUtcYSolicitud()
+    public void EmisionPendiente_GuardaPresupuestoMomentoUtcYDatosDeLaSolicitud()
     {
         var solicitud = new SolicitudComprobante(
             TipoComprobante.FacturaC, 3, Fecha, ConceptoFactura.Productos, ReceptorFactura.SinIdentificar,
             ImportesFactura.ParaFacturaC(1815m));
         var momento = new DateTimeOffset(2026, 10, 30, 11, 15, 0, TimeSpan.FromHours(-3));
 
-        var pendiente = new EmisionPendiente(41, momento, solicitud, EntornoArca.Homologacion);
+        // FEAT-008 (Block 1): la pendiente guarda los datos de la solicitud y el número, no la solicitud (sin DNI).
+        var pendiente = new EmisionPendiente(41, momento, solicitud, 125, EntornoArca.Homologacion);
 
         Assert.Equal(41, pendiente.PresupuestoNumero);
         Assert.Equal(TimeSpan.Zero, pendiente.Momento.Offset);
         Assert.Equal(momento, pendiente.Momento);
-        Assert.Same(solicitud, pendiente.Solicitud);
+        Assert.Equal(TipoComprobante.FacturaC, pendiente.Tipo);
+        Assert.Equal(3, pendiente.PuntoVenta);
+        Assert.Equal(Fecha, pendiente.Fecha);
+        Assert.Same(solicitud.Importes, pendiente.Importes);
         Assert.Equal(EntornoArca.Homologacion, pendiente.Entorno);
 
         Assert.Equal("presupuestoNumero", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(0, momento, solicitud, EntornoArca.Simulado)).ParamName);
+            new EmisionPendiente(0, momento, solicitud, 125, EntornoArca.Simulado)).ParamName);
         Assert.Equal("momento", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(41, default, solicitud, EntornoArca.Simulado)).ParamName);
+            new EmisionPendiente(41, default, solicitud, 125, EntornoArca.Simulado)).ParamName);
         Assert.Equal("entorno", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(41, momento, solicitud, (EntornoArca)9)).ParamName);
-        Assert.Throws<ArgumentNullException>(() => new EmisionPendiente(41, momento, null!, EntornoArca.Simulado));
+            new EmisionPendiente(41, momento, solicitud, 125, (EntornoArca)9)).ParamName);
+        Assert.Throws<ArgumentNullException>(() => new EmisionPendiente(41, momento, null!, 125, EntornoArca.Simulado));
     }
 }

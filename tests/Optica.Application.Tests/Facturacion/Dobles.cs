@@ -139,6 +139,21 @@ internal sealed class AlmacenFacturacion :
         return Task.FromResult(Pendientes.Any(pendiente => pendiente.PresupuestoNumero == presupuestoNumero));
     }
 
+    public Task<EmisionPendiente?> ObtenerPendienteAsync(long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ObtenerPendiente");
+        return Task.FromResult(Pendientes.SingleOrDefault(pendiente => pendiente.PresupuestoNumero == presupuestoNumero));
+    }
+
+    public Task<IReadOnlyList<long>> ListarNumerosAsync(CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ListarPendientes");
+        return Task.FromResult<IReadOnlyList<long>>(
+            Pendientes.Select(pendiente => pendiente.PresupuestoNumero).Order().ToList());
+    }
+
     // Unidad de trabajo.
 
     public async Task<T> EjecutarEnTransaccionAsync<T>(
@@ -253,7 +268,8 @@ internal sealed class AlmacenFacturacion :
         var solicitud = ReglasEmision.Armar(presupuesto, Configuraciones.Vigente(), ConceptoFactura.Productos, Fecha)
             .Solicitud!;
         var pendiente = new EmisionPendiente(
-            presupuesto.Numero, new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), solicitud, EntornoArca.Simulado);
+            presupuesto.Numero, new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), solicitud, 7,
+            EntornoArca.Simulado);
         Pendientes.Add(pendiente);
         return pendiente;
     }

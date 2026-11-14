@@ -25,4 +25,16 @@ public interface IEmisionPendienteRepository
 
     /// <summary>Verdadero si el presupuesto <paramref name="presupuestoNumero"/> tiene una emisión pendiente (FR-24).</summary>
     Task<bool> ExisteAsync(long presupuestoNumero, CancellationToken cancelacion = default);
+
+    /// <summary>
+    /// La emisión pendiente del presupuesto <paramref name="presupuestoNumero"/>, o null si no tiene. Una grabada por
+    /// FEAT-007 se devuelve sin número (<see cref="EmisionPendiente.SinNumero"/>, FR-14).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// La fila guardada no es válida (por ejemplo, con número y sin importes). El mensaje es fijo y no lleva datos.
+    /// </exception>
+    Task<EmisionPendiente?> ObtenerPendienteAsync(long presupuestoNumero, CancellationToken cancelacion = default);
+
+    /// <summary>Los números de los presupuestos con una emisión pendiente, de menor a mayor (FR-03, AC-03).</summary>
+    Task<IReadOnlyList<long>> ListarNumerosAsync(CancellationToken cancelacion = default);
 }

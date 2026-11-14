@@ -744,6 +744,12 @@ public sealed class EmitirFacturaTests
         public Task<bool> ExisteAsync(long numero, CancellationToken cancelacion = default) =>
             real.ExisteAsync(numero, cancelacion);
 
+        public Task<EmisionPendiente?> ObtenerPendienteAsync(long numero, CancellationToken cancelacion = default) =>
+            real.ObtenerPendienteAsync(numero, cancelacion);
+
+        public Task<IReadOnlyList<long>> ListarNumerosAsync(CancellationToken cancelacion = default) =>
+            real.ListarNumerosAsync(cancelacion);
+
         public Task<T> EjecutarEnTransaccionAsync<T>(
             Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default) =>
             real.EjecutarEnTransaccionAsync(operacion, cancelacion);

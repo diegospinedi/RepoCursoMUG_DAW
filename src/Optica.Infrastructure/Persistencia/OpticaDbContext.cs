@@ -38,6 +38,12 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
     /// <summary>Las emisiones pendientes (FEAT-007, D-09, ADR-021): una como máximo por presupuesto.</summary>
     public DbSet<EmisionPendienteFila> EmisionesPendientes => Set<EmisionPendienteFila>();
 
+    /// <summary>Las observaciones de verificación (FEAT-008, ADR-026): una como máximo por emisión pendiente.</summary>
+    public DbSet<ObservacionEmisionFila> ObservacionesEmision => Set<ObservacionEmisionFila>();
+
+    /// <summary>El registro de descartes de emisiones pendientes (FEAT-008, FR-10, ADR-026): solo se agrega.</summary>
+    public DbSet<DescarteEmisionFila> DescartesEmision => Set<DescarteEmisionFila>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<CredencialAccesoFila>(credencial =>
@@ -363,6 +369,22 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint("CK_EmisionPendiente_TotalCentavos", "\"TotalCentavos\" >= 0");
                 tabla.HasCheckConstraint(
                     "CK_EmisionPendiente_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+
+                // FEAT-008 (D-15): las columnas de la migración RecuperacionEmisiones, agregadas con ALTER TABLE ADD COLUMN
+                // y un CHECK de columna que nombra solo su columna (así DROP COLUMN las puede quitar). La regla "todo o
+                // nada" entre ellas la imponen el dominio y la lectura del repositorio, no la base.
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_Concepto",
+                    "\"Concepto\" IS NULL OR \"Concepto\" IN ('productos', 'productos_y_servicios')");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_NetoCentavos", "\"NetoCentavos\" IS NULL OR \"NetoCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_IvaCentavos", "\"IvaCentavos\" IS NULL OR \"IvaCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_ReceptorIdentificado",
+                    "\"ReceptorIdentificado\" IS NULL OR \"ReceptorIdentificado\" IN (0, 1)");
             });
 
             // La clave es el presupuesto: una segunda pendiente para el mismo choca con la clave primaria (FR-24).
@@ -373,10 +395,92 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             pendiente.Property(p => p.Fecha).IsRequired();
             pendiente.Property(p => p.Total).HasColumnName("TotalCentavos").IsRequired().HasConversion(Centesimos);
             pendiente.Property(p => p.Entorno).IsRequired();
+            pendiente.Property(p => p.Neto).HasColumnName("NetoCentavos").HasConversion(Centesimos);
+            pendiente.Property(p => p.Iva).HasColumnName("IvaCentavos").HasConversion(Centesimos);
 
             pendiente.HasOne<PresupuestoFila>()
                 .WithOne()
                 .HasForeignKey<EmisionPendienteFila>(p => p.PresupuestoNumero)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ObservacionEmisionFila>(observacion =>
+        {
+            // ADVERTENCIA (ADR-012, ADR-017): como EmisionPendiente, esta tabla no se reconstruye; perdería
+            // TR_ObservacionEmision_Inmutable. FEAT-008 (D-12, ADR-026): se agrega y se quita, no se modifica. Sin datos del
+            // cliente.
+            observacion.ToTable("ObservacionEmision", tabla =>
+            {
+                tabla.HasCheckConstraint(
+                    "CK_ObservacionEmision_Motivo",
+                    "\"Motivo\" IN ('importe_distinto', 'sin_numero', 'otro_entorno')");
+                tabla.HasCheckConstraint(
+                    "CK_ObservacionEmision_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+                tabla.HasCheckConstraint("CK_ObservacionEmision_TotalCentavos", "\"TotalCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_ObservacionEmision_TotalArcaCentavos",
+                    "\"TotalArcaCentavos\" IS NULL OR \"TotalArcaCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_ObservacionEmision_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+
+                // D-12: el importe distinto exige el número consultado y el total de ARCA.
+                tabla.HasCheckConstraint(
+                    "CK_ObservacionEmision_ImporteDistinto",
+                    "\"Motivo\" <> 'importe_distinto' OR (\"Numero\" IS NOT NULL AND \"TotalArcaCentavos\" IS NOT NULL)");
+            });
+
+            // Una por pendiente: la clave es el presupuesto, y apunta a la pendiente (no se quita la pendiente sin
+            // quitar antes su observación).
+            observacion.HasKey(o => o.PresupuestoNumero);
+            observacion.Property(o => o.PresupuestoNumero).ValueGeneratedNever();
+            observacion.Property(o => o.Motivo).IsRequired();
+            observacion.Property(o => o.Total).HasColumnName("TotalCentavos").IsRequired().HasConversion(Centesimos);
+            observacion.Property(o => o.TotalArca).HasColumnName("TotalArcaCentavos").HasConversion(Centesimos);
+            observacion.Property(o => o.Entorno).IsRequired();
+            observacion.Property(o => o.Momento).IsRequired().HasConversion(FechaUtcIso8601);
+
+            observacion.HasOne<EmisionPendienteFila>()
+                .WithOne()
+                .HasForeignKey<ObservacionEmisionFila>(o => o.PresupuestoNumero)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DescarteEmisionFila>(descarte =>
+        {
+            // ADVERTENCIA (ADR-012, ADR-017): esta tabla no se reconstruye; perdería TR_DescarteEmision_SinModificar y
+            // TR_DescarteEmision_SinBorrar. FEAT-008 (FR-10, ADR-026): solo se agrega. Sin datos del cliente.
+            descarte.ToTable("DescarteEmision", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_DescarteEmision_Tipo", "\"Tipo\" IN ('b', 'c')");
+                tabla.HasCheckConstraint("CK_DescarteEmision_PuntoVenta", "\"PuntoVenta\" BETWEEN 1 AND 99999");
+                tabla.HasCheckConstraint(
+                    "CK_DescarteEmision_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+                tabla.HasCheckConstraint("CK_DescarteEmision_TotalCentavos", "\"TotalCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_DescarteEmision_TotalArcaCentavos",
+                    "\"TotalArcaCentavos\" IS NULL OR \"TotalArcaCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_DescarteEmision_Motivo", "\"Motivo\" IN ('importe_distinto', 'sin_numero', 'otro_entorno')");
+                tabla.HasCheckConstraint(
+                    "CK_DescarteEmision_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+                tabla.HasCheckConstraint(
+                    "CK_DescarteEmision_ImporteDistinto",
+                    "\"Motivo\" <> 'importe_distinto' OR (\"Numero\" IS NOT NULL AND \"TotalArcaCentavos\" IS NOT NULL)");
+            });
+            descarte.HasKey(d => d.Id);
+            descarte.Property(d => d.Id).ValueGeneratedOnAdd();
+            descarte.Property(d => d.Momento).IsRequired().HasConversion(FechaUtcIso8601);
+            descarte.Property(d => d.Tipo).IsRequired();
+            descarte.Property(d => d.Total).HasColumnName("TotalCentavos").IsRequired().HasConversion(Centesimos);
+            descarte.Property(d => d.TotalArca).HasColumnName("TotalArcaCentavos").HasConversion(Centesimos);
+            descarte.Property(d => d.Motivo).IsRequired();
+            descarte.Property(d => d.Entorno).IsRequired();
+
+            // Varios descartes por presupuesto (se puede volver a facturar y volver a descartar): índice no único.
+            descarte.HasIndex(d => d.PresupuestoNumero);
+            descarte.HasOne<PresupuestoFila>()
+                .WithMany()
+                .HasForeignKey(d => d.PresupuestoNumero)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -671,6 +775,90 @@ public sealed class EmisionPendienteFila
     public decimal Total { get; set; }
 
     /// <summary><c>simulado</c>, <c>homologacion</c> o <c>produccion</c>.</summary>
+    public string Entorno { get; set; } = string.Empty;
+
+    // FEAT-008 (D-15): null en una fila de FEAT-007; en una nueva, todas con valor (la alícuota, solo en la Factura B).
+
+    /// <summary>El número de comprobante pedido, de 1 a 99.999.999 (FR-01).</summary>
+    public long? Numero { get; set; }
+
+    /// <summary><c>productos</c> o <c>productos_y_servicios</c>.</summary>
+    public string? Concepto { get; set; }
+
+    /// <summary>Importe; columna <c>NetoCentavos</c>.</summary>
+    public decimal? Neto { get; set; }
+
+    /// <summary>Importe; columna <c>IvaCentavos</c>.</summary>
+    public decimal? Iva { get; set; }
+
+    /// <summary>La alícuota de la Factura B como decimal invariante ("21", "10.5"); null en la C.</summary>
+    public string? Alicuota { get; set; }
+
+    /// <summary>
+    /// 1 si el receptor se identificó con su DNI, 0 si no; sin el DNI. Es <c>long</c> y no <c>bool</c>, como
+    /// <see cref="ArticuloFila.Activo"/>: así el repositorio reconoce un valor fuera de 0 y 1 como fila inválida.
+    /// </summary>
+    public long? ReceptorIdentificado { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>ObservacionEmision</c> (FEAT-008, ADR-026): por qué la verificación de una pendiente no la
+/// resolvió. Sin datos del cliente.
+/// </summary>
+public sealed class ObservacionEmisionFila
+{
+    /// <summary>Clave primaria y clave foránea a la pendiente: una observación como máximo por pendiente.</summary>
+    public long PresupuestoNumero { get; set; }
+
+    /// <summary><c>importe_distinto</c>, <c>sin_numero</c> u <c>otro_entorno</c>.</summary>
+    public string Motivo { get; set; } = string.Empty;
+
+    /// <summary>El número registrado; null si la pendiente no tiene.</summary>
+    public long? Numero { get; set; }
+
+    /// <summary>Importe registrado; columna <c>TotalCentavos</c>.</summary>
+    public decimal Total { get; set; }
+
+    /// <summary>Importe de ARCA; columna <c>TotalArcaCentavos</c>.</summary>
+    public decimal? TotalArca { get; set; }
+
+    /// <summary>El entorno de la pendiente.</summary>
+    public string Entorno { get; set; } = string.Empty;
+
+    /// <summary>Fecha y hora UTC de la verificación, TEXT ISO 8601.</summary>
+    public DateTime Momento { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>DescarteEmision</c> (FEAT-008, FR-10, ADR-026): un descarte confirmado. Solo se agrega. Sin datos
+/// del cliente.
+/// </summary>
+public sealed class DescarteEmisionFila
+{
+    /// <summary>Autonumérico: el orden en que se registraron.</summary>
+    public long Id { get; set; }
+
+    /// <summary>Fecha y hora UTC del descarte, TEXT ISO 8601.</summary>
+    public DateTime Momento { get; set; }
+
+    public long PresupuestoNumero { get; set; }
+
+    /// <summary><c>b</c> o <c>c</c>.</summary>
+    public string Tipo { get; set; } = string.Empty;
+
+    public long PuntoVenta { get; set; }
+
+    public long? Numero { get; set; }
+
+    /// <summary>Importe registrado; columna <c>TotalCentavos</c>.</summary>
+    public decimal Total { get; set; }
+
+    /// <summary>Importe de ARCA; columna <c>TotalArcaCentavos</c>.</summary>
+    public decimal? TotalArca { get; set; }
+
+    /// <summary><c>importe_distinto</c>, <c>sin_numero</c> u <c>otro_entorno</c>.</summary>
+    public string Motivo { get; set; } = string.Empty;
+
     public string Entorno { get; set; } = string.Empty;
 }
 

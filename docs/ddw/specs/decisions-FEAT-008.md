@@ -62,3 +62,23 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
 - **D-20 (del agente).** La espera de FR-16 se lee de `Arca:EsperaVerificacionSegundos` (60 por defecto, entero de 1 a
   3600), igual que el plazo de `Arca:TiempoMaximoSegundos`: la óptica usa 60 s; el harness e2e usa 3 s para no esperar
   un minuto por prueba. Las pruebas de .NET usan el valor por defecto con `TimeProvider` controlado (AC-17).
+
+## CODE (2026-11-14)
+
+- **D-21 (del usuario).** Delegación: ante una decisión no escrita durante CODE, VERIFY o CLOSEOUT, el agente toma la
+  opción recomendada que menos tiempo insuma y la registra aquí; el objetivo es terminar el ticket para la entrega.
+- **D-22 (del agente, Block 1, WARN-1 del auditor).** Hasta el Block 4, `EmitirFactura` graba la pendiente con
+  `EmisionPendiente.SinNumero` (forma de FEAT-007); el Block 4 la reemplaza por la pendiente con número (ADR-025). La
+  rama no se despliega antes del Block 4.
+- **D-23 (del agente, Block 1, supuestos del implementador, aprobados por D-21).** Migración
+  `20261114120000_RecuperacionEmisiones` (la spec decía 13 dígitos, errata); `EmisionPendiente` deja de exponer la
+  `SolicitudComprobante` (no guarda el DNI ni en memoria) y suma la fábrica `Registrada` para releer filas con número;
+  lectura todo o nada (la alícuota puede ser nula en la C); CHECK de `importe_distinto` también en `DescarteEmision` y
+  rango en `ObservacionEmision.Numero`; métodos `QuitarObservacion` y `ObtenerObservacionAsync`;
+  `IDescarteEmisionRepository.ListarDescartesAsync` de solo lectura; alícuota como TEXT invariante ("21", "10.5").
+- **D-24 (del agente, WARN-2 del auditor del Block 1).** Toda baja de una pendiente quita antes su observación en la
+  misma transacción (FK Restrict): lo aplican los Blocks 4 y 5, con prueba de una pendiente con observación.
+- **D-25 (del agente, Block 1).** `FacturaApiTests.Emitir_SinRespuesta_409YLaPendienteBloquea` falla corrida sola
+  también sobre 12beb53 (antes de FEAT-008): `AutorizadorConSenal` avisa la llamada antes de que el simulador empiece a
+  esperar, y si la prueba adelanta el reloj en ese hueco el resultado es "no enviada". Se corrige en el Block 2, que
+  reescribe ese doble para el puerto nuevo (avisar después de que el autorizador real quedó esperando).
