@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { after, describe, test } from 'node:test';
 
 import {
+  ARCA_POR_ARCHIVO,
   archivosDePrueba,
   comandosDeCompilacion,
   contadorSimulado,
@@ -15,6 +16,7 @@ import {
   leerInstancias,
   leerPid,
   mensajeDeFallo,
+  revisarArcaPorArchivo,
   variablesDeArca,
   verificarModulosDeLaWeb,
 } from './compilacion.mjs';
@@ -322,13 +324,15 @@ describe('esperarApi (servidor.mjs)', () => {
   });
 });
 
-describe('ARCA de cada instancia (FEAT-007, D-17)', () => {
+describe('ARCA de cada instancia (FEAT-007 D-17; FEAT-008 D-19, D-20, D-31)', () => {
   /** Las credenciales de ARCA van vacías (cuentan como ausentes): ninguna del entorno de quien corre llega a la Api. */
   const SIN_CREDENCIALES = { Arca__Cuit: '', Arca__Certificado__Ruta: '', Arca__Certificado__Clave: '' };
-  const esperadas = (respuesta) => ({
+  const esperadas = (respuesta, consulta = 'responder', espera = '3') => ({
     Arca__Entorno: 'Simulado',
     Arca__TiempoMaximoSegundos: '2',
+    Arca__EsperaVerificacionSegundos: espera,
     Arca__Simulado__Respuesta: respuesta,
+    Arca__Simulado__Consulta: consulta,
     ...SIN_CREDENCIALES,
   });
 
@@ -338,9 +342,31 @@ describe('ARCA de cada instancia (FEAT-007, D-17)', () => {
       assert.deepEqual(variablesDeArca(`${navegador}-facturacion-rechazo`), esperadas('rechazar'));
       assert.deepEqual(variablesDeArca(`${navegador}-facturacion-sin-respuesta`), esperadas('no_responder'));
     });
+
+    test(`${navegador}: cada archivo de verificación con su respuesta y su consulta del simulador (FEAT-008)`, () => {
+      assert.deepEqual(variablesDeArca(`${navegador}-verificacion-recupera`), esperadas('autorizar_sin_responder'));
+      // Las dos con más espera, para que los pedidos que tienen que llegar antes de que pase no dependan de la
+      // velocidad del navegador.
+      assert.deepEqual(
+        variablesDeArca(`${navegador}-verificacion-emite`),
+        esperadas('no_responder_una_vez', 'responder', '8'),
+      );
+      assert.deepEqual(
+        variablesDeArca(`${navegador}-verificacion-sin-respuesta`),
+        esperadas('no_responder', 'responder', '6'),
+      );
+      assert.deepEqual(
+        variablesDeArca(`${navegador}-verificacion-consulta-sin-respuesta`),
+        esperadas('no_responder', 'no_responder'),
+      );
+      assert.deepEqual(
+        variablesDeArca(`${navegador}-verificacion-importe-distinto`),
+        esperadas('no_responder_una_vez'),
+      );
+    });
   }
 
-  test('los demás archivos: simulado, 2 s y autorizar, sin credenciales', () => {
+  test('los demás archivos: simulado, 2 s, 3 s de espera, autorizar y responder, sin credenciales', () => {
     for (const nombre of ['chrome-acceso', 'msedge-presupuestos-pdf', 'chrome-configuracion']) {
       assert.deepEqual(variablesDeArca(nombre), esperadas('autorizar'));
     }
@@ -349,6 +375,76 @@ describe('ARCA de cada instancia (FEAT-007, D-17)', () => {
   test('el nombre del archivo, no un pedazo: "facturacion-rechazo-x" no rechaza', () => {
     assert.equal(variablesDeArca('chrome-facturacion-rechazo-x').Arca__Simulado__Respuesta, 'autorizar');
     assert.equal(variablesDeArca('chrome-presupuestos-facturacion-rechazo').Arca__Simulado__Respuesta, 'autorizar');
+    assert.equal(variablesDeArca('chrome-verificacion-emite-x').Arca__Simulado__Respuesta, 'autorizar');
+  });
+
+  test('D-31: la espera de verificación alcanza el tiempo máximo más el margen (el menor entre 10 s y un tercio)', () => {
+    for (const nombre of ['chrome-acceso', 'msedge-verificacion-emite', 'chrome-verificacion-consulta-sin-respuesta']) {
+      const variables = variablesDeArca(nombre);
+      const plazo = Number(variables.Arca__TiempoMaximoSegundos);
+      const espera = Number(variables.Arca__EsperaVerificacionSegundos);
+      assert.ok(Number.isInteger(espera) && espera >= 1 && espera <= 3600, `Espera fuera de rango en ${nombre}.`);
+      assert.ok(espera >= plazo + Math.min(10, plazo / 3), `La Api de ${nombre} no arrancaría (D-31).`);
+    }
+  });
+
+  test('el mapa de archivos de la suite es válido: revisarArcaPorArchivo no falla', () => {
+    assert.doesNotThrow(() => revisarArcaPorArchivo(ARCA_POR_ARCHIVO));
+    assert.deepEqual(Object.keys(ARCA_POR_ARCHIVO).sort(), [
+      'facturacion',
+      'facturacion-rechazo',
+      'facturacion-sin-respuesta',
+      'verificacion-consulta-sin-respuesta',
+      'verificacion-emite',
+      'verificacion-importe-distinto',
+      'verificacion-recupera',
+      'verificacion-sin-respuesta',
+    ]);
+  });
+
+  // Un valor que la Api no admite la haría no arrancar con un error de .NET que no nombra el archivo de pruebas; uno que
+  // admitiera con otro sentido correría la prueba contra otro ARCA. El harness se detiene antes, nombrando el archivo.
+  for (const [caso, entrada, esperado] of [
+    ['respuesta desconocida', { respuesta: 'autorizar_tarde' }, /respuesta/],
+    ['consulta desconocida', { consulta: 'responder_tarde' }, /consulta/],
+    ['respuesta que no es texto', { respuesta: 1 }, /respuesta/],
+    ['propiedad desconocida', { plazo: 2 }, /plazo/],
+    // D-31 con 2 s de plazo: al menos 2 + 0,67 s, así que 2 no alcanza y la Api no arrancaría.
+    ['espera menor que el plazo más el margen (D-31)', { espera: 2 }, /espera tiene que ser.*D-31/],
+    ['espera que no es un entero', { espera: 3.5 }, /espera tiene que ser.*D-31/],
+    ['espera como texto', { espera: '8' }, /espera tiene que ser.*D-31/],
+    ['espera mayor que 3600', { espera: 3601 }, /espera tiene que ser.*D-31/],
+    ['archivo del simulador con una propiedad que no es del archivo', { simulado: { dni: '00718294' } }, /simulado/],
+    ['archivo del simulador que no es un objeto', { simulado: 'contadores' }, /simulado/],
+  ]) {
+    test(`archivo con ${caso}: detiene el harness nombrando el archivo`, () => {
+      const mapa = { 'verificacion-rota': entrada };
+
+      assert.throws(
+        () => revisarArcaPorArchivo(mapa),
+        (error) => error.message.includes('tests/verificacion-rota.spec.ts') && esperado.test(error.message),
+      );
+      assert.throws(
+        () => variablesDeArca('chrome-verificacion-rota', mapa),
+        (error) => error.message.includes('tests/verificacion-rota.spec.ts') && esperado.test(error.message),
+      );
+    });
+  }
+
+  test('espera válida por archivo: la usa Arca__EsperaVerificacionSegundos; sin ella, 3', () => {
+    const mapa = { 'verificacion-larga': { espera: 3600 }, 'verificacion-justa': { espera: 3 } };
+
+    assert.doesNotThrow(() => revisarArcaPorArchivo(mapa));
+    assert.equal(variablesDeArca('chrome-verificacion-larga', mapa).Arca__EsperaVerificacionSegundos, '3600');
+    assert.equal(variablesDeArca('msedge-verificacion-justa', mapa).Arca__EsperaVerificacionSegundos, '3');
+    assert.equal(variablesDeArca('chrome-acceso', mapa).Arca__EsperaVerificacionSegundos, '3');
+  });
+
+  test('los valores se comparan exactos: "Autorizar" en mayúscula detiene el harness', () => {
+    assert.throws(
+      () => revisarArcaPorArchivo({ facturacion: { respuesta: 'Autorizar' } }),
+      /tests\/facturacion\.spec\.ts/,
+    );
   });
 
   test('contador del simulador: solo facturacion arranca en 124 para la Factura B del punto de venta 3 (AC-30)', () => {
@@ -357,6 +453,15 @@ describe('ARCA de cada instancia (FEAT-007, D-17)', () => {
     assert.equal(contadorSimulado('chrome-facturacion-rechazo'), null);
     assert.equal(contadorSimulado('msedge-facturacion-sin-respuesta'), null);
     assert.equal(contadorSimulado('chrome-acceso'), null);
+    for (const archivo of ['recupera', 'emite', 'sin-respuesta', 'consulta-sin-respuesta', 'importe-distinto']) {
+      assert.equal(contadorSimulado(`msedge-verificacion-${archivo}`), null);
+    }
+  });
+
+  test('contador del simulador: el contenido sembrado sale del mapa de archivos', () => {
+    const sembrado = { contadores: { 'B-3': 7 } };
+
+    assert.deepEqual(contadorSimulado('chrome-verificacion-rota', { 'verificacion-rota': { simulado: sembrado } }), sembrado);
   });
 
   describe('entornoDeLaApi: ninguna clave de ARCA de quien corre la suite llega a la Api', () => {

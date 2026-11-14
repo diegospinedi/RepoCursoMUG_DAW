@@ -147,3 +147,9 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   pendiente en Inicio. Un 401 en Inicio sigue el manejo global de sesión. El diálogo de descarte reutiliza el de "Pasar
   a Final" (`DialogoConfirmacion`). "Descartar la emisión" aparece también si la respuesta trajo observación (la Api
   vuelve a comprobar). Las pruebas que terminan en Inicio pasan sin cambios (404 de la ruta nueva → sin aviso).
+- **D-36 (del agente, Block 8, supuestos del implementador, aprobados por D-21).** El e2e de importe distinto no
+  siembra el archivo del simulador (D-27 rechaza un comprobante por encima del contador): usa `no_responder_una_vez`,
+  dejando pendiente el presupuesto A con la 0003-00000001 sin registrar y facturando el B con ese mismo número por otro
+  importe. AC-11 y AC-12 van en archivos separados (configuraciones distintas del simulador). AC-17 se prueba en
+  `verificacion-emite` con una pestaña paralela durante la emisión. El harness compara los valores de ARCA exactos en
+  minúsculas. El registro del descarte (AC-08) y el orden consulta → envío (AC-06) se comprueban en .NET, no en e2e.

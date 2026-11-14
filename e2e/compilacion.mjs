@@ -153,29 +153,138 @@ export function archivosDePrueba(nombres) {
   return archivos;
 }
 
+/** Las respuestas del simulador que admite `Arca:Simulado:Respuesta` (OpcionesArca, FEAT-007 D-17, FEAT-008 D-19). */
+const RESPUESTAS_DEL_SIMULADOR = ['autorizar', 'rechazar', 'no_responder', 'autorizar_sin_responder', 'no_responder_una_vez'];
+
+/** Lo que admite `Arca:Simulado:Consulta` (OpcionesArca, FEAT-008 D-19). */
+const CONSULTAS_DEL_SIMULADOR = ['responder', 'no_responder'];
+
+/** El tiempo máximo de ARCA de todas las Api de la suite (`Arca__TiempoMaximoSegundos`). */
+const TIEMPO_MAXIMO_SEGUNDOS = 2;
+
+/** La espera de verificación sin `espera` en el mapa (`Arca__EsperaVerificacionSegundos`, D-20). */
+const ESPERA_POR_DEFECTO_SEGUNDOS = 3;
+
 /**
- * Qué responde el simulador de ARCA según el archivo de pruebas (D-17): el rechazo y la falta de respuesta tienen cada
- * uno su archivo, y por lo tanto su Api; todos los demás autorizan.
+ * D-31: la Api no arranca con una espera menor que el tiempo máximo más el margen del envío (el menor entre 10 s y un
+ * tercio del tiempo máximo). Con 2 s: 2 + 0,67, así que el entero mínimo es 3.
  */
-const RESPUESTA_DEL_SIMULADOR = {
-  'facturacion-rechazo': 'rechazar',
-  'facturacion-sin-respuesta': 'no_responder',
-};
+const ESPERA_MINIMA_SEGUNDOS = Math.ceil(TIEMPO_MAXIMO_SEGUNDOS + Math.min(10, TIEMPO_MAXIMO_SEGUNDOS / 3));
+
+/** Las propiedades del archivo del simulador (`arca-simulado.json`, D-13 y D-27 de FEAT-008). */
+const PROPIEDADES_DEL_ARCHIVO_SIMULADO = ['contadores', 'comprobantes'];
+
+/**
+ * ARCA simulada según el archivo de pruebas (FEAT-007 D-17; FEAT-008 D-19), por el nombre sin `.spec.ts`. Cada archivo
+ * que no responde como los demás tiene su entrada, y por lo tanto su Api; los que no figuran autorizan y responden la
+ * consulta. Propiedades de cada entrada:
+ * - `respuesta`: `Arca__Simulado__Respuesta` (por defecto `autorizar`).
+ * - `consulta`: `Arca__Simulado__Consulta` (por defecto `responder`).
+ * - `espera`: `Arca__EsperaVerificacionSegundos`, entero (por defecto 3). Tiene que cumplir D-31: al menos el tiempo
+ *   máximo más el margen del envío (3 con 2 s de tiempo máximo) y como mucho 3600.
+ * - `simulado`: el contenido inicial de `arca-simulado.json` en el directorio de datos de la Api (por defecto, sin
+ *   archivo: el simulador numera desde 1). Solo `facturacion` lo usa, con la Factura B del punto de venta 3 en 124: su
+ *   primera factura autorizada es la 0003-00000125 de AC-19 y AC-30 de FEAT-007.
+ * Un valor que no esté en estas listas detiene el harness ({@link revisarArcaPorArchivo}).
+ */
+export const ARCA_POR_ARCHIVO = Object.freeze({
+  facturacion: { simulado: { contadores: { 'B-3': 124 } } },
+  'facturacion-rechazo': { respuesta: 'rechazar' },
+  'facturacion-sin-respuesta': { respuesta: 'no_responder' },
+  // FEAT-008, AC-02 a AC-05: ARCA autoriza y la respuesta no llega; la verificación recupera el CAE.
+  'verificacion-recupera': { respuesta: 'autorizar_sin_responder' },
+  // FEAT-008, AC-06 y AC-17: la primera emisión no llega a ARCA; la verificación emite.
+  // 8 s de espera: el pedido de verificación de otra pestaña tiene que llegar antes de que pase (AC-17).
+  'verificacion-emite': { respuesta: 'no_responder_una_vez', espera: 8 },
+  // FEAT-008, AC-12: la emisión de la verificación tampoco tiene respuesta.
+  // 6 s de espera: el pedido inmediato que comprueba la pendiente nueva tiene que llegar antes de que pase.
+  'verificacion-sin-respuesta': { respuesta: 'no_responder', espera: 6 },
+  // FEAT-008, AC-11: la consulta de la verificación no tiene respuesta.
+  'verificacion-consulta-sin-respuesta': { respuesta: 'no_responder', consulta: 'no_responder' },
+  // FEAT-008, AC-07 a AC-09: el número de la pendiente lo autoriza ARCA a otra venta, con otro importe.
+  'verificacion-importe-distinto': { respuesta: 'no_responder_una_vez' },
+});
+
+const esObjetoPlano = (valor) => typeof valor === 'object' && valor !== null && !Array.isArray(valor);
+
+/**
+ * Falla si una entrada del mapa de ARCA por archivo tiene una propiedad desconocida o un valor que la Api no admite
+ * (exactos: la Api los compara sin mayúsculas, el harness no). El mensaje nombra el archivo de pruebas y la propiedad:
+ * sin esto, la Api no arrancaría con un error que no dice qué archivo corregir, o la prueba correría contra otro ARCA.
+ */
+function revisarEntrada(archivo, entrada) {
+  const falla = (detalle) =>
+    new Error(`tests/${archivo}.spec.ts: ARCA simulada mal configurada en compilacion.mjs (${detalle}).`);
+  if (!esObjetoPlano(entrada)) {
+    throw falla('la entrada tiene que ser un objeto');
+  }
+  for (const [propiedad, valor] of Object.entries(entrada)) {
+    switch (propiedad) {
+      case 'respuesta':
+        if (!RESPUESTAS_DEL_SIMULADOR.includes(valor)) {
+          throw falla(`respuesta tiene que ser ${RESPUESTAS_DEL_SIMULADOR.join(', ')}`);
+        }
+        break;
+      case 'consulta':
+        if (!CONSULTAS_DEL_SIMULADOR.includes(valor)) {
+          throw falla(`consulta tiene que ser ${CONSULTAS_DEL_SIMULADOR.join(' o ')}`);
+        }
+        break;
+      case 'espera':
+        if (!Number.isInteger(valor) || valor < ESPERA_MINIMA_SEGUNDOS || valor > 3600) {
+          throw falla(
+            `espera tiene que ser un número entero de segundos de ${ESPERA_MINIMA_SEGUNDOS} a 3600: al menos el tiempo ` +
+              `máximo de ${TIEMPO_MAXIMO_SEGUNDOS} s más el margen del envío, D-31`,
+          );
+        }
+        break;
+      case 'simulado':
+        if (!esObjetoPlano(valor) || !Object.keys(valor).every((clave) => PROPIEDADES_DEL_ARCHIVO_SIMULADO.includes(clave))) {
+          throw falla(`simulado tiene que ser un objeto con ${PROPIEDADES_DEL_ARCHIVO_SIMULADO.join(' o ')}`);
+        }
+        break;
+      default:
+        throw falla(`propiedad desconocida "${propiedad}"; se admiten respuesta, consulta, espera y simulado`);
+    }
+  }
+}
+
+/** Revisa todo el mapa de ARCA por archivo: servidor.mjs lo llama antes de compilar. */
+export function revisarArcaPorArchivo(mapa = ARCA_POR_ARCHIVO) {
+  for (const [archivo, entrada] of Object.entries(mapa)) {
+    revisarEntrada(archivo, entrada);
+  }
+}
 
 /** El archivo de pruebas de una instancia: su nombre sin el navegador ("chrome-facturacion-rechazo" → "facturacion-rechazo"). */
 const archivoDeLaInstancia = (nombre) => nombre.slice(nombre.indexOf('-') + 1);
 
+/** La entrada revisada del mapa para una instancia, o un objeto vacío si su archivo no tiene. */
+function arcaDeLaInstancia(nombre, mapa) {
+  const archivo = archivoDeLaInstancia(nombre);
+  if (!Object.hasOwn(mapa, archivo)) {
+    return {};
+  }
+  revisarEntrada(archivo, mapa[archivo]);
+  return mapa[archivo];
+}
+
 /**
- * Las variables `Arca__*` de la Api de una instancia (FEAT-007, D-17, R-10): siempre el entorno simulado, que no sale de
- * la máquina, con 2 s de tiempo máximo (así la prueba de "ARCA no respondió" no espera 30 s) y la respuesta del
- * simulador que corresponde a su archivo de pruebas. El CUIT y el certificado van vacíos (cuentan como ausentes): un
+ * Las variables `Arca__*` de la Api de una instancia (FEAT-007 D-17 y R-10; FEAT-008 D-19, D-20 y D-31): siempre el
+ * entorno simulado, que no sale de la máquina, con 2 s de tiempo máximo (así la prueba de "ARCA no respondió" no espera
+ * 30 s), 3 s de espera antes de poder verificar una emisión pendiente (en lugar del minuto de la óptica; D-31 exige al
+ * menos el tiempo máximo más el margen, 2 + 0,67 s) y la respuesta y la consulta del simulador que corresponden a su
+ * archivo de pruebas ({@link ARCA_POR_ARCHIVO}). El CUIT y el certificado van vacíos (cuentan como ausentes): un
  * certificado que esté en el entorno de quien corre la suite nunca llega a una Api de prueba.
  */
-export function variablesDeArca(nombre) {
+export function variablesDeArca(nombre, mapa = ARCA_POR_ARCHIVO) {
+  const arca = arcaDeLaInstancia(nombre, mapa);
   return {
     Arca__Entorno: 'Simulado',
-    Arca__TiempoMaximoSegundos: '2',
-    Arca__Simulado__Respuesta: RESPUESTA_DEL_SIMULADOR[archivoDeLaInstancia(nombre)] ?? 'autorizar',
+    Arca__TiempoMaximoSegundos: String(TIEMPO_MAXIMO_SEGUNDOS),
+    Arca__EsperaVerificacionSegundos: String(arca.espera ?? ESPERA_POR_DEFECTO_SEGUNDOS),
+    Arca__Simulado__Respuesta: arca.respuesta ?? 'autorizar',
+    Arca__Simulado__Consulta: arca.consulta ?? 'responder',
     Arca__Cuit: '',
     Arca__Certificado__Ruta: '',
     Arca__Certificado__Clave: '',
@@ -201,12 +310,13 @@ export function entornoDeLaApi(entorno, nombre) {
 }
 
 /**
- * El contador inicial del simulador (`arca-simulado.json` del directorio de datos, D-53) de una instancia, o `null` para
- * empezar sin archivo (numera desde 1). Solo `facturacion.spec.ts` arranca la Factura B del punto de venta 3 en 124: su
- * primera factura autorizada es la 0003-00000125 de AC-19 y AC-30.
+ * El contenido inicial del archivo del simulador (`arca-simulado.json` del directorio de datos, D-53 de FEAT-007) de una
+ * instancia, según su archivo de pruebas ({@link ARCA_POR_ARCHIVO}), o `null` para empezar sin archivo (numera desde 1).
+ * Solo `facturacion.spec.ts` arranca la Factura B del punto de venta 3 en 124: su primera factura autorizada es la
+ * 0003-00000125 de AC-19 y AC-30.
  */
-export function contadorSimulado(nombre) {
-  return archivoDeLaInstancia(nombre) === 'facturacion' ? { contadores: { 'B-3': 124 } } : null;
+export function contadorSimulado(nombre, mapa = ARCA_POR_ARCHIVO) {
+  return arcaDeLaInstancia(nombre, mapa).simulado ?? null;
 }
 
 /**

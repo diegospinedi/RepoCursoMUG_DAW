@@ -2,7 +2,8 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 
 /**
  * ARCA sin respuesta al emitir la factura (FEAT-007: AC-21, AC-22, FR-23 y FR-24) de punta a punta, en Chrome y Edge
- * (AC-26).
+ * (AC-26). Desde FEAT-008 (AC-02), con la emisión pendiente el presupuesto muestra "Verificar con ARCA" en lugar de
+ * Facturar; la verificación se prueba en los archivos `verificacion-*.spec.ts`.
  *
  * Este archivo tiene su propia Api por navegador, con ARCA simulada que no responde
  * (`Arca__Simulado__Respuesta=no_responder`, D-17) y un tiempo máximo de 2 s (`Arca__TiempoMaximoSegundos=2`) en lugar
@@ -39,6 +40,7 @@ const CLIENTE = {
 
 const campo = (page: Page, etiqueta: string) => page.getByLabel(etiqueta, { exact: true });
 const botonFacturar = (page: Page) => page.getByRole('button', { name: 'Facturar', exact: true });
+const botonVerificar = (page: Page) => page.getByRole('button', { name: 'Verificar con ARCA', exact: true });
 const escaparRegex = (texto: string) => texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const dato = (page: Page, etiqueta: string) =>
   page
@@ -108,12 +110,15 @@ test('facturación sin respuesta: mensaje y pendiente al volver a facturar', asy
   await expect(page.getByRole('alert')).toHaveText(MENSAJE_SIN_RESPUESTA);
   expect(emisiones).toBe(1);
 
-  // FR-24: la emisión quedó pendiente; Facturar queda deshabilitado, también al volver a abrir el presupuesto.
-  await expect(botonFacturar(page)).toBeDisabled();
+  // FR-24: la emisión quedó pendiente. Desde FEAT-008 (AC-02) Facturar no se muestra: lo reemplaza "Verificar con
+  // ARCA", también al volver a abrir el presupuesto.
+  await expect(botonVerificar(page)).toBeVisible();
+  await expect(botonFacturar(page)).toHaveCount(0);
   await expect(page.getByText(AVISO_PENDIENTE, { exact: true })).toBeVisible();
   await page.reload();
   await expect(dato(page, 'Número')).toHaveText(String(numero));
-  await expect(botonFacturar(page)).toBeDisabled();
+  await expect(botonVerificar(page)).toBeVisible();
+  await expect(botonFacturar(page)).toHaveCount(0);
   await expect(page.getByText(AVISO_PENDIENTE, { exact: true })).toBeVisible();
   await expect(dato(page, 'Factura')).toHaveCount(0);
 

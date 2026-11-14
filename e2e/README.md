@@ -28,20 +28,30 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5554 |
 | `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5555 |
 | `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5556 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5557 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5558 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5559 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5560 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5561 |
-| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5562 |
-| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5563 |
-| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5564 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5565 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5566 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5567 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5568 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5569 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5570 |
+| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5557 |
+| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5558 |
+| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5559 |
+| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5560 |
+| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5561 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5562 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5563 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5564 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5565 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5566 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5567 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5568 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5569 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5570 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5571 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5572 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5573 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5574 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5575 |
+| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5576 |
+| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5577 |
+| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5578 |
+| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5579 |
+| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5580 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -58,8 +68,9 @@ de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec
 (FEAT-006) ocupan 5549 y 5553 en Chrome, mueven `chrome-presupuestos-calculos`, `-concurrencia` y `-edicion` a
 5550–5552 y los de Edge a 5554–5559 y 5561–5563, con los suyos en 5560 y 5564; y `facturacion.spec.ts`,
 `facturacion-rechazo.spec.ts` y `facturacion-sin-respuesta.spec.ts` (FEAT-007) ocupan 5548–5550 en Chrome, mueven los
-`chrome-presupuestos-*` a 5551–5556 y los de Edge a 5557–5561 y 5565–5570, con los suyos en 5562–5564. Son 28
-proyectos, de 5543 a 5570. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
+`chrome-presupuestos-*` a 5551–5556 y los de Edge a 5557–5561 y 5565–5570, con los suyos en 5562–5564; y los cinco
+`verificacion-*.spec.ts` (FEAT-008) ocupan 5557–5561 en Chrome, después de todos los demás, mueven los de Edge a
+5562–5575 y tienen los suyos en 5576–5580. Son 38 proyectos, de 5543 a 5580. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
 `[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
 
 **ARCA en la suite (FEAT-007).** Todas las Api de la suite arrancan con ARCA simulada (`Arca__Entorno=Simulado`), con
@@ -69,12 +80,39 @@ del entorno de quien corre la suite toda clave de ARCA, en cualquier mayúscula,
 prefijos `ASPNETCORE_` y `DOTNET_` (por ejemplo, `ARCA__ENTORNO=Produccion`). Así ninguna prueba llega a ARCA, ni a
 homologación ni a producción, y sus comprobantes no tienen validez fiscal. La revisión de hosts externos de
 `npm run test:unidad` admite solo las direcciones de homologación de WSAA y WSFEv1 y los espacios de nombres SOAP que
-escriben las pruebas de .NET del cliente de ARCA, cada uno con su ruta exacta; producción nunca. La
-respuesta del simulador (`Arca__Simulado__Respuesta`) sale del archivo de pruebas, que `servidor.mjs` conoce por el
-nombre del proyecto (`variablesDeArca` en `compilacion.mjs`): `rechazar` para `facturacion-rechazo.spec.ts`,
-`no_responder` para `facturacion-sin-respuesta.spec.ts` y `autorizar` para todos los demás. Solo la Api de
-`facturacion.spec.ts` arranca con el contador del simulador (`arca-simulado.json` en su directorio de datos) en 124
-para la Factura B del punto de venta 3, así su primera factura autorizada es la 0003-00000125 de AC-19 y AC-30.
+escriben las pruebas de .NET del cliente de ARCA, cada uno con su ruta exacta; producción nunca.
+
+Desde FEAT-008 las Api arrancan además con una espera corta antes de poder verificar una emisión pendiente
+(`Arca__EsperaVerificacionSegundos`, D-20; 3 s salvo los dos archivos de la tabla de abajo) en lugar del minuto de la
+óptica: la Api exige que la espera sea al menos el tiempo máximo más el margen del envío (el menor entre 10 s y un
+tercio del tiempo máximo; D-31), y 3 s alcanza para 2 + 0,67 s. La respuesta del simulador (`Arca__Simulado__Respuesta`), su consulta por número
+(`Arca__Simulado__Consulta`) y el contenido inicial de su archivo (`arca-simulado.json` en el directorio de datos de la
+Api) salen del archivo de pruebas, que `servidor.mjs` conoce por el nombre del proyecto (`ARCA_POR_ARCHIVO`,
+`variablesDeArca` y `contadorSimulado` en `compilacion.mjs`):
+
+| Archivo | Respuesta | Consulta | Espera | Archivo del simulador |
+|---|---|---|---|---|
+| `facturacion.spec.ts` | `autorizar` | `responder` | 3 s | contador en 124 (\*) |
+| `facturacion-rechazo.spec.ts` | `rechazar` | `responder` | 3 s | sin archivo |
+| `facturacion-sin-respuesta.spec.ts` | `no_responder` | `responder` | 3 s | sin archivo |
+| `verificacion-recupera.spec.ts` | `autorizar_sin_responder` | `responder` | 3 s | sin archivo |
+| `verificacion-emite.spec.ts` | `no_responder_una_vez` | `responder` | 8 s | sin archivo |
+| `verificacion-sin-respuesta.spec.ts` | `no_responder` | `responder` | 6 s | sin archivo |
+| `verificacion-consulta-sin-respuesta.spec.ts` | `no_responder` | `no_responder` | 3 s | sin archivo |
+| `verificacion-importe-distinto.spec.ts` | `no_responder_una_vez` | `responder` | 3 s | sin archivo |
+| Todos los demás | `autorizar` | `responder` | 3 s | sin archivo |
+
+(\*) La Factura B del punto de venta 3 arranca en 124: la primera autorizada es la 0003-00000125 (AC-19 y AC-30 de
+FEAT-007).
+
+La espera (`Arca__EsperaVerificacionSegundos`) es de 3 s salvo en dos archivos que tienen que hacer un pedido antes de
+que pase: `verificacion-emite.spec.ts` (8 s: la otra pestaña pide verificar durante la emisión, AC-17) y
+`verificacion-sin-respuesta.spec.ts` (6 s: el pedido que comprueba la pendiente nueva, AC-12). Así ese pedido tiene
+varios segundos de margen en lugar de menos de uno.
+
+`servidor.mjs` revisa ese mapa antes de compilar (`revisarArcaPorArchivo`): una propiedad desconocida, un valor que la
+Api no admite (comparado exacto, en minúsculas) o una espera que no sea un entero de 3 a 3600 (D-31 con 2 s de tiempo
+máximo) lo detiene con código 1 y un mensaje que nombra el archivo de pruebas.
 
 `facturacion.spec.ts` (FEAT-007, AC-01, AC-02, AC-03, AC-13, AC-18, AC-19, AC-30 y AC-32) emite la factura desde la
 pantalla del presupuesto. Sus pruebas van en orden: primero la configuración incompleta (la base nueva no tiene tope
@@ -83,11 +121,33 @@ emisión de la Factura B 0003-00000125 de un Final de 3 líneas y $3.000,00, que
 volver a abrirlo; y al final un Borrador y un presupuesto ya facturado, con el botón deshabilitado y la Api rechazando
 el pedido directo (409 `borrador` y `facturado`). `facturacion-rechazo.spec.ts` (AC-20) muestra "ARCA rechazó la
 factura: 10016 – …" con Facturar habilitado y vuelve a emitir; `facturacion-sin-respuesta.spec.ts` (AC-21 y AC-22)
-espera los 2 s del tiempo máximo, muestra "ARCA no respondió. La emisión quedó pendiente de verificación.", deja
-Facturar deshabilitado también al volver a abrir el presupuesto y comprueba que un pedido directo recibe 409
-`pendiente` sin esperar a ARCA. Las tres cargan la configuración por la Api antes de emitir, crean sus artículos con
+espera los 2 s del tiempo máximo, muestra "ARCA no respondió. La emisión quedó pendiente de verificación.", muestra
+"Verificar con ARCA" en lugar de Facturar (desde FEAT-008) también al volver a abrir el presupuesto y comprueba que un
+pedido directo recibe 409 `pendiente` sin esperar a ARCA. Las tres cargan la configuración por la Api antes de emitir, crean sus artículos con
 códigos propios (`FA-…`, `FR-…`, `FS-…`) y graban sus presupuestos en Borrador y después en Final. Los clientes son
 ficticios, con el DNI 00.718.294 (un DNI que empieza con 00 no se emite, D-50 de FEAT-007) y emails en `example.com`.
+
+Los cinco `verificacion-*.spec.ts` (FEAT-008) dejan una emisión pendiente desde la pantalla y la verifican con
+"Verificar con ARCA" pasada la espera de su Api (la pendiente se graba antes de enviar a ARCA, así que contada desde la
+respuesta de la emisión ya pasó). `verificacion-recupera.spec.ts` (AC-02 a AC-05) va en orden: primero ingresa en
+la base nueva sin aviso de pendientes (AC-04); después deja dos pendientes, sale y vuelve a ingresar, ve el aviso con
+los dos números y sus enlaces (AC-03), abre uno con "Verificar con ARCA" y sin Facturar (AC-02) y lo verifica: recupera
+la 0003-00000001 que ARCA ya tenía, sin emitir otra (AC-05); resueltas las dos, el aviso desaparece.
+`verificacion-emite.spec.ts` (AC-17 y AC-06) abre el presupuesto en otra pestaña antes de emitir; mientras la emisión
+todavía espera a ARCA, esa pestaña vuelve a leer el presupuesto y pide verificar: recibe los segundos que faltan, sin consultar ni emitir; pasada la espera, la verificación
+emite la 0003-00000001. `verificacion-sin-respuesta.spec.ts` (AC-12) verifica, la nueva emisión tampoco tiene
+respuesta y la emisión sigue pendiente con su número nuevo (un pedido enseguida recibe otra vez la espera, porque la
+pendiente es nueva). `verificacion-consulta-sin-respuesta.spec.ts` (AC-11) verifica con la consulta sin respuesta:
+2 s, "ARCA no respondió. La emisión sigue pendiente de verificación." y un solo pedido.
+`verificacion-importe-distinto.spec.ts` (AC-07 a AC-09) deja pendiente un presupuesto de $ 1.000,00 con la
+0003-00000001, que el simulador no registra, factura otro de $ 2.000,00 (ARCA le autoriza ese mismo número) y verifica
+el primero: aviso de revisar el punto de venta con el número y los dos importes; cancelar el descarte deja todo igual
+y confirmarlo vuelve Facturar, que emite la 0003-00000002. No siembra el archivo del simulador: el simulador no admite
+un comprobante con número mayor que su contador (D-27 de FEAT-008). AC-15 y AC-16 (pendientes sin número o de otro
+entorno) no tienen e2e: la suite no puede sembrar la base (D-06 de FEAT-008). Los archivos con
+`no_responder_una_vez` tienen una sola prueba, porque la Api cuenta "la primera solicitud" una vez por proceso. Los
+artículos usan códigos propios (`VR-…`, `VE-…`, `VS-…`, `VC-…`, `VI-…`) y los clientes son ficticios, con el DNI
+00.718.294 y emails en `example.com`.
 
 `articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
 y lo vuelve a 0,01 (AC-10), y al final deja Monotributo (AC-09). Por eso sus pruebas también van en ese orden.
@@ -175,8 +235,8 @@ hay advertencias.
 
 Dentro de un proyecto las pruebas corren en orden y de a una porque así lo fija `playwright.config.ts`
 (`workers: 1`, `fullyParallel: false`): comparten la base del proyecto. Solo algunos archivos dependen además de lo que
-dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts`, `facturacion.spec.ts` y la primera
-prueba de `presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
+dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts`, `facturacion.spec.ts`,
+`verificacion-recupera.spec.ts` y la primera prueba de `presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
 `presupuestos-calculos.spec.ts`, `presupuestos-concurrencia.spec.ts`, `presupuestos-edicion.spec.ts` y
 `presupuestos-pdf.spec.ts` no dependen del orden, como se describe arriba.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
@@ -268,6 +328,7 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 (proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion`,
 `chromium-configuracion-recalculo`, `chromium-facturacion`, `chromium-facturacion-rechazo`,
 `chromium-facturacion-sin-respuesta`, `chromium-presupuestos-alta`, `chromium-presupuestos-busqueda`,
-`chromium-presupuestos-calculos`, `chromium-presupuestos-concurrencia`, `chromium-presupuestos-edicion` y
-`chromium-presupuestos-pdf`).
+`chromium-presupuestos-calculos`, `chromium-presupuestos-concurrencia`, `chromium-presupuestos-edicion`,
+`chromium-presupuestos-pdf`, `chromium-verificacion-consulta-sin-respuesta`, `chromium-verificacion-emite`,
+`chromium-verificacion-importe-distinto`, `chromium-verificacion-recupera` y `chromium-verificacion-sin-respuesta`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

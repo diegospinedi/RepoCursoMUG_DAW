@@ -24,7 +24,7 @@ absolutas y fuera de la copia del código):
 | `C:\OpticaSistema\App` | La Api publicada (`Optica.Api.exe` y sus archivos) | — |
 | `C:\OpticaSistema\App\wwwroot` | La interfaz web compilada (`index.html` y `assets\`) | `Optica:Web:Directorio` |
 | `C:\OpticaSistema\Marca` | La marca real: `branding.json` y el logo | `Optica:Marca:Directorio` |
-| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db`, las claves de sesión (`claves\`), el candado de instancia (`optica.instancia`) y los archivos de ARCA: `arca-simulado.json` (contador del simulador) y `arca-ta-<entorno>.json` (ticket de acceso a ARCA, cifrado; sección 11) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
+| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db`, las claves de sesión (`claves\`), el candado de instancia (`optica.instancia`) y los archivos de ARCA: `arca-simulado.json` (contador y comprobantes del simulador) y `arca-ta-<entorno>.json` (ticket de acceso a ARCA, cifrado; sección 11) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
 | Fuera del repositorio y de las carpetas anteriores, con acceso solo para la cuenta de la Api | El certificado de ARCA (`.pfx`), solo si se factura con ARCA (sección 11) | `Arca:Certificado:Ruta` |
 
 `optica.instancia` es un archivo vacío que la Api mantiene abierto en exclusiva mientras corre: una segunda Api sobre la
@@ -401,10 +401,13 @@ identificación y la alícuota de IVA se cargan en la pantalla de configuración
 | `Arca:Cuit` | Los 11 dígitos del CUIT de la óptica, sin guiones | Solo en `Homologacion` y `Produccion`. Un CUIT con dígito verificador inválido no deja arrancar la Api. |
 | `Arca:Certificado:Ruta` | Ruta absoluta del certificado (`.pfx`) emitido por ARCA para ese entorno | Solo en `Homologacion` y `Produccion`. |
 | `Arca:Certificado:Clave` | La clave del `.pfx` | Solo en `Homologacion` y `Produccion`. |
-| `Arca:TiempoMaximoSegundos` | Entero de 1 a 120; por defecto, 30 | Cuánto espera la Api a ARCA en cada emisión (NFR-01). Dejalo en 30. |
+| `Arca:TiempoMaximoSegundos` | Entero de 1 a 120; por defecto, 30 | Cuánto espera la Api a ARCA en cada emisión y en cada consulta de verificación (NFR-01). Dejalo en 30. |
+| `Arca:EsperaVerificacionSegundos` | Entero de 1 a 3600; por defecto, 60 | Cuánto tiene que pasar desde que una emisión quedó pendiente para poder verificarla con ARCA (FEAT-008, FR-16). Dejalo en 60. Tiene que ser al menos `Arca:TiempoMaximoSegundos` más el margen del envío (el menor entre 10 s y un tercio de ese tiempo): con 30 s, al menos 40. Si es menor, la Api no arranca y registra qué clave corregir. **Si subís `Arca:TiempoMaximoSegundos`, subí también esta espera** (por ejemplo, con 60 s de tiempo máximo, al menos 70). |
 
-`Arca:Simulado:Respuesta` (`autorizar`, `rechazar`, `no_responder`) es solo para las pruebas automáticas: no la
-configures en la PC del local.
+`Arca:Simulado:Respuesta` (`autorizar`, `rechazar`, `no_responder`, `autorizar_sin_responder`, `no_responder_una_vez`)
+y `Arca:Simulado:Consulta` (`responder`, `no_responder`) son solo para las pruebas automáticas: simulan que ARCA
+rechaza, no responde o autoriza sin responder, y que no responde la consulta de verificación. No las configures en la
+PC del local. Otro valor no deja arrancar la Api.
 
 **El CUIT, la ruta y la clave del certificado nunca van en el repositorio ni en `appsettings.json`.** Cargalos solo en
 variables de entorno de la cuenta de la Api (`Arca__Cuit`, `Arca__Certificado__Ruta`, `Arca__Certificado__Clave`: dos
@@ -454,8 +457,12 @@ homologación salió bien (AC-24) y las dueñas lo decidan.
 
 **Archivos de ARCA en la carpeta de datos** (`Optica:Datos:Directorio`, sección 1):
 
-- `arca-simulado.json`: el contador del simulador (último número por tipo y punto de venta). Solo se usa en
-  `Simulado`. Si se borra, el simulador vuelve a numerar desde 1.
+- `arca-simulado.json`: el contador del simulador (último número por tipo y punto de venta) y, desde FEAT-008, los
+  últimos 50 comprobantes que autorizó por tipo y punto de venta (número, importe, CAE y fechas; ningún dato del
+  cliente). Solo se usa en `Simulado`. Con él, el simulador responde la verificación de una emisión pendiente.
+  **No lo borres ni lo reemplaces mientras haya emisiones pendientes de verificación** (el aviso de la pantalla de
+  inicio las lista): sin él, el simulador vuelve a numerar desde 1 y la verificación no puede confirmar lo que ya
+  había autorizado. Si se borra sin pendientes, el simulador vuelve a numerar desde 1.
 - `arca-ta-homologacion.json` y `arca-ta-produccion.json`: el ticket de acceso de ARCA (vale unas 12 horas), cifrado
   con las claves de `claves\`. Se puede borrar con la Api detenida: se pide otro en la emisión siguiente. No lo copies
   a otra PC.
@@ -466,5 +473,24 @@ con permisos restringidos a la cuenta de la Api y a quien administra (sección 4
 sincronizada con servicios en la nube, y los backups con la misma protección (sección 9).
 
 Si ARCA no responde dentro del tiempo máximo, la pantalla dice "ARCA no respondió. La emisión quedó pendiente de
-verificación." y Facturar queda deshabilitado en ese presupuesto: no se vuelve a pedir la factura hasta verificar en
-ARCA si se autorizó, porque una segunda emisión podría duplicarla.
+verificación." y el presupuesto muestra **Verificar con ARCA** en lugar de Facturar: no se vuelve a pedir la factura
+hasta verificar en ARCA si se autorizó, porque una segunda emisión podría duplicarla.
+
+**Verificación con ARCA (FEAT-008).** Antes de enviar cada factura, el sistema registra el número de comprobante que
+pide. Al iniciar sesión, la pantalla de inicio avisa qué presupuestos tienen una emisión pendiente de verificación, con
+un enlace a cada uno. En el presupuesto, **Verificar con ARCA** le pregunta a ARCA por ese número:
+
+- Si pasó menos de `Arca:EsperaVerificacionSegundos` (1 minuto) desde que la emisión quedó pendiente, la pantalla dice
+  cuántos segundos faltan y no consulta nada: ARCA puede seguir procesando el envío original.
+- Si ARCA tiene ese número autorizado con el mismo importe, el sistema recupera el CAE y guarda la factura, sin emitir
+  otra.
+- Si ARCA no tiene ese número, el sistema emite la factura en esa misma acción, con un número nuevo. Si esa emisión
+  tampoco tiene respuesta, la emisión sigue pendiente y se vuelve a verificar más tarde.
+- Si ARCA no responde la consulta, la pantalla lo dice y la emisión sigue pendiente; el sistema no reintenta solo.
+- Si ARCA tiene ese número con **otro importe**, si la emisión no tiene número registrado (una pendiente anterior a
+  esta versión) o si se envió a **otro entorno** de ARCA que el configurado, el sistema no emite ni recupera nada y
+  pide revisar el punto de venta en ARCA. Recién entonces aparece **Descartar la emisión**, que pide confirmación;
+  confirmado, el presupuesto vuelve a mostrar Facturar. Cada descarte queda registrado en la base con la fecha y la
+  hora, el presupuesto, el número y los importes, para conciliarlo con el contador. Antes de descartar, revisá en ARCA
+  (o con el contador) qué comprobante quedó autorizado con ese número: un descarte equivocado deja en ARCA una factura
+  que el sistema no registra, y no se puede anular desde el sistema.
