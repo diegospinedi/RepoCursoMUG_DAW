@@ -273,6 +273,153 @@ public static class RespuestasValidacion
         return resultado;
     }
 
+    // El 409 de la verificación y del descarte de una emisión pendiente (FEAT-008, spec Block 6): la misma forma que el de
+    // la emisión (título fijo, detalle fijo por motivo, extensión motivo), con sus propios títulos y, en algunos motivos,
+    // las extensiones con los datos que la pantalla necesita para su texto. Ningún motivo lleva datos del cliente.
+
+    /// <summary>El <c>title</c> fijo de los 409 de la verificación de una emisión pendiente.</summary>
+    public const string TituloConflictoVerificacion = "No se pudo verificar la emisión.";
+
+    /// <summary>El <c>title</c> fijo de los 409 del descarte de una emisión pendiente.</summary>
+    public const string TituloConflictoDescarte = "No se pudo descartar la emisión.";
+
+    /// <summary>Valor de <c>motivo</c>: el presupuesto no tiene emisión pendiente.</summary>
+    public const string MotivoSinPendiente = "sin_pendiente";
+
+    /// <summary>Valor de <c>motivo</c>: no pasó la espera desde que quedó pendiente (FR-16); va con <c>segundosRestantes</c>.</summary>
+    public const string MotivoEspera = "espera";
+
+    /// <summary>
+    /// Valor de <c>motivo</c>: ARCA tiene el número con otro total (FR-07); va con <c>comprobante</c>,
+    /// <c>importeRegistrado</c> e <c>importeArca</c>.
+    /// </summary>
+    public const string MotivoImporteDistinto = "importe_distinto";
+
+    /// <summary>Valor de <c>motivo</c>: la pendiente no tiene número registrado (FR-14).</summary>
+    public const string MotivoSinNumero = "sin_numero";
+
+    /// <summary>Valor de <c>motivo</c>: la pendiente es de otro entorno de ARCA (FR-15); va con <c>entorno</c>.</summary>
+    public const string MotivoOtroEntorno = "otro_entorno";
+
+    /// <summary>Valor de <c>motivo</c>: la emisión de FR-06 se envió y ARCA no respondió (FR-13).</summary>
+    public const string MotivoSinRespuestaEmision = "sin_respuesta_emision";
+
+    /// <summary>Valor de <c>motivo</c> del descarte: la pendiente no tiene una observación vigente (FR-11).</summary>
+    public const string MotivoSinObservacion = "sin_observacion";
+
+    /// <summary>Extensión de <see cref="MotivoEspera"/>: los segundos que faltan para verificar.</summary>
+    public const string ExtensionSegundosRestantes = "segundosRestantes";
+
+    /// <summary>Extensión de <see cref="MotivoImporteDistinto"/>: "Factura B 0003-00000125".</summary>
+    public const string ExtensionComprobante = "comprobante";
+
+    /// <summary>Extensión de <see cref="MotivoImporteDistinto"/>: el total que registró la venta.</summary>
+    public const string ExtensionImporteRegistrado = "importeRegistrado";
+
+    /// <summary>Extensión de <see cref="MotivoImporteDistinto"/>: el total con que ARCA tiene autorizado el número.</summary>
+    public const string ExtensionImporteArca = "importeArca";
+
+    /// <summary>Extensión de <see cref="MotivoOtroEntorno"/>: el entorno de la pendiente (<c>simulado</c>, ...).</summary>
+    public const string ExtensionEntorno = "entorno";
+
+    /// <summary>Extensión de <see cref="MotivoRechazada"/> en la verificación: el código del rechazo de ARCA.</summary>
+    public const string ExtensionCodigoArca = "codigoArca";
+
+    /// <summary>
+    /// Extensión de <see cref="MotivoRechazada"/> en la verificación: la descripción del rechazo de ARCA, recortada a
+    /// <see cref="DescripcionArcaMaxima"/> caracteres.
+    /// </summary>
+    public const string ExtensionDescripcionArca = "descripcionArca";
+
+    /// <summary>
+    /// El <c>detail</c> fijo y las extensiones de datos exactas de cada motivo del 409 de la verificación. Los textos no
+    /// repiten datos: la pantalla arma el suyo con las extensiones.
+    /// </summary>
+    private static readonly Dictionary<string, (string Detalle, string[] Extensiones)> MotivosVerificacion =
+        new(StringComparer.Ordinal)
+        {
+            [MotivoSinPendiente] = ("El presupuesto no tiene una emisión pendiente de verificación.", []),
+            [MotivoEspera] = (
+                "Todavía no pasó el tiempo de espera para verificar con ARCA.", [ExtensionSegundosRestantes]),
+            [MotivoImporteDistinto] = (
+                "ARCA tiene autorizado el comprobante con otro importe. Revisá el punto de venta en ARCA.",
+                [ExtensionComprobante, ExtensionImporteRegistrado, ExtensionImporteArca]),
+            [MotivoSinNumero] = (
+                "La emisión pendiente no tiene número de comprobante registrado. Revisá el punto de venta en ARCA.", []),
+            [MotivoOtroEntorno] = (
+                "La emisión pendiente se envió a otro entorno de ARCA. Revisá el punto de venta en ARCA.",
+                [ExtensionEntorno]),
+            [MotivoSinRespuesta] = ("ARCA no respondió. La emisión sigue pendiente de verificación.", []),
+            [MotivoSinRespuestaEmision] = (
+                "ARCA no respondió a la nueva emisión. La emisión quedó pendiente de verificación.", []),
+            [MotivoRechazada] = ("ARCA rechazó la factura.", [ExtensionCodigoArca, ExtensionDescripcionArca]),
+            [MotivoNoEnviada] = (
+                "No se pudo completar la verificación con ARCA. Intentá de nuevo en unos minutos.", []),
+            [MotivoFacturado] = ("El presupuesto ya tiene una factura.", []),
+        };
+
+    /// <summary>El <c>detail</c> fijo de cada motivo del 409 del descarte.</summary>
+    private static readonly Dictionary<string, string> DetallesDescarte = new(StringComparer.Ordinal)
+    {
+        [MotivoSinPendiente] = "El presupuesto no tiene una emisión pendiente de verificación.",
+        [MotivoSinObservacion] =
+            "La emisión pendiente no tiene una observación que permita descartarla. Verificala con ARCA.",
+    };
+
+    /// <summary>
+    /// 409 con ProblemDetails para una verificación que no recuperó ni emitió (FEAT-008): <c>title</c> fijo
+    /// (<see cref="TituloConflictoVerificacion"/>), el <c>detail</c> fijo del motivo, <paramref name="motivo"/> en la
+    /// extensión <c>motivo</c> y <paramref name="datos"/> como extensiones, que tienen que ser exactamente las del motivo
+    /// (ninguna en los motivos sin datos). La descripción de un rechazo se recorta a <see cref="DescripcionArcaMaxima"/>
+    /// caracteres sin cortar un par sustituto. Sin <c>errors</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// El motivo no es uno de los diez, o los datos no son exactamente los del motivo.
+    /// </exception>
+    public static ActionResult ConflictoVerificacion(
+        this ControllerBase controller, string motivo, IReadOnlyDictionary<string, object>? datos = null)
+    {
+        if (!MotivosVerificacion.TryGetValue(motivo, out var previsto))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        var recibidas = datos?.Keys.Order(StringComparer.Ordinal).ToArray() ?? [];
+        if (!recibidas.SequenceEqual(previsto.Extensiones.Order(StringComparer.Ordinal), StringComparer.Ordinal))
+        {
+            throw new ArgumentException("Los datos del conflicto no corresponden al motivo.", nameof(datos));
+        }
+
+        var resultado = controller.Conflicto409(TituloConflictoVerificacion, motivo, previsto.Detalle);
+        if (datos is not null && resultado.Value is ProblemDetails problema)
+        {
+            foreach (var (clave, valor) in datos)
+            {
+                problema.Extensions[clave] = clave == ExtensionDescripcionArca && valor is string descripcion
+                    ? Recortar(descripcion, DescripcionArcaMaxima)
+                    : valor;
+            }
+        }
+
+        return resultado;
+    }
+
+    /// <summary>
+    /// 409 con ProblemDetails para un descarte rechazado (FEAT-008, FR-11): <c>title</c> fijo
+    /// (<see cref="TituloConflictoDescarte"/>), el <c>detail</c> fijo del motivo y <paramref name="motivo"/>
+    /// (<see cref="MotivoSinPendiente"/> o <see cref="MotivoSinObservacion"/>) en la extensión <c>motivo</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los dos.</exception>
+    public static ActionResult ConflictoDescarte(this ControllerBase controller, string motivo)
+    {
+        if (!DetallesDescarte.TryGetValue(motivo, out var detalle))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        return controller.Conflicto409(TituloConflictoDescarte, motivo, detalle);
+    }
+
     /// <summary>Los primeros <paramref name="maximo"/> caracteres, sin dejar un sustituto alto suelto al final.</summary>
     private static string Recortar(string texto, int maximo)
     {

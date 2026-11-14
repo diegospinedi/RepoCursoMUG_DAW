@@ -78,6 +78,10 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton(_ => OpcionesArca.Leer(configuracion));
         servicios.AddSingleton<IAutorizadorComprobantes>(CrearAutorizador);
 
+        // FEAT-008 (D-20, D-30, D-31): la espera de la verificación, desde Arca:EsperaVerificacionSegundos, validada contra
+        // el plazo de ARCA más el margen del envío. Se arma acá y no en la Api: solo esta raíz conoce las opciones de ARCA.
+        servicios.AddSingleton(proveedor => CrearOpcionesVerificacion(proveedor.GetRequiredService<OpcionesArca>()));
+
         // El HttpClient propio de ARCA (spec FEAT-007, Block 6): uno solo para toda la Api, con la validación TLS por
         // defecto (sin callback de certificados, R-12). Solo lo pide el autorizador de homologación o producción.
         servicios.AddKeyedSingleton(ClaveClienteHttpArca, (_, _) => ServiciosArca.CrearClienteHttp());
@@ -100,6 +104,35 @@ public static class ConfiguracionInfraestructura
 
     /// <summary>La clave del <see cref="HttpClient"/> propio de ARCA en el contenedor.</summary>
     internal const string ClaveClienteHttpArca = "Optica.Arca";
+
+    /// <summary>Lo que se espera de <c>Arca:EsperaVerificacionSegundos</c> (D-31), sin valores recibidos.</summary>
+    private const string EsperadoEsperaVerificacion =
+        "debe ser de al menos " + OpcionesArca.ClaveTiempoMaximo + " más el margen del envío (el menor entre 10 " +
+        "segundos y un tercio de ese tiempo)";
+
+    /// <summary>El mensaje fijo del error de configuración de D-31: nombra las claves y el criterio, nunca los valores.</summary>
+    public static readonly string TextoEsperaInsuficiente =
+        new OpcionesArcaInvalidasException(OpcionesArca.ClaveEsperaVerificacion, EsperadoEsperaVerificacion).Message;
+
+    /// <summary>
+    /// Las opciones de la verificación (D-30) con la espera de <see cref="OpcionesArca.EsperaVerificacion"/>. D-31: la
+    /// espera tiene que alcanzar el plazo de ARCA más el margen que <see cref="ProcesoEmision"/> exige antes de enviar
+    /// (<see cref="ProcesoEmision.Margen"/>), para que una emisión que sigue esperando a ARCA no se verifique (ni se
+    /// reemita) antes de que termine su plazo. Producción: 60 s contra 30 + 10; harness e2e: 3 s contra 2 + 0,67.
+    /// </summary>
+    /// <exception cref="OpcionesArcaInvalidasException">
+    /// La espera es menor que el plazo más el margen; el mensaje es <see cref="TextoEsperaInsuficiente"/>.
+    /// </exception>
+    public static OpcionesVerificacion CrearOpcionesVerificacion(OpcionesArca opciones)
+    {
+        ArgumentNullException.ThrowIfNull(opciones);
+        if (opciones.EsperaVerificacion < opciones.TiempoMaximo + ProcesoEmision.Margen(opciones.TiempoMaximo))
+        {
+            throw new OpcionesArcaInvalidasException(OpcionesArca.ClaveEsperaVerificacion, EsperadoEsperaVerificacion);
+        }
+
+        return new OpcionesVerificacion(opciones.EsperaVerificacion);
+    }
 
     /// <summary>
     /// Elige el autorizador por <see cref="OpcionesArca.Entorno"/>: el simulador en el directorio de datos; en
@@ -149,6 +182,8 @@ public static class ConfiguracionInfraestructura
         try
         {
             opciones = servicios.GetRequiredService<OpcionesArca>();
+            // D-31 de FEAT-008: una espera de verificación menor que el plazo más el margen también frena el arranque.
+            servicios.GetRequiredService<OpcionesVerificacion>();
         }
         catch (OpcionesArcaInvalidasException error)
         {

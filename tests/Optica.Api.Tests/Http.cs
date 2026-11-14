@@ -110,13 +110,14 @@ public static class Http
     }
 
     /// <summary>
-    /// El final exacto del GET de un presupuesto sin factura y sin emisión pendiente (FEAT-007, D-19, D-28): las dos
-    /// claves de facturación van después de <c>version</c>.
+    /// El final exacto del GET de un presupuesto sin factura, sin emisión pendiente y sin observación (FEAT-007, D-19,
+    /// D-28; FEAT-008): las tres claves de facturación van después de <c>version</c>.
     /// </summary>
-    public const string SufijoSinFacturacion = ",\"factura\":null,\"emisionPendiente\":false}";
+    public const string SufijoSinFacturacion =
+        ",\"factura\":null,\"emisionPendiente\":false,\"observacionEmision\":null}";
 
     /// <summary>
-    /// El GET de un presupuesto sin factura ni pendiente, sin las dos claves de facturación: exige que el texto termine
+    /// El GET de un presupuesto sin factura ni pendiente, sin las tres claves de facturación: exige que el texto termine
     /// con <see cref="SufijoSinFacturacion"/> y devuelve el resto, que es exactamente la respuesta del alta, de la
     /// modificación o del paso a Final (que no llevan esas claves, D-28). Así las pruebas que comparan el GET con esas
     /// respuestas byte a byte siguen comparando lo mismo.

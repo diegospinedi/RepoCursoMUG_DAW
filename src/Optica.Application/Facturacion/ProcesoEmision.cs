@@ -125,15 +125,19 @@ public sealed class ProcesoEmision(
         return resultado switch
         {
             ResultadoAutorizacion.Autorizada autorizada => await GrabarFacturaAsync(presupuesto, solicitud, autorizada),
-            ResultadoAutorizacion.Rechazada rechazada => await RechazadaAsync(numeroPresupuesto, rechazada),
+            ResultadoAutorizacion.Rechazada rechazada => await RechazadaAsync(
+                numeroPresupuesto, rechazada, solicitud.Receptor.Dni, presupuesto.Cliente.Dni),
             ResultadoAutorizacion.NoEnviada noEnviada => await NoEnviadaAsync(numeroPresupuesto, noEnviada.Motivo),
             ResultadoAutorizacion.SinRespuesta => SinRespuesta(numeroPresupuesto),
             _ => throw new InvalidOperationException("Resultado de la autorización de ARCA no previsto."),
         };
     }
 
-    /// <summary>El menor entre <see cref="MargenMaximo"/> y un tercio del plazo.</summary>
-    internal static TimeSpan Margen(TimeSpan tiempoMaximo)
+    /// <summary>
+    /// El menor entre <see cref="MargenMaximo"/> y un tercio del plazo. Público para que la raíz de composición valide la
+    /// espera de la verificación contra el mismo criterio (D-31 de FEAT-008).
+    /// </summary>
+    public static TimeSpan Margen(TimeSpan tiempoMaximo)
     {
         var tercio = tiempoMaximo / 3;
         return tercio < MargenMaximo ? tercio : MargenMaximo;
@@ -295,13 +299,50 @@ public sealed class ProcesoEmision(
         factura.Importes.Neto,
         factura.Importes.Iva);
 
-    private async Task<ResultadoEmision> RechazadaAsync(long numero, ResultadoAutorizacion.Rechazada rechazada)
+    /// <summary>
+    /// ARCA rechazó: quita la pendiente y devuelve el código y la descripción, con el DNI del receptor y el del cliente del
+    /// presupuesto enmascarados (D-34): la descripción de ARCA puede repetir el número de documento enviado.
+    /// </summary>
+    private async Task<ResultadoEmision> RechazadaAsync(
+        long numero, ResultadoAutorizacion.Rechazada rechazada, params string?[] dnis)
     {
         await IntentarQuitarPendienteAsync(numero);
         // Solo el código: la descripción de ARCA puede repetir datos de la solicitud (R-07).
         registro.LogInformation(
             "ARCA rechazó la factura del presupuesto {Presupuesto} con el código {Codigo}.", numero, rechazada.Codigo);
-        return ResultadoEmision.Conflicto(MotivoConflictoEmision.Rechazada, rechazada.Codigo, rechazada.Descripcion);
+        return ResultadoEmision.Conflicto(
+            MotivoConflictoEmision.Rechazada, rechazada.Codigo, OcultarDni(rechazada.Descripcion, dnis));
+    }
+
+    /// <summary>
+    /// D-34: reemplaza por asteriscos (uno por carácter) cada aparición de los <paramref name="dnis"/> en
+    /// <paramref name="texto"/>, con o sin ceros a la izquierda y con o sin puntos entre los dígitos (<c>00718294</c>,
+    /// <c>718294</c>, <c>718.294</c>, <c>00.718.294</c>). Solo números completos: un número más largo que contiene los
+    /// dígitos del DNI no se toca. Un DNI nulo, vacío o sin dígitos significativos se ignora.
+    /// </summary>
+    public static string OcultarDni(string texto, params string?[] dnis)
+    {
+        ArgumentNullException.ThrowIfNull(texto);
+        foreach (var dni in dnis)
+        {
+            var digitos = new string((dni ?? string.Empty).Where(char.IsAsciiDigit).ToArray()).TrimStart('0');
+            if (digitos.Length == 0)
+            {
+                continue;
+            }
+
+            // Ceros a la izquierda (cada uno con un punto opcional) y los dígitos con un punto opcional entre ellos.
+            var patron = @"(?<![0-9])(?:0\.?)*" + string.Join(@"\.?", digitos.Select(c => c.ToString())) +
+                @"(?![0-9])";
+            texto = System.Text.RegularExpressions.Regex.Replace(
+                texto,
+                patron,
+                coincidencia => new string('*', coincidencia.Length),
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1));
+        }
+
+        return texto;
     }
 
     private async Task<ResultadoEmision> NoEnviadaAsync(long numero, string motivo)

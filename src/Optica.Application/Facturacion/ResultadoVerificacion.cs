@@ -75,6 +75,29 @@ public sealed record DetalleObservacion(
     EntornoArca Entorno)
 {
     /// <summary>
+    /// El motivo en texto, como lo responde la Api (<c>importe_distinto</c>, <c>sin_numero</c>, <c>otro_entorno</c>):
+    /// traducido acá, como el estado del presupuesto, para que la Api no dependa del dominio (spec FEAT-008, Block 6).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">El motivo no está definido (cerrado por defecto).</exception>
+    public string TextoMotivo => Motivo switch
+    {
+        MotivoObservacionEmision.ImporteDistinto => "importe_distinto",
+        MotivoObservacionEmision.SinNumero => "sin_numero",
+        MotivoObservacionEmision.OtroEntorno => "otro_entorno",
+        _ => throw new InvalidOperationException("Motivo de la observación no previsto."),
+    };
+
+    /// <summary>El entorno en texto, en minúscula y sin tildes (<c>simulado</c>, <c>homologacion</c>, <c>produccion</c>).</summary>
+    /// <exception cref="InvalidOperationException">El entorno no está definido (cerrado por defecto).</exception>
+    public string TextoEntorno => Entorno switch
+    {
+        EntornoArca.Simulado => "simulado",
+        EntornoArca.Homologacion => "homologacion",
+        EntornoArca.Produccion => "produccion",
+        _ => throw new InvalidOperationException("Entorno de ARCA no previsto."),
+    };
+
+    /// <summary>
     /// El detalle de <paramref name="observacion"/>; el comprobante se arma con el tipo y el punto de venta de
     /// <paramref name="pendiente"/> y el número de la observación (null si no tiene número o no hay pendiente).
     /// </summary>

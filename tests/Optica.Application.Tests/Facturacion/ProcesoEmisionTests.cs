@@ -327,6 +327,46 @@ public sealed class ProcesoEmisionTests
         Assert.Empty(_almacen.Observaciones);
     }
 
+    /// <summary>
+    /// D-34 (rechazo, sad path; datos personales): la descripción de ARCA repite el DNI del receptor (identificado, total
+    /// sobre el tope) o del cliente (sin identificar) en cualquiera de sus formas; el resultado lo lleva con asteriscos y
+    /// conserva el resto del texto.
+    /// </summary>
+    [Theory]
+    [InlineData("00718294", 150_000)]
+    [InlineData("718294", 150_000)]
+    [InlineData("718.294", 150_000)]
+    [InlineData("00.718.294", 150_000)]
+    [InlineData("00718294", 1000)]
+    [InlineData("718.294", 1000)]
+    public async Task Emitir_RechazoConDni_DescripcionSinDni(string forma, int total)
+    {
+        var presupuesto = _almacen.Sembrar(1, EstadoPresupuesto.Final, Presupuestos_.Dni, total);
+        _autorizador.Responder = (_, _) => Task.FromResult<ResultadoAutorizacion>(
+            new ResultadoAutorizacion.Rechazada(10015, $"DocNro {forma} invalido; CbteNro 1234567 ok."));
+
+        var resultado = await EmitirAsync(presupuesto);
+
+        AfirmarConflicto(resultado, MotivoConflictoEmision.Rechazada);
+        var descripcion = resultado.DescripcionArca!;
+        Assert.DoesNotContain("718294", descripcion.Replace(".", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Equal($"DocNro {new string('*', forma.Length)} invalido; CbteNro 1234567 ok.", descripcion);
+        Assert.Equal(10015, resultado.CodigoArca);
+    }
+
+    /// <summary>D-34: una descripción sin el DNI, o con otro número que lo contiene, no se toca.</summary>
+    [Fact]
+    public async Task Emitir_RechazoSinDni_DescripcionIntacta()
+    {
+        var presupuesto = _almacen.Sembrar(1);
+        _autorizador.Responder = (_, _) => Task.FromResult<ResultadoAutorizacion>(
+            new ResultadoAutorizacion.Rechazada(10016, "Numero 17182945 no es el proximo."));
+
+        var resultado = await EmitirAsync(presupuesto);
+
+        Assert.Equal("Numero 17182945 no es el proximo.", resultado.DescripcionArca);
+    }
+
     /// <summary>Sad path: sin turno o sin plazo, el proceso no arranca (el candado lo toma quien llama, D-09).</summary>
     [Fact]
     public async Task Emitir_SinTurno_Lanza()

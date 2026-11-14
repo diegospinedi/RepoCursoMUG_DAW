@@ -127,3 +127,17 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   observación `importe_distinto` termina sin respuesta, la observación anterior queda vigente (FR-12: pendiente
   intacta); el descarte vuelve a comprobar el número (D-12). La Api no registra el cuerpo de las respuestas 409
   (la descripción de un rechazo de ARCA puede repetir datos de la solicitud): lo verifica el Block 6.
+- **D-33 (del agente, Block 6, supuestos del implementador, aprobados por D-21).** La regla de D-31 (espera ≥ plazo +
+  margen, margen = mínimo entre 10 s y un tercio del plazo) y el registro de `OpcionesVerificacion` viven en
+  `ConfiguracionInfraestructura` (`AislamientoArcaTests` no deja a `Program` leer `OpcionesArca`); `ProcesoEmision.Margen`
+  pasa a público. Los textos de motivo y entorno de la observación salen de Application (`TextoMotivo`, `TextoEntorno`)
+  porque la Api no referencia Domain. Las extensiones del rechazo en la verificación se llaman `codigoArca` y
+  `descripcionArca` (contrato de la spec), recortadas a 500 caracteres. Títulos y detalles fijos de los 409 definidos
+  por el agente. Verificación y descarte con límite de 1 KB y `Content-Type: application/json` (como todo POST). El
+  entorno se responde en minúscula y sin tildes. Una instalación con plazo de ARCA alto necesita subir la espera
+  (documentar en el Block 8).
+- **D-34 (del agente por D-21 y la política de datos personales de la organización, H1 de la auditoría del
+  Block 6).** La descripción de un rechazo de ARCA puede repetir el DNI del receptor; antes de armar el resultado,
+  `ProcesoEmision` reemplaza el número de documento del receptor por asteriscos donde aparezca en la descripción (con y
+  sin ceros a la izquierda o puntos). Cubre la verificación y la emisión de FEAT-007, que tenía el mismo riesgo. H2
+  (regla de D-31 en Infrastructure) queda como está, aprobado en D-33.

@@ -100,6 +100,10 @@ public sealed class ProteccionTests
             (HttpMethods.Get, RutaPresupuestos + "/{numero:long}/pdf"),
             // FEAT-007: la emisión de la factura manda el DNI del receptor a ARCA (R-03, R-07).
             (HttpMethods.Post, RutaFactura),
+            // FEAT-008: la verificación y el descarte de la emisión pendiente, y la lista de pendientes.
+            (HttpMethods.Post, RutaVerificacion),
+            (HttpMethods.Post, RutaDescarte),
+            (HttpMethods.Get, RutaEmisionesPendientes),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -160,6 +164,27 @@ public sealed class ProteccionTests
                 new StringContent(CuerpoFactura, Encoding.UTF8, "text/plain"))),
             ("POST factura grande", EnviarJsonAsync(
                 cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura", CuerpoFacturaDeBytes(LimiteFactura + 1))),
+            ("POST verificacion", EnviarJsonAsync(
+                cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/verificacion", string.Empty)),
+            ("POST verificacion texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                $"{RutaPresupuestos}/1/factura/verificacion",
+                new StringContent(string.Empty, Encoding.UTF8, "text/plain"))),
+            ("POST verificacion grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/verificacion",
+                CuerpoFacturaDeBytes(LimiteFactura + 1))),
+            ("POST descarte", EnviarJsonAsync(
+                cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/descarte", string.Empty)),
+            ("POST descarte texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                $"{RutaPresupuestos}/1/factura/descarte",
+                new StringContent(string.Empty, Encoding.UTF8, "text/plain"))),
+            ("POST descarte grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/descarte",
+                CuerpoFacturaDeBytes(LimiteFactura + 1))),
+            ("GET emisiones pendientes", Http.GetAsync(cliente, RutaEmisionesPendientes)),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -186,6 +211,14 @@ public sealed class ProteccionTests
     // FEAT-007: la emisión de la factura.
 
     private const string RutaFactura = RutaPresupuestos + "/{numero:long}/factura";
+
+    // FEAT-008: la verificación y el descarte de la emisión pendiente, y la lista de pendientes.
+
+    private const string RutaVerificacion = RutaFactura + "/verificacion";
+
+    private const string RutaDescarte = RutaFactura + "/descarte";
+
+    private const string RutaEmisionesPendientes = "/api/facturacion/emisiones-pendientes";
 
     /// <summary>El límite del cuerpo de la emisión: 1 KB (<c>[RequestSizeLimit]</c>).</summary>
     private const int LimiteFactura = 1024;

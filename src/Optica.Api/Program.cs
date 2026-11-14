@@ -27,7 +27,8 @@ using Optica.Infrastructure.Persistencia;
 // AllowedHosts es "localhost" en appsettings.json; al instalar se amplía con el nombre (y, si se usa, la IP) de la PC
 // en la red local (docs/instalacion.md). Un pedido con otro Host recibe 400.
 // Sin CORS: la SPA se sirve desde el mismo origen. Nunca se registra el cuerpo de los pedidos (definir, ingresar y
-// cambiar traen contraseñas en claro): no agregar HttpLogging de cuerpos.
+// cambiar traen contraseñas en claro) ni el de las respuestas (D-32 de FEAT-008: la descripción de un rechazo de ARCA en
+// un 409 puede repetir datos de la solicitud): no agregar HttpLogging de cuerpos.
 //
 // `Optica.Api restablecer-contrasena` no levanta la Api: con la misma configuración (raíz del contenido fija en la
 // carpeta de la aplicación, para leer su appsettings.json desde donde se lo ejecute) restablece la contraseña por
@@ -54,7 +55,8 @@ var app = builder.Build();
 
 // Toma el candado de instancia única del directorio de datos (si otra instancia lo tiene, la Api no arranca) y aplica
 // las migraciones pendientes. Si el directorio de datos no se puede crear o escribir, registra el error con la ruta y
-// la clave Optica:Datos:Directorio, y la Api no arranca.
+// la clave Optica:Datos:Directorio, y la Api no arranca. Antes valida las claves Arca:*, incluida la espera de la
+// verificación contra el plazo de ARCA más el margen del envío (D-31 de FEAT-008).
 app.Services.InicializarBaseDeDatos();
 
 // Cache-Control: no-store en toda respuesta de /api, también en las de error: va primero para cubrir el 500 genérico,
@@ -169,6 +171,15 @@ public partial class Program
         builder.Services.AddScoped<ProcesoEmision>();
         builder.Services.AddScoped<EmitirFactura>();
         builder.Services.AddScoped<ObtenerEstadoFacturacion>();
+
+        // FEAT-008 (ADR-025, ADR-026): la verificación de una emisión pendiente (toma el turno del candado y lo conserva
+        // desde la consulta hasta la emisión, D-09), el descarte de una pendiente observada y la lista de pendientes. La
+        // espera de la verificación sale de Arca:EsperaVerificacionSegundos y se valida al arrancar contra el plazo de
+        // ARCA más el margen del envío (D-31): OpcionesVerificacion la registra la infraestructura, la única que conoce las
+        // opciones de ARCA (AislamientoArcaTests), y ValidarArca la resuelve al arrancar.
+        builder.Services.AddScoped<VerificarEmision>();
+        builder.Services.AddScoped<DescartarEmision>();
+        builder.Services.AddScoped<ListarEmisionesPendientes>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de
