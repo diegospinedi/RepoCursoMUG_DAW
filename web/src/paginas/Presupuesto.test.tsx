@@ -50,6 +50,8 @@ const GRABADO = {
   // El GET suma la facturación (FEAT-007, D-19); los PUT no la llevan, y la pantalla ignora lo que sobra.
   factura: null,
   emisionPendiente: false,
+  // FEAT-008: la observación vigente de la emisión pendiente, o null.
+  observacionEmision: null,
 };
 
 /** Abre el presupuesto 155 con la respuesta indicada (por defecto, el grabado) y espera que se muestre. */
@@ -857,6 +859,12 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     json(409, { status: 409, title: 'No se pudo emitir la factura.', detail: 'Texto del servidor.', motivo, ...extra });
 
   const botonFacturar = () => within(pantalla()).getByRole('button', { name: 'Facturar' });
+  /** FEAT-008, AC-02: con una emisión pendiente, "Verificar con ARCA" en lugar de Facturar. */
+  const esperarVerificarEnLugarDeFacturar = () =>
+    waitFor(() => {
+      expect(within(pantalla()).getByRole('button', { name: 'Verificar con ARCA' })).toBeTruthy();
+      expect(within(pantalla()).queryByRole('button', { name: 'Facturar' })).toBeNull();
+    });
 
   /** Abre el presupuesto 155 con las respuestas indicadas y espera que se muestre. */
   async function abrirCon(rutas: Parameters<typeof servidorFalso>[0]) {
@@ -927,10 +935,10 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
   it.each([
     ['Borrador', GRABADO],
     ['con factura', FACTURADO],
-    ['con emisión pendiente', PENDIENTE_EN_GET],
-  ])('Facturar: deshabilitado en Borrador, con factura y con pendiente (%s)', async (_caso, cuerpo) => {
-    // AC-02, AC-03, AC-22: `disabled`, y un clic no abre el diálogo ni llama a la Api. Control: en Final sin factura
-    // ni pendiente está habilitado (el primer caso de este archivo).
+  ])('Facturar: deshabilitado en Borrador y con factura (%s)', async (_caso, cuerpo) => {
+    // AC-02, AC-03: `disabled`, y un clic no abre el diálogo ni llama a la Api. Control: en Final sin factura ni
+    // pendiente está habilitado (el primer caso de este archivo). Con una emisión pendiente, desde FEAT-008, Facturar no
+    // se muestra: lo reemplaza "Verificar con ARCA" (ver las pruebas de FEAT-008).
     const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, cuerpo) });
 
     expect(botonFacturar().hasAttribute('disabled')).toBe(true);
@@ -939,16 +947,18 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     expect(registro.pedidosA('POST', RUTA_FACTURA)).toEqual([]);
   });
 
-  it('Facturar: con emisión pendiente avisa junto al botón', async () => {
-    // El aviso es un estado (`role="status"`) y describe al botón deshabilitado: un lector de pantalla dice por qué.
+  it('Facturar: con emisión pendiente avisa junto al botón Verificar con ARCA', async () => {
+    // El aviso es un estado (`role="status"`) y describe al botón que reemplaza a Facturar (FEAT-008, AC-02): un lector
+    // de pantalla dice por qué no se factura.
     await abrirCon({ 'GET /api/presupuestos/155': json(200, PENDIENTE_EN_GET) });
 
     const aviso = screen.getByText(AVISO_PENDIENTE);
     expect(aviso.getAttribute('role')).toBe('status');
     expect(aviso.classList.contains('aviso')).toBe(true);
     expect(aviso.id).not.toBe('');
-    expect(botonFacturar().getAttribute('aria-describedby')).toBe(aviso.id);
-    expect(screen.getByRole('button', { name: 'Facturar', description: AVISO_PENDIENTE })).toBe(botonFacturar());
+    const verificar = within(pantalla()).getByRole('button', { name: 'Verificar con ARCA' });
+    expect(verificar.getAttribute('aria-describedby')).toBe(aviso.id);
+    expect(screen.getByRole('button', { name: 'Verificar con ARCA', description: AVISO_PENDIENTE })).toBe(verificar);
     cleanup();
 
     await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL) });
@@ -1070,18 +1080,18 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
 
     const alerta = await screen.findByText(SIN_RESPUESTA);
     expect(alerta.getAttribute('role')).toBe('alert');
-    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await esperarVerificarEnLugarDeFacturar();
     expect(screen.getByText(AVISO_PENDIENTE)).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(alerta));
   });
 
   it('Facturar: 409 pendiente muestra que la emisión anterior está pendiente', async () => {
-    // AC-22: otra sesión dejó una emisión pendiente; el mensaje fijo y Facturar deshabilitado al releer.
+    // AC-22: otra sesión dejó una emisión pendiente; el mensaje fijo y, al releer, Verificar en lugar de Facturar.
     await emitirYQuedarPendiente(conflictoFactura('pendiente'));
 
     const alerta = await screen.findByText(PENDIENTE);
     expect(alerta.getAttribute('role')).toBe('alert');
-    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await esperarVerificarEnLugarDeFacturar();
     await waitFor(() => expect(document.activeElement).toBe(alerta));
   });
 
@@ -1092,7 +1102,7 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
 
     const alerta = await screen.findByText(MENSAJE_SIN_CONEXION);
     expect(alerta.getAttribute('role')).toBe('alert');
-    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await esperarVerificarEnLugarDeFacturar();
     await waitFor(() => expect(document.activeElement).toBe(alerta));
   });
 
@@ -1106,7 +1116,7 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     await emitir();
 
     expect((await screen.findByText(PENDIENTE_VERIFICACION)).getAttribute('role')).toBe('alert');
-    await waitFor(() => expect(botonFacturar().hasAttribute('disabled')).toBe(true));
+    await esperarVerificarEnLugarDeFacturar();
     expect(registro.pedidosA('POST', RUTA_FACTURA)).toHaveLength(1);
   });
 
@@ -1194,5 +1204,433 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     expect(screen.queryByText(EMITIDA_MENSAJE)).toBeNull();
     expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('Presupuesto: verificación y descarte de la emisión pendiente (FEAT-008)', () => {
+  const RUTA_VERIFICACION = '/api/presupuestos/155/factura/verificacion';
+  const CLAVE_VERIFICACION = `POST ${RUTA_VERIFICACION}`;
+  const RUTA_DESCARTE = '/api/presupuestos/155/factura/descarte';
+  const CLAVE_DESCARTE = `POST ${RUTA_DESCARTE}`;
+  const COMPROBANTE = 'Factura B 0003-00000125';
+  const TEXTO_IMPORTE_DISTINTO =
+    'Revisá el punto de venta en ARCA: la Factura B 0003-00000125 figura autorizada por $ 2.000,00 y esta venta registró $ 1.815,00.';
+  const TEXTO_SIN_NUMERO = 'Revisá el punto de venta en ARCA: esta emisión no tiene número de comprobante registrado.';
+  const TEXTO_OTRO_ENTORNO =
+    'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Simulado y el sistema está configurado en otro entorno.';
+  const TEXTO_SIN_RESPUESTA = 'ARCA no respondió. La emisión sigue pendiente de verificación.';
+  const TEXTO_DIALOGO = '¿Descartar la emisión pendiente? El presupuesto va a poder volver a facturarse.';
+  const DESCARTADA = 'Se descartó la emisión pendiente.';
+  /** Un presupuesto en Final de $1.815,00 con la emisión pendiente (AC-07), con datos ficticios. */
+  const PENDIENTE = {
+    ...GRABADO,
+    estado: 'final',
+    version: 4,
+    cliente: { ...CLIENTE, dni: '00718294', email: 'cliente@example.com' },
+    lineas: [{ ...LINEA, precioUnitario: 1815, precioConDescuento: 1815, precioFinal: 1815 }],
+    total: 1815,
+    emisionPendiente: true,
+  };
+  const OBSERVACION_IMPORTE = {
+    motivo: 'importe_distinto',
+    comprobante: COMPROBANTE,
+    importeRegistrado: 1815,
+    importeArca: 2000,
+    entorno: 'simulado',
+  };
+  const CON_OBSERVACION = { ...PENDIENTE, observacionEmision: OBSERVACION_IMPORTE };
+  const SIN_PENDIENTE = { ...PENDIENTE, emisionPendiente: false };
+  const FACTURA = {
+    comprobante: COMPROBANTE,
+    tipo: 'b',
+    numero: 125,
+    cae: '12345678901234',
+    vencimientoCae: '2026-11-24',
+    fecha: '2026-11-14',
+    total: 1815,
+    neto: 1500,
+    iva: 315,
+  };
+  /** El 409 de la verificación con un `detail` que la pantalla nunca muestra. */
+  const conflictoVerificacion = (motivo: string, extra: Record<string, unknown> = {}) =>
+    json(409, { status: 409, title: 'No se pudo verificar la emisión.', detail: 'Texto del servidor.', motivo, ...extra });
+
+  const botonVerificar = () => within(pantalla()).getByRole('button', { name: 'Verificar con ARCA' });
+  const botonDescartar = () => within(pantalla()).getByRole('button', { name: 'Descartar la emisión' });
+  const sinBoton = (nombre: string) => within(pantalla()).queryByRole('button', { name: nombre });
+
+  /** Abre el presupuesto 155 con las respuestas indicadas y espera que se muestre. */
+  async function abrirCon(rutas: Parameters<typeof servidorFalso>[0]) {
+    const registro = servidorFalso(rutas);
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+    return registro;
+  }
+
+  /** Abre el diálogo de descarte y lo devuelve. */
+  async function abrirDialogoDescarte() {
+    fireEvent.click(botonDescartar());
+    return screen.findByRole('dialog', { name: 'Descartar la emisión' });
+  }
+
+  it('Presupuesto_ConPendiente_MuestraVerificarYNoFacturar', async () => {
+    // AC-02: "Verificar con ARCA" en lugar de Facturar; abrir no llama a la verificación ni ofrece descartar.
+    const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, PENDIENTE) });
+
+    expect(botonVerificar().hasAttribute('disabled')).toBe(false);
+    expect(sinBoton('Facturar')).toBeNull();
+    expect(sinBoton('Descartar la emisión')).toBeNull();
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toEqual([]);
+    cleanup();
+
+    // Control: sin emisión pendiente está Facturar y no Verificar.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, SIN_PENDIENTE) });
+    expect(within(pantalla()).getByRole('button', { name: 'Facturar' })).toBeTruthy();
+    expect(sinBoton('Verificar con ARCA')).toBeNull();
+  });
+
+  it('Presupuesto_ImporteDistinto_MuestraAvisoYDescartar', async () => {
+    // AC-07: el número, el importe registrado y el de ARCA en pesos; ofrece descartar y vuelve a leer el presupuesto.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': [json(200, PENDIENTE), json(200, CON_OBSERVACION)],
+      [CLAVE_VERIFICACION]: conflictoVerificacion('importe_distinto', {
+        comprobante: COMPROBANTE,
+        importeRegistrado: 1815,
+        importeArca: 2000,
+      }),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    const alerta = await screen.findByText(TEXTO_IMPORTE_DISTINTO);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(screen.queryByText('Texto del servidor.')).toBeNull();
+    await waitFor(() => expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2));
+    expect(botonDescartar()).toBeTruthy();
+    expect(botonVerificar()).toBeTruthy();
+    expect(sinBoton('Facturar')).toBeNull();
+    // El texto se muestra una sola vez, aunque el presupuesto releído traiga la misma observación.
+    expect(screen.getAllByText(TEXTO_IMPORTE_DISTINTO)).toHaveLength(1);
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+    const [pedido] = registro.pedidosA('POST', RUTA_VERIFICACION);
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+    expect(pedido?.init?.body).toBeUndefined();
+  });
+
+  it('Presupuesto_ConObservacionAlAbrir_MuestraElAvisoYDescartar', async () => {
+    // FR-08: al volver a abrir el presupuesto, la observación vigente sigue explicando por qué se puede descartar.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, CON_OBSERVACION) });
+
+    const texto = screen.getByText(TEXTO_IMPORTE_DISTINTO);
+    expect(texto.closest('section')).toBe(pantalla());
+    expect(botonDescartar()).toBeTruthy();
+    expect(botonVerificar()).toBeTruthy();
+  });
+
+  it('Presupuesto_DescartarConfirmado_MuestraFacturar', async () => {
+    // AC-08: confirmar descarta (POST sin cuerpo), avisa y vuelve Facturar.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_DESCARTE]: vacia(204),
+    });
+
+    const dialogo = await abrirDialogoDescarte();
+    expect(within(dialogo).getByText(TEXTO_DIALOGO)).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Descartar la emisión', description: TEXTO_DIALOGO })).toBe(dialogo);
+    // La acción no se deshace: al abrir, el foco va a Cancelar.
+    await waitFor(() => expect(document.activeElement).toBe(within(dialogo).getByRole('button', { name: 'Cancelar' })));
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Descartar' }));
+
+    const aviso = await screen.findByText(DESCARTADA);
+    expect(aviso.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const facturar = within(pantalla()).getByRole('button', { name: 'Facturar' });
+    expect(facturar.hasAttribute('disabled')).toBe(false);
+    expect(sinBoton('Verificar con ARCA')).toBeNull();
+    expect(sinBoton('Descartar la emisión')).toBeNull();
+    expect(screen.queryByText(TEXTO_IMPORTE_DISTINTO)).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(aviso));
+    const pedidos = registro.pedidosA('POST', RUTA_DESCARTE);
+    expect(pedidos).toHaveLength(1);
+    expect(new Headers(pedidos[0]?.init?.headers).get('Content-Type')).toBe('application/json');
+    expect(pedidos[0]?.init?.body).toBeUndefined();
+  });
+
+  it('Presupuesto_DescartarCancelado_SigueVerificar', async () => {
+    // AC-09: Cancelar y Escape cierran el diálogo sin llamar a la Api; la emisión sigue pendiente.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_DESCARTE]: vacia(204),
+    });
+
+    let dialogo = await abrirDialogoDescarte();
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(botonDescartar()));
+
+    dialogo = await abrirDialogoDescarte();
+    fireEvent.keyDown(dialogo, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    expect(registro.pedidosA('POST', RUTA_DESCARTE)).toEqual([]);
+    expect(botonVerificar()).toBeTruthy();
+    expect(botonDescartar()).toBeTruthy();
+    expect(sinBoton('Facturar')).toBeNull();
+    expect(screen.queryByText(DESCARTADA)).toBeNull();
+  });
+
+  it('Presupuesto_SinRespuesta_MensajeYSigueVerificar', async () => {
+    // AC-11: el mensaje, la emisión sigue pendiente y no se reintenta solo.
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: conflictoVerificacion('sin_respuesta'),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    const alerta = await screen.findByText(TEXTO_SIN_RESPUESTA);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2));
+    expect(botonVerificar()).toBeTruthy();
+    expect(sinBoton('Facturar')).toBeNull();
+    expect(sinBoton('Descartar la emisión')).toBeNull();
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+  });
+
+  it('Presupuesto_SinNumero_Aviso', async () => {
+    // AC-15: el aviso de revisar en ARCA sin número; ofrece descartar, y al confirmar vuelve Facturar.
+    const conSinNumero = {
+      ...PENDIENTE,
+      observacionEmision: { ...OBSERVACION_IMPORTE, motivo: 'sin_numero', comprobante: null, importeArca: null },
+    };
+    await abrirCon({
+      'GET /api/presupuestos/155': [json(200, PENDIENTE), json(200, conSinNumero)],
+      [CLAVE_VERIFICACION]: conflictoVerificacion('sin_numero'),
+      [CLAVE_DESCARTE]: vacia(204),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    expect((await screen.findByText(TEXTO_SIN_NUMERO)).getAttribute('role')).toBe('alert');
+    const dialogo = await abrirDialogoDescarte();
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Descartar' }));
+    await screen.findByText(DESCARTADA);
+    expect(within(pantalla()).getByRole('button', { name: 'Facturar' })).toBeTruthy();
+  });
+
+  it('Presupuesto_OtroEntorno_Aviso', async () => {
+    // AC-16: el aviso dice el entorno de la pendiente, legible. Descartar se ofrece con la observación de la respuesta,
+    // aunque el presupuesto releído todavía no la traiga.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: conflictoVerificacion('otro_entorno', { entorno: 'simulado' }),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    expect((await screen.findByText(TEXTO_OTRO_ENTORNO)).getAttribute('role')).toBe('alert');
+    expect(botonDescartar()).toBeTruthy();
+    expect(botonVerificar()).toBeTruthy();
+  });
+
+  it('Presupuesto_Espera_MuestraSegundos', async () => {
+    // AC-17: cuántos segundos faltan; la emisión sigue pendiente y no se ofrece descartar.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: conflictoVerificacion('espera', { segundosRestantes: 40 }),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    expect((await screen.findByText('Esperá 40 segundos para verificar con ARCA.')).getAttribute('role')).toBe('alert');
+    expect(botonVerificar()).toBeTruthy();
+    expect(sinBoton('Descartar la emisión')).toBeNull();
+  });
+
+  it('Presupuesto_SinSesion_VaAIngreso', async () => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_VERIFICACION]: vacia(401),
+      [CLAVE_DESCARTE]: vacia(401),
+      'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+    });
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+
+    fireEvent.click(botonVerificar());
+
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso'));
+    cleanup();
+
+    // También al descartar.
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_DESCARTE]: vacia(401),
+      'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+    });
+    renderizarApp('/presupuestos/155');
+    await screen.findByText('Número');
+    const dialogo = await abrirDialogoDescarte();
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Descartar' }));
+
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso'));
+  });
+
+  it('Verificar: recuperada muestra el comprobante y deja de estar pendiente', async () => {
+    // AC-05: el texto de la factura recuperada; el presupuesto muestra la factura, sin Verificar ni Facturar habilitado.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: json(200, { resultado: 'recuperada', factura: FACTURA }),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    const aviso = await screen.findByText('Se recuperó la Factura B 0003-00000125 que ARCA ya había autorizado.');
+    expect(aviso.getAttribute('role')).toBe('status');
+    expect(dato('Factura')).toBe(COMPROBANTE);
+    expect(sinBoton('Verificar con ARCA')).toBeNull();
+    expect(within(pantalla()).getByRole('button', { name: 'Facturar' }).hasAttribute('disabled')).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(aviso));
+  });
+
+  it('Verificar: emitida muestra el mensaje de la emisión', async () => {
+    // AC-06: el mensaje de FEAT-007.
+    await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: json(200, { resultado: 'emitida', factura: { ...FACTURA, numero: 126, comprobante: 'Factura B 0003-00000126' } }),
+    });
+
+    fireEvent.click(botonVerificar());
+
+    expect(await screen.findByText('Se emitió la Factura B 0003-00000126.')).toBeTruthy();
+    expect(dato('Factura')).toBe('Factura B 0003-00000126');
+  });
+
+  it('Verificar: un pedido a la vez', async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    const enEspera = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_VERIFICACION]: () => enEspera,
+      [CLAVE_DESCARTE]: vacia(204),
+    });
+
+    fireEvent.click(botonVerificar());
+    await waitFor(() => expect(botonVerificar().getAttribute('aria-disabled')).toBe('true'));
+    expect(botonVerificar().getAttribute('aria-busy')).toBe('true');
+    fireEvent.click(botonVerificar());
+    // Mientras verifica tampoco se descarta.
+    fireEvent.click(botonDescartar());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+    expect(registro.pedidosA('POST', RUTA_DESCARTE)).toEqual([]);
+
+    responder(new Response(JSON.stringify({ resultado: 'recuperada', factura: FACTURA }), { status: 200 }));
+    await screen.findByText('Se recuperó la Factura B 0003-00000125 que ARCA ya había autorizado.');
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+  });
+
+  it.each([
+    ['409 rechazada', conflictoVerificacion('rechazada', { codigoArca: 10016, descripcionArca: 'Rechazo simulado.' }), 'ARCA rechazó la factura: 10016 – Rechazo simulado.'],
+    ['409 con un motivo desconocido', conflictoVerificacion('otro'), MENSAJE_SIN_CONEXION],
+    ['500', vacia(500), MENSAJE_SIN_CONEXION],
+    ['falla de red', sinRed, MENSAJE_SIN_CONEXION],
+  ])('Verificar: %s muestra el mensaje y vuelve a leer el presupuesto', async (_caso, respuesta, mensaje) => {
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      [CLAVE_VERIFICACION]: respuesta,
+    });
+
+    fireEvent.click(botonVerificar());
+
+    const alerta = await screen.findByText(mensaje);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2));
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+    expect(botonVerificar()).toBeTruthy();
+  });
+
+  it.each([
+    ['409 sin_observacion', json(409, { motivo: 'sin_observacion', detail: 'Texto del servidor.' }), 'La emisión pendiente no tiene una observación que permita descartarla. Verificala con ARCA.'],
+    ['falla de red', sinRed, MENSAJE_SIN_CONEXION],
+  ])('Descartar: %s muestra el mensaje y vuelve a leer el presupuesto', async (_caso, respuesta, mensaje) => {
+    const registro = await abrirCon({
+      'GET /api/presupuestos/155': json(200, CON_OBSERVACION),
+      [CLAVE_DESCARTE]: respuesta,
+    });
+
+    const dialogo = await abrirDialogoDescarte();
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Descartar' }));
+
+    const alerta = await screen.findByText(mensaje);
+    expect(alerta.getAttribute('role')).toBe('alert');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(registro.pedidosA('GET', '/api/presupuestos/155')).toHaveLength(2));
+    await waitFor(() => expect(document.activeElement).toBe(alerta));
+    expect(botonVerificar()).toBeTruthy();
+  });
+
+  it('Verificar: 155, 156 y atrás a 155 con el primero en curso no envía otro POST del 155', async () => {
+    // La guarda es por número: verificar el 156 no libera la del 155, que sigue en curso.
+    let responder155: (respuesta: Response) => void = () => {};
+    const enEspera155 = new Promise<Response>((resolver) => {
+      responder155 = resolver;
+    });
+    const registro = servidorFalso({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      'GET /api/presupuestos/156': json(200, { ...PENDIENTE, numero: 156 }),
+      [CLAVE_VERIFICACION]: () => enEspera155,
+      'POST /api/presupuestos/156/factura/verificacion': () => new Promise<Response>(() => {}),
+    });
+    const { volver } = renderizarApp(['/presupuestos/155', '/presupuestos/156', '/presupuestos/155']);
+    await screen.findByText('Número');
+    await waitFor(() => expect(dato('Número')).toBe('155'));
+    fireEvent.click(botonVerificar());
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+
+    await volver();
+    await waitFor(() => expect(dato('Número')).toBe('156'));
+    fireEvent.click(botonVerificar());
+    expect(registro.pedidosA('POST', '/api/presupuestos/156/factura/verificacion')).toHaveLength(1);
+
+    await volver();
+    await waitFor(() => expect(dato('Número')).toBe('155'));
+    // El 155 sigue en curso: su botón lo muestra y un clic no envía otro pedido.
+    expect(botonVerificar().getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(botonVerificar());
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+
+    responder155(new Response(JSON.stringify({ resultado: 'recuperada', factura: FACTURA }), { status: 200 }));
+    await screen.findByText('Se recuperó la Factura B 0003-00000125 que ARCA ya había autorizado.');
+    expect(registro.pedidosA('POST', RUTA_VERIFICACION)).toHaveLength(1);
+  });
+
+  it('Verificar: una respuesta de otro número no pisa la pantalla', async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    const enEspera = new Promise<Response>((resolver) => {
+      responder = resolver;
+    });
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, PENDIENTE),
+      'GET /api/presupuestos/156': json(200, { ...PENDIENTE, numero: 156 }),
+      [CLAVE_VERIFICACION]: () => enEspera,
+    });
+    const { volver } = renderizarApp(['/presupuestos/156', '/presupuestos/155']);
+    await screen.findByText('Número');
+    fireEvent.click(botonVerificar());
+
+    await volver();
+    await waitFor(() => expect(dato('Número')).toBe('156'));
+    responder(new Response(JSON.stringify({ resultado: 'recuperada', factura: FACTURA }), { status: 200 }));
+    await act(async () => {
+      await enEspera;
+    });
+
+    expect(screen.queryByText('Se recuperó la Factura B 0003-00000125 que ARCA ya había autorizado.')).toBeNull();
+    expect(screen.queryByText('Factura', { selector: 'dt' })).toBeNull();
+    // El botón del 156 no quedó ocupado por la verificación del 155.
+    expect(botonVerificar().hasAttribute('aria-disabled')).toBe(false);
   });
 });

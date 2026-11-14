@@ -141,3 +141,9 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   `ProcesoEmision` reemplaza el número de documento del receptor por asteriscos donde aparezca en la descripción (con y
   sin ceros a la izquierda o puntos). Cubre la verificación y la emisión de FEAT-007, que tenía el mismo riesgo. H2
   (regla de D-31 en Infrastructure) queda como está, aprobado en D-33.
+- **D-35 (del agente, Block 7, supuestos del implementador, aprobados por D-21).** Textos de los 409 de verificación y
+  descarte escritos en el cliente con el mismo contenido que el `detail` de la Api (sin_respuesta_emision, no_enviada,
+  sin_pendiente, sin_observacion; facturado y rechazada como en FEAT-007). Singular con 1 segundo y con un solo
+  pendiente en Inicio. Un 401 en Inicio sigue el manejo global de sesión. El diálogo de descarte reutiliza el de "Pasar
+  a Final" (`DialogoConfirmacion`). "Descartar la emisión" aparece también si la respuesta trajo observación (la Api
+  vuelve a comprobar). Las pruebas que terminan en Inicio pasan sin cambios (404 de la ruta nueva → sin aviso).

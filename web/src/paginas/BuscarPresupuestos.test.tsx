@@ -88,9 +88,10 @@ const PRESUPUESTO_155 = {
   ],
   total: 2710.02,
   version: 4,
-  // El GET suma la facturación (FEAT-007, D-19).
+  // El GET suma la facturación (FEAT-007, D-19) y la observación de la emisión pendiente (FEAT-008).
   factura: null,
   emisionPendiente: false,
+  observacionEmision: null,
 };
 
 async function abrir() {
