@@ -68,9 +68,66 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
 
     public TimeSpan TiempoMaximo { get; }
 
-    public async Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    /// <summary>
+    /// El contador del tipo y punto de venta + 1, sin grabar nada. Sin plazo, cancelado o con el archivo ilegible, "no
+    /// enviada".
+    /// </summary>
+    public async Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+    {
+        _ = new NumeroComprobante(tipo, puntoVenta, NumeroComprobante.NumeroMinimo); // valida tipo y punto de venta
+        if (!cancelacion.CanBeCanceled)
+        {
+            return new ResultadoProximoNumero.NoEnviada(MotivoSinPlazo);
+        }
+
+        try
+        {
+            await _candado.WaitAsync(cancelacion);
+        }
+        catch (OperationCanceledException)
+        {
+            return new ResultadoProximoNumero.NoEnviada(MotivoCancelada);
+        }
+
+        try
+        {
+            Dictionary<string, long> contadores;
+            try
+            {
+                contadores = Leer();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+                or FormatException)
+            {
+                RegistrarArchivoIlegible(error);
+                return new ResultadoProximoNumero.NoEnviada(MotivoContador);
+            }
+
+            var numero = contadores.GetValueOrDefault(Clave(tipo, puntoVenta)) + 1;
+            if (numero > NumeroComprobante.NumeroMaximo)
+            {
+                RegistrarNumeroMaximo(tipo, puntoVenta);
+                return new ResultadoProximoNumero.NoEnviada(MotivoContador);
+            }
+
+            return new ResultadoProximoNumero.Numero(numero);
+        }
+        finally
+        {
+            _candado.Release();
+        }
+    }
+
+    /// <summary>
+    /// Hasta el Block 3 de FEAT-008 conserva el comportamiento de FEAT-007: numera con su contador + 1 (no compara con
+    /// <paramref name="numero"/>) y responde según <c>Arca:Simulado:Respuesta</c>.
+    /// </summary>
+    public async Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
         ArgumentNullException.ThrowIfNull(solicitud);
+        _ = new NumeroComprobante(solicitud.Tipo, solicitud.PuntoVenta, numero);
 
         // Como el cliente real (ronda 3): sin plazo no se "envía" nada. "Sin respuesta" dejaría una emisión pendiente.
         if (!cancelacion.CanBeCanceled)
@@ -110,6 +167,26 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
         }
     }
 
+    /// <summary>
+    /// Hasta el Block 3 de FEAT-008 no guarda los comprobantes autorizados: con plazo, cualquier número es "no autorizado".
+    /// </summary>
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        _ = new NumeroComprobante(tipo, puntoVenta, numero);
+        if (!cancelacion.CanBeCanceled)
+        {
+            return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoConsultada(MotivoSinPlazo));
+        }
+
+        if (cancelacion.IsCancellationRequested)
+        {
+            return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoConsultada(MotivoCancelada));
+        }
+
+        return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
+    }
+
     private async Task<ResultadoAutorizacion> AutorizarAsync(
         TipoComprobante tipo, int puntoVenta, DateOnly fecha, CancellationToken cancelacion)
     {
@@ -132,13 +209,7 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
                 or FormatException)
             {
-                // Solo el nombre del archivo y el tipo de la falla: el texto de la excepción puede traer el contenido o
-                // la ruta con el usuario de la PC.
-                _registro.LogError(
-                    "ARCA simulada: no se pudo leer el contador {Archivo} del directorio de datos ({TipoFalla}). La " +
-                    "emisión no se envió; revisá ese archivo o borralo para numerar desde 1.",
-                    NombreArchivo,
-                    error.GetType().Name);
+                RegistrarArchivoIlegible(error);
                 return new ResultadoAutorizacion.NoEnviada(MotivoContador);
             }
 
@@ -146,12 +217,7 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
             var numero = contadores.GetValueOrDefault(clave) + 1;
             if (numero > NumeroComprobante.NumeroMaximo)
             {
-                _registro.LogError(
-                    "ARCA simulada: el contador {Archivo} llegó al número máximo de comprobante para {Tipo}, punto de " +
-                    "venta {PuntoVenta}.",
-                    NombreArchivo,
-                    tipo,
-                    puntoVenta);
+                RegistrarNumeroMaximo(tipo, puntoVenta);
                 return new ResultadoAutorizacion.NoEnviada(MotivoContador);
             }
 
@@ -181,6 +247,23 @@ public sealed class SimuladorArca : IAutorizadorComprobantes
             _candado.Release();
         }
     }
+
+    // Solo el nombre del archivo y el tipo de la falla: el texto de la excepción puede traer el contenido o la ruta con el
+    // usuario de la PC.
+    private void RegistrarArchivoIlegible(Exception error) =>
+        _registro.LogError(
+            "ARCA simulada: no se pudo leer el contador {Archivo} del directorio de datos ({TipoFalla}). La emisión no se " +
+            "envió; revisá ese archivo o borralo para numerar desde 1.",
+            NombreArchivo,
+            error.GetType().Name);
+
+    private void RegistrarNumeroMaximo(TipoComprobante tipo, int puntoVenta) =>
+        _registro.LogError(
+            "ARCA simulada: el contador {Archivo} llegó al número máximo de comprobante para {Tipo}, punto de venta " +
+            "{PuntoVenta}.",
+            NombreArchivo,
+            tipo,
+            puntoVenta);
 
     private static string Clave(TipoComprobante tipo, int puntoVenta) =>
         $"{(tipo == TipoComprobante.FacturaB ? "B" : "C")}-{puntoVenta}";

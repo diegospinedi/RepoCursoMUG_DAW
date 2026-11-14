@@ -31,6 +31,8 @@ public sealed class FabricaApiArcaTests
             using var plazo = new CancellationTokenSource(TimeSpan.FromSeconds(30)); // sin plazo, no se autoriza
 
             Assert.Equal(EntornoArca.Simulado, autorizador.Entorno);
+            var numero = Assert.IsType<ResultadoProximoNumero.Numero>(
+                await autorizador.ProximoNumeroAsync(TipoComprobante.FacturaC, 3, plazo.Token));
             var resultado = await autorizador.AutorizarAsync(
                 new SolicitudComprobante(
                     TipoComprobante.FacturaC,
@@ -39,6 +41,7 @@ public sealed class FabricaApiArcaTests
                     ConceptoFactura.Productos,
                     ReceptorFactura.SinIdentificar,
                     ImportesFactura.ParaFacturaC(1000m)),
+                numero.Valor,
                 plazo.Token);
             Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
         }
@@ -67,6 +70,8 @@ public sealed class FabricaApiArcaTests
             using var plazo = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
             Assert.Equal(TimeSpan.FromSeconds(FabricaApi.TiempoMaximoArcaSegundos), autorizador.TiempoMaximo);
+            var numero = Assert.IsType<ResultadoProximoNumero.Numero>(
+                await autorizador.ProximoNumeroAsync(TipoComprobante.FacturaC, 3, plazo.Token));
             var resultado = await autorizador.AutorizarAsync(
                 new SolicitudComprobante(
                     TipoComprobante.FacturaC,
@@ -75,6 +80,7 @@ public sealed class FabricaApiArcaTests
                     ConceptoFactura.Productos,
                     ReceptorFactura.SinIdentificar,
                     ImportesFactura.ParaFacturaC(1000m)),
+                numero.Valor,
                 plazo.Token);
             Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
         }

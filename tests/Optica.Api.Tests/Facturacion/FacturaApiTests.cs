@@ -384,7 +384,16 @@ public sealed class FacturaApiTests
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
-        public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion) =>
+        public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+
+        public Task<ResultadoAutorizacion> AutorizarAsync(
+            SolicitudComprobante solicitud, long numero, CancellationToken cancelacion) =>
+            throw new InvalidOperationException(Texto);
+
+        public Task<ResultadoConsulta> ConsultarAsync(
+            TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
             throw new InvalidOperationException(Texto);
     }
 
@@ -403,21 +412,32 @@ public sealed class FacturaApiTests
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
+        public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+
         public async Task<ResultadoAutorizacion> AutorizarAsync(
-            SolicitudComprobante solicitud, CancellationToken cancelacion)
+            SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
         {
             Interlocked.Increment(ref _llamadas);
             Llamado.TrySetResult();
             await Liberar.Task.WaitAsync(TimeSpan.FromSeconds(60), CancellationToken.None);
-            return new ResultadoAutorizacion.Autorizada(125, "71234567890123", solicitud.Fecha.AddDays(10));
+            return new ResultadoAutorizacion.Autorizada(numero, "71234567890123", solicitud.Fecha.AddDays(10));
         }
+
+        public Task<ResultadoConsulta> ConsultarAsync(
+            TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
     }
 }
 
 /// <summary>
 /// Envuelve el autorizador que registró la raíz de composición (el simulador) y avisa en <see cref="Llamado"/> cuando
-/// recibe la solicitud. Para las pruebas de "sin respuesta": el plazo de la emisión ya corre en ese momento (se crea
-/// antes de pedir el candado, D-32), así que la prueba adelanta el reloj de la fábrica una sola vez, sin esperas reales.
+/// la autorización ya está en curso. Para las pruebas de "sin respuesta": el plazo de la emisión ya corre en ese momento
+/// (se crea antes de pedir el candado, D-32), así que la prueba adelanta el reloj de la fábrica una sola vez, sin esperas
+/// reales. D-25: el aviso va después de que el autorizador real devolvió su tarea; el simulador con
+/// <c>no_responder</c> registra la espera de la cancelación antes de devolverla, así que adelantar el reloj ya no puede
+/// caer antes de que empiece a esperar (lo que lo hacía responder "no enviada").
 /// </summary>
 internal sealed class AutorizadorConSenal(IAutorizadorComprobantes real, TaskCompletionSource llamado)
     : IAutorizadorComprobantes
@@ -426,11 +446,21 @@ internal sealed class AutorizadorConSenal(IAutorizadorComprobantes real, TaskCom
 
     public TimeSpan TiempoMaximo => real.TiempoMaximo;
 
-    public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+        real.ProximoNumeroAsync(tipo, puntoVenta, cancelacion);
+
+    public Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
+        var autorizacion = real.AutorizarAsync(solicitud, numero, cancelacion);
         llamado.TrySetResult();
-        return real.AutorizarAsync(solicitud, cancelacion);
+        return autorizacion;
     }
+
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
+        real.ConsultarAsync(tipo, puntoVenta, numero, cancelacion);
 
     /// <summary>
     /// Reemplaza el registro del autorizador por su versión con señal y devuelve la señal: se completa cuando el

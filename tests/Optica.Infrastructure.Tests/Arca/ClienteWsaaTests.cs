@@ -186,7 +186,7 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
         var autorizador = _escenario.CrearAutorizador();
 
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(AutorizadorWsfe.MotivoAcceso, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
         Assert.Empty(_escenario.Manejador.PedidosDe("FECompUltimoAutorizado"));
@@ -206,7 +206,7 @@ public sealed class ClienteWsaaTests : IDisposable
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
 
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
         Assert.False(emision.IsCompleted);
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
@@ -237,7 +237,7 @@ public sealed class ClienteWsaaTests : IDisposable
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
 
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         var resultado = await emision.WaitAsync(TimeSpan.FromSeconds(10));
@@ -249,7 +249,7 @@ public sealed class ClienteWsaaTests : IDisposable
         liberar.SetResult();
         Assert.True(await EscenarioArca.EsperarAsync(() => File.Exists(_escenario.ArchivoTicket)));
 
-        var siguiente = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var siguiente = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
         Assert.IsType<ResultadoAutorizacion.Autorizada>(siguiente);
         Assert.Single(_escenario.Manejador.PedidosDe("loginCms"));
         Assert.Equal(EscenarioArca.Token, _escenario.Manejador.PedidosDe("FECAESolicitar").Single().Valor("Token"));
@@ -263,7 +263,7 @@ public sealed class ClienteWsaaTests : IDisposable
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
 
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(await emision.WaitAsync(TimeSpan.FromSeconds(10)));
@@ -279,7 +279,7 @@ public sealed class ClienteWsaaTests : IDisposable
         Assert.All(_escenario.Registro.Entradas, entrada => Assert.Null(entrada.Excepcion));
 
         _escenario.Manejador.Responder("loginCms", "wsaa-login-ok");
-        var siguiente = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var siguiente = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
         Assert.IsType<ResultadoAutorizacion.Autorizada>(siguiente);
         Assert.Equal(2, _escenario.Manejador.PedidosDe("loginCms").Count);
     }
@@ -298,7 +298,7 @@ public sealed class ClienteWsaaTests : IDisposable
         if (origen == "memoria")
         {
             Assert.IsType<ResultadoAutorizacion.Autorizada>(
-                await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
+                await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
             _escenario.Reloj.SetUtcNow(EscenarioArca.VencimientoTicket.AddMinutes(-5));
         }
         else
@@ -311,7 +311,7 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
         var loginsAntes = _escenario.Manejador.PedidosDe("loginCms").Count;
 
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
         Assert.Equal(loginsAntes + 1, _escenario.Manejador.PedidosDe("loginCms").Count);
@@ -326,7 +326,7 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(AutorizadorWsfe.MotivoAcceso, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
     }
@@ -421,9 +421,9 @@ public sealed class ClienteWsaaTests : IDisposable
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
 
-        var primera = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var primera = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
-        var segunda = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var segunda = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(await primera.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.False(segunda.IsCompleted);
@@ -447,9 +447,9 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
         var autorizador = _escenario.CrearAutorizador();
 
-        var primera = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var primera = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
         _escenario.Reloj.Advance(TimeSpan.FromMinutes(2));
-        var segunda = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var segunda = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.Autorizada>(primera);
         Assert.IsType<ResultadoAutorizacion.Autorizada>(segunda);
@@ -459,7 +459,7 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Reloj.Advance(TimeSpan.FromMinutes(4));
         _escenario.Manejador.Responder("loginCms", "wsaa-login-ok");
         Assert.IsType<ResultadoAutorizacion.Autorizada>(
-            await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
+            await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
         Assert.Equal(2, _escenario.Manejador.PedidosDe("loginCms").Count);
         Assert.Equal(EscenarioArca.Token, _escenario.Manejador.PedidosDe("FECAESolicitar").Last().Valor("Token"));
     }
@@ -474,7 +474,7 @@ public sealed class ClienteWsaaTests : IDisposable
         var liberar = RetenerLogin();
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         await emision.WaitAsync(TimeSpan.FromSeconds(10));
@@ -499,7 +499,7 @@ public sealed class ClienteWsaaTests : IDisposable
         _escenario.Manejador.NoResponder("loginCms");
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("loginCms").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         await emision.WaitAsync(TimeSpan.FromSeconds(10));

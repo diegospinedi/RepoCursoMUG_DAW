@@ -199,6 +199,7 @@ internal sealed class ManejadorArcaFalso : HttpMessageHandler
         Responder("loginCms", "wsaa-login-ok");
         Responder("FECompUltimoAutorizado", "wsfe-ultimo-ok");
         Responder("FECAESolicitar", "wsfe-cae-aprobado");
+        Responder("FECompConsultar", "wsfe-consultar-autorizado");
     }
 
     public IReadOnlyList<PedidoArca> Pedidos => _pedidos.ToArray();

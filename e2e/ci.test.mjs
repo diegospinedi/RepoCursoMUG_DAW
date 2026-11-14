@@ -935,6 +935,8 @@ describe('pruebas sin servicios externos', () => {
       'ar.gov.afip.dif.FEV1/',
       'ar.gov.afip.dif.FEV1/FECAESolicitar',
       'ar.gov.afip.dif.FEV1/FECompUltimoAutorizado',
+      // FEAT-008: la consulta por número (FECompConsultar) del cliente de WSFEv1.
+      'ar.gov.afip.dif.FEV1/FECompConsultar',
       'wsaahomo.afip.gov.ar/ws/services/LoginCms',
       'wswhomo.afip.gov.ar/wsfev1/service.asmx',
     ]) {
@@ -955,6 +957,7 @@ describe('pruebas sin servicios externos', () => {
       ['schemas.xmlsoap.org/wsdl/', 'schemas.xmlsoap.org'],
       ['ar.gov.afip.dif.FEV1/FECAEAConsultar', 'ar.gov.afip.dif.fev1'],
       ['ar.gov.afip.dif.FEV1/fecaesolicitar', 'ar.gov.afip.dif.fev1'],
+      ['ar.gov.afip.dif.FEV1/fecompconsultar', 'ar.gov.afip.dif.fev1'],
       ['wsaahomo.afip.gov.ar/', 'wsaahomo.afip.gov.ar'],
       ['wsaahomo.afip.gov.ar/ws/services/LoginCms/otra', 'wsaahomo.afip.gov.ar'],
       ['wswhomo.afip.gov.ar/wsfev1/service.asmx/otra', 'wswhomo.afip.gov.ar'],

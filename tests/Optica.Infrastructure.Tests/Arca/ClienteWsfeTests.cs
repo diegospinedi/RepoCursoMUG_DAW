@@ -31,7 +31,7 @@ public sealed class ClienteWsfeTests : IDisposable
             ReceptorFactura.ConDni(EscenarioArca.Dni),
             ImportesFactura.ParaFacturaB(1815m, 21m));
 
-        var resultado = await _escenario.CrearAutorizador().AutorizarAsync(solicitud, _escenario.Abierto);
+        var resultado = await _escenario.CrearAutorizador().EmitirAsync(solicitud, _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
 
@@ -92,7 +92,7 @@ public sealed class ClienteWsfeTests : IDisposable
     [Fact]
     public async Task Wsfe_FacturaB_SinIdentificar_DocTipo99YDocNro0()
     {
-        await _escenario.CrearAutorizador().AutorizarAsync(
+        await _escenario.CrearAutorizador().EmitirAsync(
             new SolicitudComprobante(
                 TipoComprobante.FacturaB,
                 3,
@@ -126,7 +126,7 @@ public sealed class ClienteWsfeTests : IDisposable
             ReceptorFactura.SinIdentificar,
             ImportesFactura.ParaFacturaC(1815m));
 
-        await _escenario.CrearAutorizador().AutorizarAsync(solicitud, _escenario.Abierto);
+        await _escenario.CrearAutorizador().EmitirAsync(solicitud, _escenario.Abierto);
 
         Assert.Equal("11", Assert.Single(_escenario.Manejador.PedidosDe("FECompUltimoAutorizado")).Valor("CbteTipo"));
         var pedido = Assert.Single(_escenario.Manejador.PedidosDe("FECAESolicitar"));
@@ -155,8 +155,8 @@ public sealed class ClienteWsfeTests : IDisposable
             ImportesFactura.ParaFacturaB(1210m, 21m));
         var autorizador = _escenario.CrearAutorizador();
 
-        await autorizador.AutorizarAsync(conServicios, _escenario.Abierto);
-        await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        await autorizador.EmitirAsync(conServicios, _escenario.Abierto);
+        await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         var pedidos = _escenario.Manejador.PedidosDe("FECAESolicitar");
         Assert.Equal(2, pedidos.Count);
@@ -202,7 +202,7 @@ public sealed class ClienteWsfeTests : IDisposable
         }
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         // Sin el último número no se envía el pedido de autorización (D-16): no enviada, sin pendiente.
         Assert.Equal(

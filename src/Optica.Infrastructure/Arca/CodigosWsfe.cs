@@ -28,6 +28,12 @@ public static class CodigosWsfe
     /// <summary><c>MonCotiz</c> de pesos argentinos.</summary>
     public const int CotizacionPesos = 1;
 
+    /// <summary>
+    /// El error de <c>FECompConsultar</c> "No existen datos en nuestros registros para los parámetros ingresados": ARCA no
+    /// tiene un comprobante con ese tipo, punto de venta y número (FR-04, FECompConsultar "no autorizado").
+    /// </summary>
+    public const int SinDatos = 602;
+
     /// <summary><c>CbteTipo</c>: Factura B 6, Factura C 11.</summary>
     /// <exception cref="ArgumentOutOfRangeException">El tipo no está definido.</exception>
     public static int Tipo(TipoComprobante tipo) => tipo switch

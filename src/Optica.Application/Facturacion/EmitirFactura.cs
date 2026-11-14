@@ -183,7 +183,16 @@ public sealed class EmitirFactura(
                 return new ResultadoAutorizacion.NoEnviada(MotivoOtraEmision);
             }
 
-            return await autorizador.AutorizarAsync(solicitud, plazo.Token);
+            // Adaptación mínima al puerto de ADR-025 (Block 2 de FEAT-008): el próximo número y la autorización con él,
+            // dentro del mismo turno y plazo. El Block 4 graba la pendiente con ese número antes de enviar.
+            var proximo = await autorizador.ProximoNumeroAsync(solicitud.Tipo, solicitud.PuntoVenta, plazo.Token);
+            return proximo switch
+            {
+                ResultadoProximoNumero.Numero numero =>
+                    await autorizador.AutorizarAsync(solicitud, numero.Valor, plazo.Token),
+                ResultadoProximoNumero.NoEnviada noEnviada => new ResultadoAutorizacion.NoEnviada(noEnviada.Motivo),
+                _ => throw new InvalidOperationException("Resultado del próximo número de ARCA no previsto."),
+            };
         }
         finally
         {

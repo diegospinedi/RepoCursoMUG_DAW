@@ -24,7 +24,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
     {
         var autorizador = _escenario.CrearAutorizador();
 
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         var autorizada = Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
         Assert.Equal(125, autorizada.Numero);
@@ -45,7 +45,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         _escenario.Manejador.Responder("FECAESolicitar", respuesta);
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         var rechazada = Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
         Assert.Equal(codigo, rechazada.Codigo);
@@ -71,7 +71,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
                 larga));
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(new string('x', 500), Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado).Descripcion);
     }
@@ -84,7 +84,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         var autorizador = _escenario.CrearAutorizador();
         using var plazo = _escenario.Plazo();
 
-        var emision = autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("FECAESolicitar").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(29));
         await Task.Delay(50);
@@ -103,7 +103,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         using var cancelado = new CancellationTokenSource();
         await cancelado.CancelAsync();
 
-        var resultado = await _escenario.CrearAutorizador().AutorizarAsync(SolicitudesArca.FacturaB(), cancelado.Token);
+        var resultado = await _escenario.CrearAutorizador().EmitirAsync(SolicitudesArca.FacturaB(), cancelado.Token);
 
         Assert.Equal(
             AutorizadorWsfe.MotivoCancelada, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
@@ -171,7 +171,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         }
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         // Ya se envió el pedido de autorización: no se sabe si ARCA autorizó (D-16, FR-24).
         Assert.IsType<ResultadoAutorizacion.SinRespuesta>(resultado);
@@ -205,7 +205,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         }
 
         var resultado = await _escenario.CrearAutorizador(clave, ruta)
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(
             AutorizadorWsfe.MotivoCertificado, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
@@ -228,7 +228,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         _escenario.Manejador.Responder("FECAESolicitar", "wsfe-cae-con-dtd");
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.SinRespuesta>(resultado);
 
@@ -239,7 +239,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
             EscenarioArca.Respuesta("wsaa-login-ok").Replace(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE soapenv:Envelope [<!ENTITY x \"y\">]>"));
-        var enWsaa = await otro.CrearAutorizador().AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+        var enWsaa = await otro.CrearAutorizador().EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(enWsaa);
         Assert.Empty(otro.Manejador.PedidosDe("FECAESolicitar"));
     }
@@ -258,17 +258,17 @@ public sealed class AutorizadorWsfeTests : IDisposable
 
         // Autorizada, rechazada (con el DNI en la descripción de ARCA), sin respuesta y certificado ilegible.
         var autorizador = _escenario.CrearAutorizador();
-        Assert.IsType<ResultadoAutorizacion.Autorizada>(await autorizador.AutorizarAsync(conDni, _escenario.Abierto));
+        Assert.IsType<ResultadoAutorizacion.Autorizada>(await autorizador.EmitirAsync(conDni, _escenario.Abierto));
         _escenario.Manejador.Responder("FECAESolicitar", "wsfe-cae-errors");
-        Assert.IsType<ResultadoAutorizacion.Rechazada>(await autorizador.AutorizarAsync(conDni, _escenario.Abierto));
+        Assert.IsType<ResultadoAutorizacion.Rechazada>(await autorizador.EmitirAsync(conDni, _escenario.Abierto));
         _escenario.Manejador.ResponderTexto("FECAESolicitar", "ilegible");
-        Assert.IsType<ResultadoAutorizacion.SinRespuesta>(await autorizador.AutorizarAsync(conDni, _escenario.Abierto));
+        Assert.IsType<ResultadoAutorizacion.SinRespuesta>(await autorizador.EmitirAsync(conDni, _escenario.Abierto));
         File.Delete(_escenario.ArchivoTicket);
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(await _escenario.CrearAutorizador(claveCertificado: "otra-clave")
-            .AutorizarAsync(conDni, _escenario.Abierto));
+            .EmitirAsync(conDni, _escenario.Abierto));
         _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
         Assert.IsType<ResultadoAutorizacion.NoEnviada>(await _escenario.CrearAutorizador()
-            .AutorizarAsync(conDni, _escenario.Abierto));
+            .EmitirAsync(conDni, _escenario.Abierto));
 
         var cms = _escenario.Manejador.PedidosDe("loginCms")[0].Valor("in0")!;
         var entradas = _escenario.Registro.Entradas;
@@ -294,7 +294,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
     {
         var autorizador = _escenario.CrearAutorizador();
 
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(puntoVenta: 7), _escenario.Abierto);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(puntoVenta: 7), _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado);
         Assert.Equal(EntornoArca.Homologacion, autorizador.Entorno);
@@ -322,7 +322,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
     public async Task Autorizador_TokenSinPlazo_NoEnviadaSinRed()
     {
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
+            .EmitirAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
 
         Assert.Equal(
             AutorizadorWsfe.MotivoSinPlazo, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
@@ -336,7 +336,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         _escenario.Manejador.Responder("FECAESolicitar", "wsfe-cae-aprobado-con-errors");
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.IsType<ResultadoAutorizacion.SinRespuesta>(resultado);
     }
@@ -355,7 +355,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         ResultadoAutorizacion? resultado = null;
 
         var excepcion = await Record.ExceptionAsync(async () => resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
 
         Assert.Null(excepcion);
         Assert.IsType<ResultadoAutorizacion.SinRespuesta>(resultado);
@@ -374,7 +374,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         ResultadoAutorizacion? resultado = null;
 
         var excepcion = await Record.ExceptionAsync(async () => resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto));
 
         Assert.Null(excepcion);
         Assert.Equal(
@@ -397,7 +397,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
                 "Uno\tdos\r\ntres\u0085cuatro‮cinco\u009B seis"));
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         var rechazada = Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
         Assert.Equal("Uno dos tres cuatrocinco seis", rechazada.Descripcion);
@@ -420,7 +420,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
                 : rechazo[..inicio] + rechazo[fin..]);
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         var rechazada = Assert.IsType<ResultadoAutorizacion.Rechazada>(resultado);
         Assert.Equal(codigo, rechazada.Codigo);
@@ -434,7 +434,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         _escenario.Manejador.NoResponder("FECompUltimoAutorizado");
         using var plazo = _escenario.Plazo();
 
-        var emision = _escenario.CrearAutorizador().AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var emision = _escenario.CrearAutorizador().EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
         await _escenario.Manejador.Recibido("FECompUltimoAutorizado").WaitAsync(TimeSpan.FromSeconds(10));
         _escenario.Reloj.Advance(TimeSpan.FromSeconds(30));
         var resultado = await emision.WaitAsync(TimeSpan.FromSeconds(10));
@@ -457,7 +457,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
             Content = new ContenidoQueCancelaAlTerminar(EscenarioArca.Respuesta("wsfe-ultimo-ok"), plazo),
         }));
 
-        var resultado = await _escenario.CrearAutorizador().AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var resultado = await _escenario.CrearAutorizador().EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
 
         Assert.True(plazo.IsCancellationRequested);
         Assert.Equal(
@@ -476,7 +476,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
             EscenarioArca.Respuesta("wsfe-ultimo-ok").Replace("<CbteNro>124</CbteNro>", "<CbteNro>99999999</CbteNro>"));
 
         var resultado = await _escenario.CrearAutorizador()
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(
             AutorizadorWsfe.MotivoUltimoNumero, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
@@ -510,7 +510,7 @@ public sealed class AutorizadorWsfeTests : IDisposable
         }
 
         var resultado = await _escenario.CrearAutorizador(rutaCertificado: ruta)
-            .AutorizarAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
+            .EmitirAsync(SolicitudesArca.FacturaB(), _escenario.Abierto);
 
         Assert.Equal(
             AutorizadorWsfe.MotivoCertificado, Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado).Motivo);
@@ -518,5 +518,282 @@ public sealed class AutorizadorWsfeTests : IDisposable
         Assert.Contains(_escenario.Registro.Entradas, entrada => entrada.Nivel == LogLevel.Error);
         Assert.DoesNotContain(_escenario.Registro.Entradas, entrada =>
             entrada.Texto.Contains(ruta, StringComparison.Ordinal) || entrada.Excepcion is not null);
+    }
+
+    // ---- Spec FEAT-008, Block 2: el puerto con tres operaciones (ADR-025) ----
+
+    /// <summary>AC-01: el próximo número es el último autorizado de WSFEv1 + 1, del tipo y punto de venta pedidos.</summary>
+    [Fact]
+    public async Task ProximoNumero_UltimoMasUno()
+    {
+        var resultado = await _escenario.CrearAutorizador()
+            .ProximoNumeroAsync(TipoComprobante.FacturaB, 7, _escenario.Abierto);
+
+        Assert.Equal(125, Assert.IsType<ResultadoProximoNumero.Numero>(resultado).Valor);
+        var pedido = Assert.Single(_escenario.Manejador.PedidosDe("FECompUltimoAutorizado"));
+        Assert.Equal("7", pedido.Valor("PtoVta"));
+        Assert.Equal("6", pedido.Valor("CbteTipo"));
+        Assert.Empty(_escenario.Manejador.PedidosDe("FECAESolicitar"));
+    }
+
+    /// <summary>AC-01: la autorización usa el número recibido y no vuelve a pedir el último autorizado.</summary>
+    [Fact]
+    public async Task Autorizar_UsaElNumeroRecibido()
+    {
+        _escenario.Manejador.ResponderTexto(
+            "FECAESolicitar",
+            EscenarioArca.Respuesta("wsfe-cae-aprobado")
+                .Replace("<CbteDesde>125</CbteDesde>", "<CbteDesde>300</CbteDesde>")
+                .Replace("<CbteHasta>125</CbteHasta>", "<CbteHasta>300</CbteHasta>"));
+
+        var resultado = await _escenario.CrearAutorizador()
+            .AutorizarAsync(SolicitudesArca.FacturaB(), 300, _escenario.Abierto);
+
+        Assert.Equal(300, Assert.IsType<ResultadoAutorizacion.Autorizada>(resultado).Numero);
+        Assert.Empty(_escenario.Manejador.PedidosDe("FECompUltimoAutorizado"));
+        var pedido = Assert.Single(_escenario.Manejador.PedidosDe("FECAESolicitar"));
+        Assert.Equal("300", pedido.Valor("CbteDesde"));
+        Assert.Equal("300", pedido.Valor("CbteHasta"));
+    }
+
+    /// <summary>AC-05: FECompConsultar del número con resultado A devuelve el total, el CAE, su vencimiento y la fecha.</summary>
+    [Fact]
+    public async Task Consultar_Autorizado_DevuelveTotalCaeVencimientoYFecha()
+    {
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        var autorizado = Assert.IsType<ResultadoConsulta.Autorizado>(resultado);
+        Assert.Equal(1815m, autorizado.Total);
+        Assert.Equal("12345678901234", autorizado.Cae);
+        Assert.Equal(new DateOnly(2026, 11, 9), autorizado.Vencimiento);
+        Assert.Equal(new DateOnly(2026, 10, 30), autorizado.Fecha);
+
+        // Un solo pedido, autenticado, con el tipo, el número y el punto de venta, a la acción SOAP de la consulta.
+        var pedido = Assert.Single(_escenario.Manejador.PedidosDe("FECompConsultar"));
+        Assert.Equal("https://wswhomo.afip.gov.ar/wsfev1/service.asmx", pedido.Url.ToString());
+        Assert.Equal("http://ar.gov.afip.dif.FEV1/FECompConsultar", pedido.AccionSoap);
+        Assert.Equal(EscenarioArca.Token, pedido.Valor("Token"));
+        Assert.Equal(EscenarioArca.Cuit, pedido.Valor("Cuit"));
+        Assert.Equal("6", pedido.Valor("CbteTipo"));
+        Assert.Equal("125", pedido.Valor("CbteNro"));
+        Assert.Equal("3", pedido.Valor("PtoVta"));
+        Assert.Empty(_escenario.Manejador.PedidosDe("FECAESolicitar"));
+        Assert.Empty(_escenario.Manejador.PedidosDe("FECompUltimoAutorizado"));
+    }
+
+    /// <summary>AC-06: el código 602 (sin datos para esos parámetros) es "no autorizado".</summary>
+    [Fact]
+    public async Task Consultar_Error602_NoAutorizado()
+    {
+        _escenario.Manejador.Responder("FECompConsultar", "wsfe-consultar-602");
+
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        Assert.IsType<ResultadoConsulta.NoAutorizado>(resultado);
+        Assert.Equal(602, CodigosWsfe.SinDatos);
+    }
+
+    /// <summary>Sad path: un token que no se puede cancelar no trae plazo; no consultada sin tocar la red.</summary>
+    [Fact]
+    public async Task Consultar_TokenSinPlazo_NoConsultadaSinRed()
+    {
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, CancellationToken.None);
+
+        Assert.Equal(
+            AutorizadorWsfe.MotivoSinPlazo, Assert.IsType<ResultadoConsulta.NoConsultada>(resultado).Motivo);
+        Assert.Empty(_escenario.Manejador.Pedidos);
+    }
+
+    /// <summary>Sad path: WSAA no da el acceso; no consultada con el motivo fijo, sin pedir FECompConsultar.</summary>
+    [Fact]
+    public async Task Consultar_FallaWsaa_NoConsultada()
+    {
+        _escenario.Manejador.Responder("loginCms", "wsaa-fault-ya-posee-ta", HttpStatusCode.InternalServerError);
+
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        Assert.Equal(AutorizadorWsfe.MotivoAcceso, Assert.IsType<ResultadoConsulta.NoConsultada>(resultado).Motivo);
+        Assert.Empty(_escenario.Manejador.PedidosDe("FECompConsultar"));
+    }
+
+    public static TheoryData<string> ConsultasIlegibles() => new()
+    {
+        "no-xml",
+        "sin-resultado",
+        "con-dtd",
+        "mayor-1mb",
+        "cae-invalido",
+        "importe-invalido",
+        "vencimiento-invalido",
+        "fecha-invalida",
+        "numero-distinto",
+        "falla-de-red",
+        "602-con-resultget-A",
+        "602-con-http-500",
+        "pto-vta-distinto",
+        "tipo-distinto",
+    };
+
+    /// <summary>
+    /// Sad path: una respuesta ilegible, sin los nodos esperados, que no corresponde al comprobante pedido, con un 602
+    /// contradictorio (con datos del comprobante o con error HTTP) o una falla de la red después de enviar.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ConsultasIlegibles))]
+    public async Task Consultar_RespuestaIlegible_SinRespuesta(string caso)
+    {
+        var autorizado = EscenarioArca.Respuesta("wsfe-consultar-autorizado");
+        switch (caso)
+        {
+            case "no-xml":
+                _escenario.Manejador.ResponderTexto("FECompConsultar", "esto no es XML");
+                break;
+            case "sin-resultado":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar",
+                    """<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>""");
+                break;
+            case "con-dtd":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar",
+                    autorizado.Replace(
+                        "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+                        "<?xml version=\"1.0\" encoding=\"utf-8\"?><!DOCTYPE soap:Envelope [<!ENTITY x \"y\">]>"));
+                break;
+            case "mayor-1mb":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar",
+                    autorizado.Replace("<EmisionTipo>CAE</EmisionTipo>", $"<EmisionTipo>CAE</EmisionTipo><!--{new string('x', 1024 * 1024)}-->"));
+                break;
+            case "cae-invalido":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<CodAutorizacion>12345678901234</CodAutorizacion>", "<CodAutorizacion>1234</CodAutorizacion>"));
+                break;
+            case "importe-invalido":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<ImpTotal>1815.00</ImpTotal>", "<ImpTotal>1.815,00</ImpTotal>"));
+                break;
+            case "vencimiento-invalido":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<FchVto>20261109</FchVto>", "<FchVto>2026-11-09</FchVto>"));
+                break;
+            case "fecha-invalida":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<CbteFch>20261030</CbteFch>", "<CbteFch></CbteFch>"));
+                break;
+            case "numero-distinto":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<CbteDesde>125</CbteDesde>", "<CbteDesde>126</CbteDesde>"));
+                break;
+            case "602-con-resultget-A":
+                _escenario.Manejador.Responder("FECompConsultar", "wsfe-consultar-602-con-resultget");
+                break;
+            case "602-con-http-500":
+                _escenario.Manejador.Responder(
+                    "FECompConsultar", "wsfe-consultar-602", HttpStatusCode.InternalServerError);
+                break;
+            case "pto-vta-distinto":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<PtoVta>3</PtoVta>", "<PtoVta>4</PtoVta>"));
+                break;
+            case "tipo-distinto":
+                _escenario.Manejador.ResponderTexto(
+                    "FECompConsultar", autorizado.Replace("<CbteTipo>6</CbteTipo>", "<CbteTipo>11</CbteTipo>"));
+                break;
+            default:
+                _escenario.Manejador.Responder(
+                    "FECompConsultar", (_, _) => throw new HttpRequestException("conexión cortada"));
+                break;
+        }
+
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        Assert.IsType<ResultadoConsulta.SinRespuesta>(resultado);
+        Assert.Contains(_escenario.Registro.Entradas, entrada => entrada.Nivel >= LogLevel.Warning);
+        Assert.All(_escenario.Registro.Entradas, entrada => Assert.Null(entrada.Excepcion));
+        Assert.DoesNotContain(_escenario.Registro.Entradas, entrada =>
+            entrada.Texto.Contains("conexión cortada", StringComparison.Ordinal));
+    }
+
+    /// <summary>AC-11 con reloj controlado: enviada la consulta, el plazo de 30 s vence sin respuesta; un solo pedido.</summary>
+    [Fact]
+    public async Task Consultar_Timeout_SinRespuesta()
+    {
+        _escenario.Manejador.NoResponder("FECompConsultar");
+        var autorizador = _escenario.CrearAutorizador();
+        using var plazo = _escenario.Plazo();
+
+        var consulta = autorizador.ConsultarAsync(TipoComprobante.FacturaB, 3, 125, plazo.Token);
+        await _escenario.Manejador.Recibido("FECompConsultar").WaitAsync(TimeSpan.FromSeconds(10));
+        _escenario.Reloj.Advance(TimeSpan.FromSeconds(29));
+        await Task.Delay(50);
+        Assert.False(consulta.IsCompleted);
+        _escenario.Reloj.Advance(TimeSpan.FromSeconds(1));
+        var resultado = await consulta.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.IsType<ResultadoConsulta.SinRespuesta>(resultado);
+        Assert.Single(_escenario.Manejador.PedidosDe("FECompConsultar"));
+    }
+
+    /// <summary>Sad path: un error de ARCA distinto de 602 es "sin respuesta"; el log lleva el código y no el texto.</summary>
+    [Fact]
+    public async Task Consultar_OtroError_SinRespuesta()
+    {
+        _escenario.Manejador.Responder("FECompConsultar", "wsfe-consultar-error");
+
+        var resultado = await _escenario.CrearAutorizador()
+            .ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        Assert.IsType<ResultadoConsulta.SinRespuesta>(resultado);
+        Assert.Contains(_escenario.Registro.Entradas, entrada => entrada.Nivel >= LogLevel.Warning
+            && entrada.Texto.Contains("501", StringComparison.Ordinal));
+        Assert.DoesNotContain(_escenario.Registro.Entradas, entrada =>
+            entrada.Texto.Contains("Error interno de aplicacion", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// R-01 (D-14): la respuesta trae el documento del receptor (DocTipo/DocNro, y en un error, dentro del texto); ni el
+    /// log ni el resultado lo llevan. El resultado solo tiene total, CAE, vencimiento y fecha, y su ToString no muestra
+    /// valores.
+    /// </summary>
+    [Fact]
+    public async Task Consultar_RespuestaConDni_NiLogNiResultadoLoLlevan()
+    {
+        var autorizador = _escenario.CrearAutorizador();
+        Assert.Contains(EscenarioArca.Dni, EscenarioArca.Respuesta("wsfe-consultar-autorizado"), StringComparison.Ordinal);
+        Assert.Contains(EscenarioArca.Dni, EscenarioArca.Respuesta("wsfe-consultar-error"), StringComparison.Ordinal);
+
+        var autorizado = await autorizador.ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+        _escenario.Manejador.Responder("FECompConsultar", "wsfe-consultar-error");
+        var conError = await autorizador.ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+        _escenario.Manejador.Responder("FECompConsultar", "wsfe-consultar-602");
+        var sinDatos = await autorizador.ConsultarAsync(TipoComprobante.FacturaB, 3, 125, _escenario.Abierto);
+
+        Assert.IsType<ResultadoConsulta.Autorizado>(autorizado);
+        Assert.IsType<ResultadoConsulta.SinRespuesta>(conError);
+        Assert.IsType<ResultadoConsulta.NoAutorizado>(sinDatos);
+        Assert.Equal(
+            ["Cae", "Fecha", "Total", "Vencimiento"],
+            typeof(ResultadoConsulta.Autorizado).GetProperties().Select(propiedad => propiedad.Name).Order().ToArray());
+        foreach (var resultado in new[] { autorizado, conError, sinDatos })
+        {
+            var texto = resultado.ToString() ?? string.Empty;
+            Assert.DoesNotContain(EscenarioArca.Dni.TrimStart('0'), texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("12345678901234", texto, StringComparison.Ordinal);
+            Assert.DoesNotContain("1815", texto, StringComparison.Ordinal);
+        }
+
+        var entradas = _escenario.Registro.Entradas;
+        Assert.NotEmpty(entradas);
+        Assert.All(entradas, entrada => Assert.Null(entrada.Excepcion));
+        foreach (var secreto in _escenario.Centinelas())
+        {
+            Assert.DoesNotContain(entradas, entrada => entrada.Texto.Contains(secreto, StringComparison.Ordinal));
+        }
     }
 }

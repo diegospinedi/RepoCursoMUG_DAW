@@ -186,7 +186,7 @@ public sealed class OpcionesArcaTests : IDisposable
         servicios.ValidarArca(); // arranca: no lanza
         var autorizador = servicios.GetRequiredService<IAutorizadorComprobantes>();
 
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), CancellationToken.None);
 
         Assert.Equal(EntornoArca.Homologacion, autorizador.Entorno);
         var noEnviada = Assert.IsType<ResultadoAutorizacion.NoEnviada>(resultado);
@@ -276,7 +276,7 @@ public sealed class OpcionesArcaTests : IDisposable
 
         var autorizador = servicios.GetRequiredService<IAutorizadorComprobantes>();
         using var plazo = new CancellationTokenSource();
-        var resultado = await autorizador.AutorizarAsync(SolicitudesArca.FacturaB(), plazo.Token);
+        var resultado = await autorizador.EmitirAsync(SolicitudesArca.FacturaB(), plazo.Token);
 
         Assert.Same(clienteSinRed, servicios.GetRequiredKeyedService<HttpClient>(ConfiguracionInfraestructura.ClaveClienteHttpArca));
         Assert.IsType<AutorizadorWsfe>(autorizador);

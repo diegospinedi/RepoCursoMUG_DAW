@@ -82,3 +82,10 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   también sobre 12beb53 (antes de FEAT-008): `AutorizadorConSenal` avisa la llamada antes de que el simulador empiece a
   esperar, y si la prueba adelanta el reloj en ese hueco el resultado es "no enviada". Se corrige en el Block 2, que
   reescribe ese doble para el puerto nuevo (avisar después de que el autorizador real quedó esperando).
+- **D-26 (del agente, Block 2, supuestos del implementador, aprobados por D-21).** Tipo, punto de venta o número
+  fuera de rango en las operaciones del puerto lanzan `ArgumentException` (error de programación, no falla de ARCA);
+  en la consulta, un `Resultado` distinto de "A", un 602 mezclado con otros códigos o un `CbteDesde` distinto del pedido
+  son "sin respuesta" (camino conservador); la cancelación antes de consultar es "no consultada" con el texto de
+  cancelación existente; hasta el Block 3 el simulador numera con su contador e ignora el número recibido;
+  `ResultadoConsulta.Autorizado` exige total ≥ 0, CAE de 14 dígitos y fechas válidas. El implementador escribió algunos
+  archivos del bloque con la shell en lugar de Write/Edit (fase CODE, archivos del bloque); queda registrado.

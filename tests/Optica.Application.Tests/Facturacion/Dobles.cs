@@ -310,8 +310,10 @@ internal static class Configuraciones
 }
 
 /// <summary>
-/// Autorizador de ARCA de prueba: por defecto autoriza con números 125, 126… Anota cada solicitud, el token que
-/// recibió y si había una transacción abierta en el almacén al llamarlo. <see cref="Responder"/> permite otra respuesta.
+/// Autorizador de ARCA de prueba: por defecto el próximo número es 125, 126… y autoriza el número que recibe. Anota cada
+/// solicitud, el token que recibió y si había una transacción abierta en el almacén al llamarlo.
+/// <see cref="Responder"/> permite otra respuesta a la autorización, <see cref="ResponderProximo"/> otra al próximo
+/// número y <see cref="ResponderConsulta"/> otra a la consulta (por defecto, no autorizado).
 /// </summary>
 internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAutorizadorComprobantes
 {
@@ -323,6 +325,9 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
 
     public List<SolicitudComprobante> Solicitudes { get; } = [];
 
+    /// <summary>El número que recibió cada autorización.</summary>
+    public List<long> Numeros { get; } = [];
+
     public List<CancellationToken> Tokens { get; } = [];
 
     public List<bool> DentroDeTransaccion { get; } = [];
@@ -330,17 +335,42 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
     /// <summary>Las pendientes guardadas en el almacén en el momento de cada llamada.</summary>
     public List<int> PendientesAlLlamar { get; } = [];
 
-    /// <summary>Se completa en la primera llamada.</summary>
+    /// <summary>Cuántas veces se pidió el próximo número.</summary>
+    public int PedidosDeNumero { get; private set; }
+
+    /// <summary>Las consultas recibidas: tipo, punto de venta y número.</summary>
+    public List<(TipoComprobante Tipo, int PuntoVenta, long Numero)> Consultas { get; } = [];
+
+    /// <summary>Se completa en la primera autorización.</summary>
     public TaskCompletionSource Llamado { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Func<SolicitudComprobante, CancellationToken, Task<ResultadoAutorizacion>>? Responder { get; set; }
 
+    public Func<TipoComprobante, int, CancellationToken, Task<ResultadoProximoNumero>>? ResponderProximo { get; set; }
+
+    public Func<TipoComprobante, int, long, CancellationToken, Task<ResultadoConsulta>>? ResponderConsulta { get; set; }
+
+    /// <summary>Las autorizaciones pedidas.</summary>
     public int Llamadas => Solicitudes.Count;
 
-    public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+    {
+        PedidosDeNumero++;
+        if (ResponderProximo is { } responder)
+        {
+            return responder(tipo, puntoVenta, cancelacion);
+        }
+
+        return Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(_proximo));
+    }
+
+    public Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
         ArgumentNullException.ThrowIfNull(solicitud);
         Solicitudes.Add(solicitud);
+        Numeros.Add(numero);
         Tokens.Add(cancelacion);
         DentroDeTransaccion.Add(almacen?.EnTransaccion ?? false);
         PendientesAlLlamar.Add(almacen?.Pendientes.Count ?? 0);
@@ -350,8 +380,21 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
             return responder(solicitud, cancelacion);
         }
 
+        _proximo = numero + 1;
         return Task.FromResult<ResultadoAutorizacion>(
-            new ResultadoAutorizacion.Autorizada(_proximo++, "71234567890123", solicitud.Fecha.AddDays(10)));
+            new ResultadoAutorizacion.Autorizada(numero, "71234567890123", solicitud.Fecha.AddDays(10)));
+    }
+
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        Consultas.Add((tipo, puntoVenta, numero));
+        if (ResponderConsulta is { } responder)
+        {
+            return responder(tipo, puntoVenta, numero, cancelacion);
+        }
+
+        return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
     }
 
     /// <summary>Espera la cancelación del token y responde "sin respuesta", como ARCA que no contesta.</summary>
