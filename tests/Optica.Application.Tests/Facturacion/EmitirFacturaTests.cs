@@ -27,8 +27,14 @@ public sealed class EmitirFacturaTests
         _autorizador = new AutorizadorDoble(_almacen);
     }
 
-    private EmitirFactura Crear() =>
-        new(_almacen, _almacen, _almacen, _almacen, _almacen, _autorizador, _candado, _reloj, _registro);
+    private EmitirFactura Crear(AutorizadorDoble? autorizador = null, ICandadoEmision? candado = null)
+    {
+        var arca = autorizador ?? _autorizador;
+        return new EmitirFactura(
+            _almacen, _almacen, _almacen, _almacen, _almacen, arca, candado ?? _candado,
+            new ProcesoEmision(_almacen, _almacen, _almacen, _almacen, _almacen, arca, _reloj, _registro),
+            _reloj, _registro);
+    }
 
     private Task<ResultadoEmision> EmitirAsync(
         long numero = 1, string? concepto = EmitirFactura.ConceptoProductos, CancellationToken cancelacion = default) =>
@@ -203,8 +209,8 @@ public sealed class EmitirFacturaTests
         Assert.Equal(new DateOnly(2026, 11, 9), resultado.Factura.VencimientoCae);
         Assert.Equal(125, resultado.Factura.Numero);
         Assert.Equal(FacturaEmitida.TipoB, resultado.Factura.Tipo);
-        // Dos transacciones: la de la pendiente y la de la factura (D-09).
-        Assert.Equal(2, _almacen.TokensDeTransaccion.Count);
+        // Tres transacciones (ADR-025): la de lectura, la de la pendiente con número y la de la factura.
+        Assert.Equal(3, _almacen.TokensDeTransaccion.Count);
     }
 
     /// <summary>
@@ -383,7 +389,7 @@ public sealed class EmitirFacturaTests
 
     /// <summary>
     /// D-32 (sad path): otra emisión tiene el candado y no lo libera; a los 30 s esta responde "no enviada" sin llamar a
-    /// ARCA y sin dejar la pendiente.
+    /// ARCA. Desde FEAT-008 (ADR-025) la pendiente se graba con el turno tomado: mientras espera, no hay ninguna.
     /// </summary>
     [Fact]
     public async Task Emitir_OtraEmisionEnCurso_NoEnviadaTimeout()
@@ -395,7 +401,7 @@ public sealed class EmitirFacturaTests
         await _candado.Pedido.Task.WaitAsync(TimeSpan.FromSeconds(10));
         _reloj.Avanzar(TimeSpan.FromSeconds(29.9));
         Assert.False(_candado.Tokens[0].IsCancellationRequested, "La espera del candado venció antes de los 30 s.");
-        Assert.Single(_almacen.Pendientes);
+        Assert.Empty(_almacen.Pendientes);
 
         _reloj.Avanzar(TimeSpan.FromSeconds(0.1));
         Assert.True(_candado.Tokens[0].IsCancellationRequested, "La espera del candado no venció a los 30 s.");
@@ -459,8 +465,10 @@ public sealed class EmitirFacturaTests
         Assert.Empty(_almacen.Pendientes);
         Assert.False(_autorizador.Tokens[0].IsCancellationRequested);
         Assert.True(_autorizador.Tokens[0].CanBeCanceled);
-        Assert.Equal(2, _almacen.TokensDeTransaccion.Count);
+        // La de lectura usa el token del pedido; las que graban (pendiente y factura) no se cancelan (D-10).
+        Assert.Equal(3, _almacen.TokensDeTransaccion.Count);
         Assert.False(_almacen.TokensDeTransaccion[1].CanBeCanceled);
+        Assert.False(_almacen.TokensDeTransaccion[2].CanBeCanceled);
     }
 
     /// <summary>
@@ -552,9 +560,7 @@ public sealed class EmitirFacturaTests
         var presupuesto = _almacen.Sembrar(1);
         var otra = new AlmacenFacturacionConCarrera(_almacen, presupuesto);
 
-        var resultado = await new EmitirFactura(
-            otra, _almacen, otra, otra, otra, _autorizador, _candado, _reloj, _registro)
-            .EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+        var resultado = await CrearConCarrera(otra).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
 
         AfirmarConflicto(resultado, MotivoConflictoEmision.Pendiente);
         Assert.Equal(0, _autorizador.Llamadas);
@@ -568,9 +574,7 @@ public sealed class EmitirFacturaTests
         var presupuesto = _almacen.Sembrar(1);
         var otra = new AlmacenFacturacionConCarrera(_almacen, presupuesto, conFactura: true);
 
-        var resultado = await new EmitirFactura(
-            otra, _almacen, otra, otra, otra, _autorizador, _candado, _reloj, _registro)
-            .EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+        var resultado = await CrearConCarrera(otra).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
 
         AfirmarConflicto(resultado, MotivoConflictoEmision.Facturado);
         Assert.Equal(0, _autorizador.Llamadas);
@@ -643,9 +647,7 @@ public sealed class EmitirFacturaTests
         _almacen.Sembrar(1);
         _candado.AlTomar = () => _reloj.Avanzar(TimeSpan.FromMilliseconds(esperaMs));
 
-        var resultado = await new EmitirFactura(
-            _almacen, _almacen, _almacen, _almacen, _almacen, autorizador, _candado, _reloj, _registro)
-            .EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+        var resultado = await Crear(autorizador).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
 
         Assert.Equal(llamaAArca ? 1 : 0, autorizador.Llamadas);
         if (!llamaAArca)
@@ -658,7 +660,7 @@ public sealed class EmitirFacturaTests
     [Fact]
     public void MargenMaximo_DiezSegundos()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10), EmitirFactura.MargenMaximo);
+        Assert.Equal(TimeSpan.FromSeconds(10), ProcesoEmision.MargenMaximo);
     }
 
     /// <summary>
@@ -677,6 +679,99 @@ public sealed class EmitirFacturaTests
         Assert.Empty(_almacen.Facturas);
         Assert.Equal(1, _candado.Liberados);
     }
+
+    /// <summary>
+    /// F-1 de la auditoría, D-08 (conflict, sad path, NFR-02): dos pedidos del mismo presupuesto. El segundo lee el
+    /// presupuesto sin factura ni pendiente y espera el turno; el primero registra el 125, ARCA lo autoriza y su
+    /// transacción 2 graba la factura. Con el turno, el segundo pide el número, pero la transacción que graba su pendiente
+    /// vuelve a comprobar y encuentra la factura: conflicto <c>facturado</c> sin llamar a FECAESolicitar.
+    /// </summary>
+    [Fact]
+    public async Task Emitir_FacturaGrabadaPorOtroAntesDeLaPendiente_ConflictoSinEnviar()
+    {
+        _almacen.Sembrar(1);
+        var candado = new CandadoSerial();
+        var enProximo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var seguir = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pedidosDeNumero = 0;
+        _autorizador.ResponderProximo = async (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref pedidosDeNumero) == 1)
+            {
+                enProximo.TrySetResult();
+                await seguir.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                return new ResultadoProximoNumero.Numero(125);
+            }
+
+            return new ResultadoProximoNumero.Numero(126);
+        };
+
+        var primero = Crear(candado: candado).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+        await enProximo.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var segundo = Crear(candado: candado).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+        // El segundo ya pasó su lectura (sin factura ni pendiente) y espera el turno.
+        await candado.SegundoPedido.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        seguir.TrySetResult();
+
+        var emitida = await primero.WaitAsync(TimeSpan.FromSeconds(10));
+        var conflicto = await segundo.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(emitida.EsEmitida);
+        AfirmarConflicto(conflicto, MotivoConflictoEmision.Facturado);
+        Assert.Equal(2, pedidosDeNumero);
+        Assert.Equal([125L], _autorizador.Numeros);
+        Assert.Single(_almacen.Facturas);
+        Assert.Empty(_almacen.Pendientes);
+        Assert.Equal(2, candado.Liberados);
+    }
+
+    /// <summary>
+    /// NFR-02 (duplicate, sad path): dos pedidos del mismo presupuesto a la vez, con el candado real de a un turno. ARCA
+    /// recibe una sola solicitud, con su número registrado en la pendiente antes de enviarla; el otro pedido es un
+    /// conflicto y al final queda una factura y ninguna pendiente.
+    /// </summary>
+    [Fact]
+    public async Task Emitir_DosPedidosEnParalelo_UnSoloComprobante()
+    {
+        _almacen.Sembrar(1);
+        var candado = new CandadoSerial();
+        List<long?> registradosAlEnviar = [];
+        _autorizador.Responder = (solicitud, _) =>
+        {
+            registradosAlEnviar = [.. _almacen.Pendientes.Select(pendiente => pendiente.Numero)];
+            return Task.FromResult<ResultadoAutorizacion>(new ResultadoAutorizacion.Autorizada(
+                _autorizador.Numeros[^1], "75123456789012", solicitud.Fecha.AddDays(10)));
+        };
+        var largada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pedidos = Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(async () =>
+            {
+                await largada.Task;
+                return await Crear(candado: candado).EjecutarAsync(1, EmitirFactura.ConceptoProductos);
+            }))
+            .ToArray();
+
+        largada.SetResult();
+        var resultados = await Task.WhenAll(pedidos).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(resultados, resultado => resultado.EsEmitida);
+        var conflicto = Assert.Single(resultados, resultado => !resultado.EsEmitida);
+        Assert.Equal(TipoResultadoEmision.Conflicto, conflicto.Tipo);
+        Assert.Contains(conflicto.Motivo, new MotivoConflictoEmision?[]
+        {
+            MotivoConflictoEmision.Facturado, MotivoConflictoEmision.Pendiente,
+        });
+        Assert.Equal(1, _autorizador.Llamadas);
+        Assert.Equal([125L], registradosAlEnviar);
+        Assert.Equal(125, Assert.Single(_almacen.Facturas).Numero);
+        Assert.Empty(_almacen.Pendientes);
+    }
+
+    private EmitirFactura CrearConCarrera(AlmacenFacturacionConCarrera otra) =>
+        new(
+            otra, _almacen, otra, otra, otra, _autorizador, _candado,
+            new ProcesoEmision(otra, otra, otra, _almacen, otra, _autorizador, _reloj, _registro),
+            _reloj, _registro);
 
     /// <summary>Ejecuta la emisión y afirma que no lanzó: la falla se informa como aserción, con el tipo de la excepción.</summary>
     private static async Task<ResultadoEmision> SinExcepcionAsync(Func<Task<ResultadoEmision>> emitir)

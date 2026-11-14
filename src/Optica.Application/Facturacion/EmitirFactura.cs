@@ -8,29 +8,26 @@ namespace Optica.Application.Facturacion;
 
 /// <summary>
 /// Emite la factura a consumidor final de un presupuesto en Final (FR-01 a FR-04, FR-07, FR-12, FR-13, FR-15, FR-17 a
-/// FR-25, FR-27, FR-29) en dos transacciones con una emisión pendiente (D-09, ADR-021):
+/// FR-25, FR-27, FR-29 de FEAT-007) con el número registrado antes del envío (FR-01 de FEAT-008, ADR-025):
 /// <list type="number">
 /// <item>Valida el concepto antes de leer la base: faltante o distinto de <see cref="ConceptoProductos"/> y
 /// <see cref="ConceptoProductosYServicios"/>, inválido en <see cref="CampoConcepto"/>.</item>
-/// <item>Transacción 1 (con el token del pedido): lee el presupuesto (no encontrado), rechaza un Borrador, uno con
-/// factura o con emisión pendiente; lee la configuración vigente; arma la solicitud con la fecha local del día
-/// (<see cref="ReglasEmision.Armar"/>: sin tope, sin punto de venta, alícuota no admitida); graba la pendiente y
-/// confirma. Un conflicto de unicidad al confirmar es <c>facturado</c> si ya hay factura y si no <c>pendiente</c>.</item>
-/// <item>Un único plazo, <see cref="IAutorizadorComprobantes.TiempoMaximo"/>, medido con un
-/// <see cref="CancellationTokenSource"/> sobre el <see cref="TimeProvider"/> desde que se pide el candado de emisión:
-/// cubre la espera del candado y la llamada a ARCA (D-32). Sin el candado en el plazo, o con menos de
-/// margen restante al tomarlo (el menor entre <see cref="MargenMaximo"/> y un tercio del plazo), "no enviada" sin llamar a ARCA. El plazo no se enlaza con el token del
+/// <item>Transacción 1, de solo lectura (con el token del pedido): lee el presupuesto (no encontrado), rechaza un
+/// Borrador, uno con factura o con emisión pendiente; lee la configuración vigente y arma la solicitud con la fecha local
+/// del día (<see cref="ReglasEmision.Armar"/>: sin tope, sin punto de venta, alícuota no admitida). No graba nada.</item>
+/// <item>Un único plazo, <see cref="IAutorizadorComprobantes.TiempoMaximo"/>, medido con el <see cref="TimeProvider"/>
+/// desde que se pide el candado de emisión (D-32 de FEAT-007): cubre la espera del candado, el próximo número y la
+/// llamada a ARCA. Sin el candado en el plazo, "no enviada" sin llamar a ARCA. El plazo no se enlaza con el token del
 /// pedido: si el navegador corta, la emisión sigue.</item>
-/// <item>Transacción 2, sin cancelación: autorizada, graba la factura y quita la pendiente (FR-18); rechazada o no
-/// enviada, quita la pendiente (FR-21, FR-22); sin respuesta, la deja (FR-23, FR-24). Si la factura autorizada no se
-/// puede grabar, la pendiente queda y el resultado es <c>pendiente_verificacion</c> (D-31).</item>
+/// <item>Con el turno tomado, <see cref="ProcesoEmision"/> pide el próximo número, graba la pendiente con él repitiendo
+/// las comprobaciones (D-08), controla el margen, pide el CAE y graba el resultado (D-09). El turno se libera cuando el
+/// proceso termina, con la factura o la baja de la pendiente ya grabadas.</item>
 /// </list>
 /// Ninguna rama reintenta por su cuenta.
 /// </summary>
 /// <remarks>
 /// El log (R-07) nunca lleva el DNI, la solicitud, los datos del cliente ni la descripción de un rechazo de ARCA, ni
-/// adjunta excepciones (su texto o sus <c>Entries</c> pueden llevar el DNI). Solo D-31 registra tipo, punto de venta,
-/// número y CAE, para que el PRD 07 recupere la factura.
+/// adjunta excepciones (su texto o sus <c>Entries</c> pueden llevar el DNI).
 /// </remarks>
 public sealed class EmitirFactura(
     IPresupuestoRepository presupuestos,
@@ -40,6 +37,7 @@ public sealed class EmitirFactura(
     IUnidadDeTrabajo unidadDeTrabajo,
     IAutorizadorComprobantes autorizador,
     ICandadoEmision candado,
+    ProcesoEmision proceso,
     TimeProvider reloj,
     ILogger<EmitirFactura> registro)
 {
@@ -55,12 +53,8 @@ public sealed class EmitirFactura(
     /// <summary>La acción de un concepto faltante o desconocido; no repite lo recibido.</summary>
     public const string AccionConceptoInvalido = "Elegí el concepto de la factura: Productos o Productos y servicios.";
 
-    /// <summary>
-    /// El tope del margen que tiene que quedar del plazo al tomar el candado para llamar a ARCA (D-32): 10 s, el que rige
-    /// con el plazo de 30 s de producción. El margen es el menor entre este tope y un tercio del plazo: con un plazo más
-    /// corto (el harness de e2e usa 2 s, D-15) es ~0,67 s, así una emisión sin espera no queda siempre "no enviada".
-    /// </summary>
-    public static readonly TimeSpan MargenMaximo = TimeSpan.FromSeconds(10);
+    private const string MotivoOtraEmision =
+        "Otra emisión ocupó el plazo de espera: la solicitud no se envió a ARCA.";
 
     public async Task<ResultadoEmision> EjecutarAsync(long numero, string? concepto, CancellationToken cancelacion = default)
     {
@@ -76,19 +70,24 @@ public sealed class EmitirFactura(
             return rechazo;
         }
 
-        var presupuesto = preparada.Presupuesto!;
-        var solicitud = preparada.Solicitud!;
-        var resultado = await AutorizarEnPlazoAsync(solicitud);
-
-        // Sin cancelación a propósito (D-32): un pedido HTTP cortado no pierde un CAE ya autorizado.
-        return resultado switch
+        using var plazo = PlazoEmision.Iniciar(autorizador.TiempoMaximo, reloj);
+        var turno = await candado.TomarAsync(plazo.Token);
+        if (turno is null)
         {
-            ResultadoAutorizacion.Autorizada autorizada => await GrabarFacturaAsync(presupuesto, solicitud, autorizada),
-            ResultadoAutorizacion.Rechazada rechazada => await RechazadaAsync(numero, rechazada),
-            ResultadoAutorizacion.NoEnviada noEnviada => await NoEnviadaAsync(numero, noEnviada.Motivo),
-            ResultadoAutorizacion.SinRespuesta => SinRespuesta(numero),
-            _ => throw new InvalidOperationException("Resultado de la autorización de ARCA no previsto."),
-        };
+            // El motivo es un texto fijo, sin datos del cliente.
+            registro.LogWarning(
+                "La factura del presupuesto {Presupuesto} no se envió a ARCA: {Motivo}", numero, MotivoOtraEmision);
+            return ResultadoEmision.Conflicto(MotivoConflictoEmision.NoEnviada);
+        }
+
+        try
+        {
+            return await proceso.EjecutarAsync(preparada.Presupuesto!, preparada.Solicitud!, turno, plazo);
+        }
+        finally
+        {
+            Liberar(turno);
+        }
     }
 
     private static ConceptoFactura? LeerConcepto(string? concepto) => concepto switch
@@ -98,7 +97,7 @@ public sealed class EmitirFactura(
         _ => null,
     };
 
-    /// <summary>Transacción 1: valida contra lo guardado, arma la solicitud y graba la emisión pendiente.</summary>
+    /// <summary>Transacción 1: valida contra lo guardado y arma la solicitud; no graba nada.</summary>
     private async Task<Preparacion> PrepararAsync(long numero, ConceptoFactura concepto, CancellationToken operacion)
     {
         var presupuesto = await presupuestos.ObtenerAsync(numero, operacion);
@@ -130,24 +129,6 @@ public sealed class EmitirFactura(
             return Preparacion.Rechazada(ResultadoEmision.Conflicto(MotivoDe(armado.Motivo.Value)));
         }
 
-        // Hasta Block 4 de FEAT-008 la emisión sigue el orden de FEAT-007 (sin pedir el próximo número antes de enviar): la
-        // pendiente se graba como las de FEAT-007, sin número.
-        var solicitud = armado.Solicitud;
-        pendientes.Agregar(EmisionPendiente.SinNumero(
-            numero, reloj.GetUtcNow(), solicitud.Tipo, solicitud.PuntoVenta, solicitud.Fecha, solicitud.Importes.Total,
-            autorizador.Entorno));
-        try
-        {
-            await unidadDeTrabajo.ConfirmarAsync(operacion);
-        }
-        catch (ConflictoAlConfirmarException conflicto) when (conflicto.Motivo == MotivoConflicto.Unicidad)
-        {
-            // R-09: otro pedido grabó la pendiente (o la factura) primero. BEGIN IMMEDIATE lo impide; queda como defensa.
-            var facturado = await facturas.ExisteParaPresupuestoAsync(numero, operacion);
-            return Preparacion.Rechazada(ResultadoEmision.Conflicto(
-                facturado ? MotivoConflictoEmision.Facturado : MotivoConflictoEmision.Pendiente));
-        }
-
         return new Preparacion(presupuesto, armado.Solicitud, null);
     }
 
@@ -161,48 +142,8 @@ public sealed class EmitirFactura(
     };
 
     /// <summary>
-    /// El paso 3 (D-32): un solo plazo, desde que se pide el candado, para la espera de otra emisión y la llamada. Libera
-    /// el candado apenas ARCA responde: la numeración de ARCA ya avanzó, y la grabación no necesita el turno.
-    /// </summary>
-    private async Task<ResultadoAutorizacion> AutorizarEnPlazoAsync(SolicitudComprobante solicitud)
-    {
-        var tiempoMaximo = autorizador.TiempoMaximo;
-        using var plazo = new CancellationTokenSource(tiempoMaximo, reloj);
-        var inicio = reloj.GetTimestamp();
-        var turno = await candado.TomarAsync(plazo.Token);
-        if (turno is null)
-        {
-            return new ResultadoAutorizacion.NoEnviada(MotivoOtraEmision);
-        }
-
-        try
-        {
-            var restante = tiempoMaximo - reloj.GetElapsedTime(inicio);
-            if (restante < Margen(tiempoMaximo))
-            {
-                return new ResultadoAutorizacion.NoEnviada(MotivoOtraEmision);
-            }
-
-            // Adaptación mínima al puerto de ADR-025 (Block 2 de FEAT-008): el próximo número y la autorización con él,
-            // dentro del mismo turno y plazo. El Block 4 graba la pendiente con ese número antes de enviar.
-            var proximo = await autorizador.ProximoNumeroAsync(solicitud.Tipo, solicitud.PuntoVenta, plazo.Token);
-            return proximo switch
-            {
-                ResultadoProximoNumero.Numero numero =>
-                    await autorizador.AutorizarAsync(solicitud, numero.Valor, plazo.Token),
-                ResultadoProximoNumero.NoEnviada noEnviada => new ResultadoAutorizacion.NoEnviada(noEnviada.Motivo),
-                _ => throw new InvalidOperationException("Resultado del próximo número de ARCA no previsto."),
-            };
-        }
-        finally
-        {
-            Liberar(turno);
-        }
-    }
-
-    /// <summary>
     /// Libera el turno. Si la Api se está apagando y el candado ya se descartó, lo tolera: una factura que ARCA autorizó
-    /// no se pierde por no poder liberar un candado que ya no existe (WARN-1 de la auditoría).
+    /// no se pierde por no poder liberar un candado que ya no existe (WARN-1 de la auditoría de FEAT-007).
     /// </summary>
     private static void Liberar(IDisposable turno)
     {
@@ -216,121 +157,7 @@ public sealed class EmitirFactura(
         }
     }
 
-    /// <summary>El menor entre <see cref="MargenMaximo"/> y un tercio del plazo.</summary>
-    private static TimeSpan Margen(TimeSpan tiempoMaximo)
-    {
-        var tercio = tiempoMaximo / 3;
-        return tercio < MargenMaximo ? tercio : MargenMaximo;
-    }
-
-    private const string MotivoOtraEmision =
-        "Otra emisión ocupó el plazo de espera: la solicitud no se envió a ARCA.";
-
-    /// <summary>Transacción 2 de una autorizada: la factura con sus líneas y la baja de la pendiente (FR-18).</summary>
-    private async Task<ResultadoEmision> GrabarFacturaAsync(
-        Presupuesto presupuesto, SolicitudComprobante solicitud, ResultadoAutorizacion.Autorizada autorizada)
-    {
-        Factura? factura = null;
-        try
-        {
-            await unidadDeTrabajo.EjecutarEnTransaccionAsync(
-                async operacion =>
-                {
-                    factura = Factura.Emitida(
-                        presupuesto, solicitud, autorizada.Numero, autorizada.Cae, autorizada.Vencimiento,
-                        autorizador.Entorno);
-                    facturas.Agregar(factura);
-                    pendientes.Quitar(presupuesto.Numero);
-                    await unidadDeTrabajo.ConfirmarAsync(operacion);
-                    return true;
-                },
-                CancellationToken.None);
-        }
-        catch (Exception error)
-        {
-            // D-31: ARCA autorizó y la factura no quedó grabada. La pendiente sigue (la revirtió la transacción) para el
-            // PRD 07. Solo el tipo de la falla: su texto o sus Entries pueden llevar el DNI del receptor (R-07).
-            registro.LogError(
-                "ARCA autorizó la {Tipo} punto de venta {PuntoVenta} número {Numero} con CAE {Cae} y la factura no se " +
-                "pudo grabar ({TipoFalla}); la emisión del presupuesto {Presupuesto} queda pendiente de verificación.",
-                solicitud.Tipo,
-                solicitud.PuntoVenta,
-                autorizada.Numero,
-                autorizada.Cae,
-                error.GetType().Name,
-                presupuesto.Numero);
-            return ResultadoEmision.Conflicto(MotivoConflictoEmision.PendienteVerificacion);
-        }
-
-        return ResultadoEmision.Emitida(FacturaEmitidaDesde(factura!));
-    }
-
-    private static FacturaEmitida FacturaEmitidaDesde(Factura factura) => new(
-        factura.Comprobante.ToString(),
-        factura.Tipo == TipoComprobante.FacturaB ? FacturaEmitida.TipoB : FacturaEmitida.TipoC,
-        factura.Numero,
-        factura.Cae,
-        factura.VencimientoCae,
-        factura.Fecha,
-        factura.Importes.Total,
-        factura.Importes.Neto,
-        factura.Importes.Iva);
-
-    private async Task<ResultadoEmision> RechazadaAsync(long numero, ResultadoAutorizacion.Rechazada rechazada)
-    {
-        await IntentarQuitarPendienteAsync(numero);
-        // Solo el código: la descripción de ARCA puede repetir datos de la solicitud (R-07).
-        registro.LogInformation(
-            "ARCA rechazó la factura del presupuesto {Presupuesto} con el código {Codigo}.", numero, rechazada.Codigo);
-        return ResultadoEmision.Conflicto(MotivoConflictoEmision.Rechazada, rechazada.Codigo, rechazada.Descripcion);
-    }
-
-    private async Task<ResultadoEmision> NoEnviadaAsync(long numero, string motivo)
-    {
-        await IntentarQuitarPendienteAsync(numero);
-        // El motivo de "no enviada" es un texto fijo, sin datos del cliente ni secretos (ResultadoAutorizacion).
-        registro.LogWarning(
-            "La factura del presupuesto {Presupuesto} no se envió a ARCA: {Motivo}", numero, motivo);
-        return ResultadoEmision.Conflicto(MotivoConflictoEmision.NoEnviada);
-    }
-
-    private ResultadoEmision SinRespuesta(long numero)
-    {
-        // FR-23 y FR-24: no se sabe si ARCA autorizó; la pendiente queda y no se reintenta.
-        registro.LogWarning(
-            "ARCA no respondió a la emisión del presupuesto {Presupuesto}: queda pendiente de verificación.", numero);
-        return ResultadoEmision.Conflicto(MotivoConflictoEmision.SinRespuesta);
-    }
-
-    /// <summary>
-    /// Transacción 2 de una rechazada o no enviada: solo la baja de la pendiente (FR-21, FR-22). Si la baja falla, la
-    /// pendiente queda grabada (la resuelve el PRD 07) y la operadora recibe igual el motivo real (WARN-2 de la
-    /// auditoría). Al log va solo el tipo de la falla: su texto o sus <c>Entries</c> pueden llevar datos (R-07).
-    /// </summary>
-    private async Task IntentarQuitarPendienteAsync(long numero)
-    {
-        try
-        {
-            await unidadDeTrabajo.EjecutarEnTransaccionAsync(
-                async operacion =>
-                {
-                    pendientes.Quitar(numero);
-                    await unidadDeTrabajo.ConfirmarAsync(operacion);
-                    return true;
-                },
-                CancellationToken.None);
-        }
-        catch (Exception error)
-        {
-            registro.LogError(
-                "No se pudo quitar la emisión pendiente del presupuesto {Presupuesto} ({TipoFalla}); queda pendiente de " +
-                "verificación aunque ARCA no emitió la factura.",
-                numero,
-                error.GetType().Name);
-        }
-    }
-
-    /// <summary>Lo que deja la transacción 1: el presupuesto y la solicitud ya con su pendiente grabada, o el rechazo.</summary>
+    /// <summary>Lo que deja la transacción 1: el presupuesto y la solicitud, o el rechazo.</summary>
     private sealed record Preparacion(
         Presupuesto? Presupuesto, SolicitudComprobante? Solicitud, ResultadoEmision? Rechazo)
     {

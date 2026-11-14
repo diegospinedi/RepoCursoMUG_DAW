@@ -158,11 +158,15 @@ public partial class Program
         // FEAT-006: el PDF de un Final, una lectura; el generador (QuestPDF) lo registra Infrastructure (ADR-018).
         builder.Services.AddScoped<GenerarPdfPresupuesto>();
 
-        // FEAT-007: la emisión de la factura, con sesión (lleva el DNI del receptor hacia ARCA, R-07). Graba la emisión
-        // pendiente, llama a ARCA fuera de toda transacción y graba la factura en una segunda transacción (ADR-021). El
+        // FEAT-007: la emisión de la factura, con sesión (lleva el DNI del receptor hacia ARCA, R-07). Desde FEAT-008
+        // (ADR-025) lee en una transacción, toma el turno, graba la pendiente con el número, llama a ARCA fuera de toda
+        // transacción y graba la factura en otra (ADR-021). El
         // candado de emisión (uno solo para toda la Api, D-10, D-32) lo registra la infraestructura. El estado de
         // facturación lo suma el GET del presupuesto (D-28). El protector del ticket de WSAA (D-30) es el
         // IProtectorDatos registrado más abajo.
+        // FEAT-008 (ADR-025, D-09, D-17): el envío con el número registrado antes; lo usan la emisión y la verificación,
+        // que toman el turno del candado y se lo pasan.
+        builder.Services.AddScoped<ProcesoEmision>();
         builder.Services.AddScoped<EmitirFactura>();
         builder.Services.AddScoped<ObtenerEstadoFacturacion>();
 

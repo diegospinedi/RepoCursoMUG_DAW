@@ -98,3 +98,16 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   del proceso" = primera `AutorizarAsync` de la instancia singleton. Con `rechazar`, `no_responder` y la primera de
   `no_responder_una_vez` no se compara el número. Veinte pedidos concurrentes del mismo número dan 1 autorizado y 19
   rechazos 10016.
+- **D-28 (del agente, Block 4, supuestos del implementador, aprobados por D-21).** Quien toma el turno del candado lo
+  libera después de la transacción 2 (no apenas responde ARCA como en FEAT-007), para que otro pedido no tome el turno
+  con la factura o la baja todavía sin grabar (F-1). En modo reemplazo, si la pendiente guardada no es la verificada →
+  conflicto `pendiente` sin tocar nada; si ya no hay pendiente → "no enviada" sin grabar. Un conflicto de unicidad
+  después de confirmar la baja de la vieja revierte toda la transacción (la vieja queda, D-11). Un solo control de
+  margen, justo antes de FECAESolicitar (D-10). Toda baja de la pendiente quita antes su observación (D-24). API para
+  el Block 5: `ProcesoEmision.EjecutarAsync(presupuesto, solicitud, turno, plazo, reemplazada)`; la solicitud de FR-06
+  se arma con el presupuesto, el concepto guardado y la configuración vigente (la spec, Block 5).
+- **D-29 (del agente por D-21, WARN-1 del auditor del Block 4).** La garantía de D-11 ("siempre existe una pendiente")
+  cubre la transacción de registro del modo reemplazo. Después, si falta margen, ARCA rechaza o la solicitud no se envía,
+  se quita la pendiente nueva como en la emisión normal (spec Block 4, FR-21 y FR-22 del PRD 06): no abre un duplicado,
+  porque ARCA ya informó que el número viejo no estaba autorizado y el nuevo no se envió o fue rechazado. Se corrige el
+  comentario de `ProcesoEmision` para que lo diga.

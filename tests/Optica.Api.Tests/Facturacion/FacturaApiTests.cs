@@ -206,6 +206,8 @@ public sealed class FacturaApiTests
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(JsonValueKind.Null, leido.GetProperty("factura").ValueKind);
         Assert.True(leido.GetProperty("emisionPendiente").GetBoolean());
+        // FR-01 (ADR-025): la pendiente guardada tiene el número pedido al simulador, el primero del punto de venta.
+        Assert.Equal(1, (await PendienteAsync(fabrica, numero))?.Numero);
 
         await AfirmarConflictoAsync(
             await escenario.EmitirAsync(numero), "pendiente", "La emisión anterior está pendiente de verificación.");
@@ -296,8 +298,9 @@ public sealed class FacturaApiTests
     }
 
     /// <summary>
-    /// R-09 (sad path): dos pedidos simultáneos del mismo presupuesto. Uno graba la pendiente y llega a ARCA; el otro
-    /// responde 409 <c>pendiente</c> sin llamar a ARCA. Al responder ARCA, el primero responde 201.
+    /// R-09 y FEAT-008 (sad path, ADR-025): dos pedidos simultáneos del mismo presupuesto. El primero toma el turno,
+    /// registra la pendiente con el número 125 y queda esperando a ARCA; el segundo, que llega mientras tanto, responde
+    /// 409 <c>pendiente</c> sin pedir el número ni llamar a ARCA. Al responder ARCA, el primero responde 201.
     /// </summary>
     [Fact]
     public async Task Emitir_DosPedidosSimultaneos_UnoConflictoPendiente()
@@ -311,16 +314,18 @@ public sealed class FacturaApiTests
         var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
         var numero = await escenario.FinalAsync(1000m);
 
-        var pedidos = new[] { escenario.EmitirAsync(numero), escenario.EmitirAsync(numero) };
+        var primero = escenario.EmitirAsync(numero);
         await autorizador.Llamado.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        var primero = await Task.WhenAny(pedidos).WaitAsync(TimeSpan.FromSeconds(30));
-        var conflicto = await primero;
+        // El número quedó registrado antes de enviar la solicitud (FR-01).
+        Assert.Equal(125, (await PendienteAsync(fabrica, numero))?.Numero);
+        var conflicto = await escenario.EmitirAsync(numero).WaitAsync(TimeSpan.FromSeconds(30));
         autorizador.Liberar.TrySetResult();
-        var otro = await (pedidos[0] == primero ? pedidos[1] : pedidos[0]).WaitAsync(TimeSpan.FromSeconds(30));
+        var emitida = await primero.WaitAsync(TimeSpan.FromSeconds(30));
 
         await AfirmarConflictoAsync(conflicto, "pendiente", "La emisión anterior está pendiente de verificación.");
-        Assert.Equal(HttpStatusCode.Created, otro.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
         Assert.Equal(1, autorizador.Llamadas);
+        Assert.Equal(1, autorizador.PedidosDeNumero);
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(
             "Factura B 0003-00000125", leido.GetProperty("factura").GetProperty("comprobante").GetString());
@@ -328,9 +333,10 @@ public sealed class FacturaApiTests
     }
 
     /// <summary>
-    /// Sad path: una excepción imprevista del autorizador (el puerto dice que no lanza) responde el 500 genérico, sin su
-    /// texto; como no se sabe si la solicitud llegó a ARCA, la emisión queda pendiente y volver a facturar es 409
-    /// <c>pendiente</c>.
+    /// Sad path, con el orden de ADR-025: el próximo número (125) se registra en la pendiente y recién entonces el
+    /// autorizador lanza una excepción imprevista (el puerto dice que no lanza). Responde el 500 genérico, sin su texto;
+    /// como no se sabe si la solicitud llegó a ARCA, la emisión queda pendiente con el número 125 y volver a facturar es
+    /// 409 <c>pendiente</c>.
     /// </summary>
     [Fact]
     public async Task Emitir_AutorizadorLanza_500ConLaPendienteGuardada()
@@ -350,8 +356,20 @@ public sealed class FacturaApiTests
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(JsonValueKind.Null, leido.GetProperty("factura").ValueKind);
         Assert.True(leido.GetProperty("emisionPendiente").GetBoolean());
+        var pendiente = await PendienteAsync(fabrica, numero);
+        Assert.NotNull(pendiente);
+        Assert.Equal(125, pendiente.Numero);
+        Assert.Equal(1000m, pendiente.Total);
         await AfirmarConflictoAsync(
             await escenario.EmitirAsync(numero), "pendiente", "La emisión anterior está pendiente de verificación.");
+    }
+
+    /// <summary>La emisión pendiente guardada del presupuesto, leída en un alcance propio.</summary>
+    private static async Task<EmisionPendiente?> PendienteAsync(FabricaApi fabrica, long numero)
+    {
+        using var alcance = fabrica.Services.CreateScope();
+        return await alcance.ServiceProvider.GetRequiredService<IEmisionPendienteRepository>()
+            .ObtenerPendienteAsync(numero);
     }
 
     /// <summary>
@@ -401,6 +419,7 @@ public sealed class FacturaApiTests
     private sealed class AutorizadorQueEspera : IAutorizadorComprobantes
     {
         private int _llamadas;
+        private int _pedidosDeNumero;
 
         public TaskCompletionSource Llamado { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -408,13 +427,18 @@ public sealed class FacturaApiTests
 
         public int Llamadas => Volatile.Read(ref _llamadas);
 
+        public int PedidosDeNumero => Volatile.Read(ref _pedidosDeNumero);
+
         public EntornoArca Entorno => EntornoArca.Simulado;
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
         public Task<ResultadoProximoNumero> ProximoNumeroAsync(
-            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
-            Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+        {
+            Interlocked.Increment(ref _pedidosDeNumero);
+            return Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+        }
 
         public async Task<ResultadoAutorizacion> AutorizarAsync(
             SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
