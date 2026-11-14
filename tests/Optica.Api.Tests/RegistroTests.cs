@@ -396,7 +396,7 @@ public sealed class RegistroTests
             lineas,
             l => l.Nivel == LogLevel.Error && l.Mensaje.Contains("/api/presupuestos/1", StringComparison.Ordinal));
         var textoRespuesta = await respuesta.Content.ReadAsStringAsync();
-        foreach (var dato in new[] { "Zq7", "99999999", "99.999.999", "example.com", "5555-0199" })
+        foreach (var dato in new[] { "Zq7", "00718294", "00.718.294", "example.com", "5555-0199" })
         {
             Assert.DoesNotContain(dato, textoRespuesta, StringComparison.Ordinal);
             var conElDato = lineas.Where(l => l.TextoCompleto.Contains(dato, StringComparison.Ordinal))
@@ -408,8 +408,82 @@ public sealed class RegistroTests
         Assert.DoesNotContain(lineas, l => l.Nivel > LogLevel.Debug && l.Excepcion is not null);
     }
 
+    /// <summary>
+    /// R-07 (Ley 25.326): emitir con el receptor identificado por DNI (total sobre el tope), con ARCA que autoriza, que
+    /// rechaza y que no responde, no deja en el log, en ningún nivel, el DNI, los datos del cliente ni la descripción del
+    /// rechazo de ARCA. Datos ficticios con marcadores (D-50).
+    /// </summary>
+    [Theory]
+    [InlineData(FabricaApi.RespuestaArcaAutorizar, HttpStatusCode.Created)]
+    [InlineData(FabricaApi.RespuestaArcaRechazar, HttpStatusCode.Conflict)]
+    [InlineData(FabricaApi.RespuestaArcaNoResponder, HttpStatusCode.Conflict)]
+    public async Task Emitir_Log_SinDniNiDatosDelCliente(string respuestaArca, HttpStatusCode esperado)
+    {
+        TaskCompletionSource? llamado = null;
+        using var fabrica = new FabricaApi(
+            servicios => llamado = Facturacion.AutorizadorConSenal.Envolver(servicios), respuestaArca: respuestaArca);
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        // Tope de $1: el total lo supera y el receptor va identificado con el DNI (FR-11).
+        var configuracion = await Http.PostJsonAsync(
+            cliente,
+            "/api/configuracion",
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"responsable_inscripto\",\"multiploRedondeo\":0.01,"
+            + "\"topeIdentificacion\":1,\"puntoVenta\":3}",
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, configuracion.StatusCode);
+        var articulo = await Http.PostJsonAsync(
+            cliente,
+            "/api/articulos",
+            "{\"codigoProveedor\":\"ABC-1\",\"descripcion\":\"Armazón\",\"precioCosto\":1210,\"margenUtilidad\":50}",
+            cookie);
+        Assert.Equal(HttpStatusCode.Created, articulo.StatusCode);
+        var codigo = (await Http.JsonAsync(articulo)).GetProperty("codigo").GetInt64();
+        var alta = await Http.PostJsonAsync(
+            cliente,
+            "/api/presupuestos",
+            "{\"cliente\":" + ClienteMarcado("Zq7Factura") + ",\"lineas\":[{\"codigoArticulo\":" + codigo
+            + ",\"cantidad\":1,\"porcentajeDescuento\":0}]}",
+            cookie);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var final = await Http.EnviarAsync(
+            cliente,
+            HttpMethod.Put,
+            "/api/presupuestos/1/estado",
+            new StringContent("{\"estado\":\"final\",\"version\":0}", System.Text.Encoding.UTF8, "application/json"),
+            cookie);
+        Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+        var antes = fabrica.Registro.Lineas.Count;
+
+        var pedido = Http.PostJsonAsync(cliente, "/api/presupuestos/1/factura", "{\"concepto\":\"productos\"}", cookie);
+        await llamado!.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        if (respuestaArca == FabricaApi.RespuestaArcaNoResponder)
+        {
+            // Sin respuesta: el plazo lo mide el reloj de la fábrica y ya corre; se adelanta una sola vez.
+            fabrica.Reloj.Advance(TimeSpan.FromSeconds(FabricaApi.TiempoMaximoArcaSegundos));
+        }
+
+        var respuesta = await pedido.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(esperado, respuesta.StatusCode);
+        var lineas = fabrica.Registro.Lineas;
+        // Control: la emisión dejó líneas en el log (al menos los comandos de la base).
+        Assert.True(lineas.Count > antes, "La emisión no dejó ninguna línea en el log.");
+        foreach (var dato in new[]
+        {
+            "Zq7", "00718294", "00.718.294", "example.com", "5555-0199",
+            Optica.Infrastructure.Arca.SimuladorArca.DescripcionRechazo,
+        })
+        {
+            var conElDato = lineas.Where(l => l.TextoCompleto.Contains(dato, StringComparison.Ordinal))
+                .Select(l => $"{l.Categoria} ({l.Nivel})")
+                .ToList();
+            Assert.True(conElDato.Count == 0, $"\"{dato}\" llegó al log en: {string.Join(", ", conElDato)}");
+        }
+    }
+
     private static string ClienteMarcado(string marca) =>
-        "{\"apellido\":\"" + marca + "Apellido\",\"nombre\":\"" + marca + "Nombre\",\"dni\":\"99.999.999\","
+        "{\"apellido\":\"" + marca + "Apellido\",\"nombre\":\"" + marca + "Nombre\",\"dni\":\"00.718.294\","
         + "\"domicilio\":\"" + marca + " Calle Ficticia 123\",\"email\":\"" + marca.ToLowerInvariant()
         + "@example.com\",\"telefono\":\"011-5555-0199\"}";
 

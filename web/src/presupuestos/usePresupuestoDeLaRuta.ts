@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { consultarPresupuesto, MENSAJE_PRESUPUESTO_NO_ENCONTRADO, type PresupuestoGrabado } from '../api/cliente';
+import { consultarPresupuesto, MENSAJE_PRESUPUESTO_NO_ENCONTRADO, type PresupuestoConsultado } from '../api/cliente';
 import { numeroDeLaRuta } from './reglas';
 
 export type CargaPresupuesto =
   | { tipo: 'cargando' }
   | { tipo: 'error'; mensaje: string }
-  | { tipo: 'listo'; presupuesto: PresupuestoGrabado };
+  | { tipo: 'listo'; presupuesto: PresupuestoConsultado };
 
 /** La carga de un número de ruta antes de consultarlo: inválido ya es "no encontrado"; si no, se está cargando. */
 function cargaInicial(numero: number | null): CargaPresupuesto {
@@ -17,8 +17,11 @@ export interface PresupuestoDeLaRuta {
   /** El número de la ruta (`:numero`), o `null` si no puede existir (no se consulta). */
   numero: number | null;
   carga: CargaPresupuesto;
-  /** Muestra un presupuesto que devolvió otra operación (por ejemplo, el paso a Final), si es el de la ruta. */
-  mostrar: (presupuesto: PresupuestoGrabado) => void;
+  /**
+   * Muestra un presupuesto que devolvió otra operación (por ejemplo, el paso a Final o la emisión de la factura), si
+   * es el de la ruta, con su estado de facturación (FEAT-007).
+   */
+  mostrar: (presupuesto: PresupuestoConsultado) => void;
   /** Vuelve a leer el presupuesto de la ruta; mientras tanto se sigue mostrando el anterior. */
   recargar: () => void;
   /** Si la ruta todavía muestra ese número: una respuesta de otro número no debe pisar la pantalla. */
@@ -85,7 +88,7 @@ export function usePresupuestoDeLaRuta(): PresupuestoDeLaRuta {
   const sigueVigente = useCallback((otro: number) => numeroVigente.current === otro, []);
 
   const mostrar = useCallback(
-    (presupuesto: PresupuestoGrabado) => {
+    (presupuesto: PresupuestoConsultado) => {
       if (sigueVigente(presupuesto.numero)) {
         setCarga({ tipo: 'listo', presupuesto });
       }

@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Optica.Infrastructure.Arca;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Api.Tests;
@@ -21,8 +23,24 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
     /// <summary>Hora inicial del reloj: segundos enteros, para que los vencimientos de la cookie sean exactos.</summary>
     public static readonly DateTimeOffset Inicio = new(2026, 10, 31, 12, 0, 0, TimeSpan.Zero);
 
+    /// <summary>El simulador autoriza (por defecto).</summary>
+    public const string RespuestaArcaAutorizar = "autorizar";
+
+    /// <summary>El simulador rechaza con el código 10016 (AC-20).</summary>
+    public const string RespuestaArcaRechazar = "rechazar";
+
+    /// <summary>El simulador espera hasta que vence el plazo de la emisión (AC-21).</summary>
+    public const string RespuestaArcaNoResponder = "no_responder";
+
+    /// <summary>
+    /// El tiempo máximo de ARCA de las pruebas: el de producción (NFR-01). Lo mide el reloj controlado de la fábrica, así
+    /// que una prueba de "sin respuesta" adelanta <see cref="Reloj"/> en lugar de esperar.
+    /// </summary>
+    public const int TiempoMaximoArcaSegundos = 30;
+
     private readonly Action<IServiceCollection>? _reemplazos;
     private readonly bool _nivelesDeConfiguracion;
+    private readonly string _respuestaArca;
 
     /// <param name="reemplazos">Servicios que la prueba reemplaza después de la raíz de composición.</param>
     /// <param name="directorioDatos">
@@ -32,11 +50,20 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
     /// Si es verdadero, el registro de captura respeta los niveles de <c>Logging:LogLevel</c> de appsettings.json (ve
     /// lo que se escribiría en producción); si no, ve todos los niveles.
     /// </param>
+    /// <param name="respuestaArca">
+    /// Lo que responde el simulador de ARCA (<c>Arca:Simulado:Respuesta</c>, D-55): <c>autorizar</c> (por defecto),
+    /// <c>rechazar</c> o <c>no_responder</c>. Va en la misma colección en memoria que fija el entorno simulado, por
+    /// encima de toda otra fuente, junto con <c>Arca:TiempoMaximoSegundos</c> = <see cref="TiempoMaximoArcaSegundos"/>.
+    /// </param>
     public FabricaApi(
-        Action<IServiceCollection>? reemplazos = null, string? directorioDatos = null, bool nivelesDeConfiguracion = false)
+        Action<IServiceCollection>? reemplazos = null,
+        string? directorioDatos = null,
+        bool nivelesDeConfiguracion = false,
+        string respuestaArca = RespuestaArcaAutorizar)
     {
         _reemplazos = reemplazos;
         _nivelesDeConfiguracion = nivelesDeConfiguracion;
+        _respuestaArca = respuestaArca;
         DirectorioPropio = directorioDatos is null;
         // Cada instancia tiene su propio directorio de datos, y con él su candado de instancia (optica.instancia): las
         // pruebas en paralelo no chocan. Solo comparten directorio las que lo pasan a propósito (reinicio, comando).
@@ -221,6 +248,17 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Production");
         builder.UseSetting(FabricaConexion.ClaveDirectorio, DirectorioDatos);
+        // R-14: ARCA simulada, fijada en memoria y agregada al final (le gana a las variables de entorno Arca__*): las
+        // pruebas de la Api nunca emiten contra homologación ni producción por la configuración de la PC. La respuesta
+        // del simulador la elige la prueba (D-55) y el tiempo máximo queda fijo en el de producción.
+        builder.ConfigureAppConfiguration(configuracion => configuracion.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                [OpcionesArca.ClaveEntorno] = "Simulado",
+                [OpcionesArca.ClaveRespuestaSimulado] = _respuestaArca,
+                [OpcionesArca.ClaveTiempoMaximo] =
+                    TiempoMaximoArcaSegundos.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            }));
         // Salvo que se pidan los niveles de la configuración, el registro de captura ve todos los niveles, incluido
         // Debug, sin importar los filtros de appsettings: así las pruebas detectan datos sensibles también en los
         // niveles que hoy no se escriben.

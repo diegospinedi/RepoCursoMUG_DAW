@@ -39,7 +39,7 @@ public static class SiembraCatalogo
     public static IReadOnlyList<ArticuloSembrado> Generar(int cantidad = Volumen)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(cantidad);
-        var inicial = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+        var inicial = new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
         var articulos = new List<ArticuloSembrado>(cantidad);
         for (var i = 1; i <= cantidad; i++)
         {

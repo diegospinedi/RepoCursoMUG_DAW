@@ -6,7 +6,8 @@ namespace Optica.Application.Tests.Arquitectura;
 
 /// <summary>
 /// Dependencias entre módulos que el compilador no impide (D-10 de FEAT-002a, D-16 de FEAT-002c): Catálogo depende de
-/// Configuración, nunca al revés; Presupuestos depende de Catálogo, nunca al revés (D-05 de FEAT-003a).
+/// Configuración, nunca al revés; Presupuestos depende de Catálogo, nunca al revés (D-05 de FEAT-003a); Facturación
+/// depende de Presupuestos y de Configuración, nunca al revés (FEAT-007).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -115,6 +116,106 @@ public class DependenciasDeModulosTests
         Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
     }
 
+    /// <summary>
+    /// Spec FEAT-007, Block 3: Facturación depende de Presupuestos y de Configuración, nunca al revés. Ni el dominio ni
+    /// la aplicación de esos dos módulos usan tipos de Facturación, y tampoco las reglas comunes del dominio
+    /// (<c>Optica.Domain.Comun</c>).
+    /// </summary>
+    [Fact]
+    public void Dependencias_PresupuestosNoDependeDeFacturacion()
+    {
+        var revisados = new[]
+            {
+                (Ensamblado: typeof(Optica.Application.Presupuestos.AltaPresupuesto).Assembly,
+                    Espacio: "Optica.Application.Presupuestos"),
+                (Ensamblado: typeof(ValidacionConfiguracion).Assembly, Espacio: "Optica.Application.Configuracion"),
+                (Ensamblado: typeof(Optica.Domain.Presupuestos.Presupuesto).Assembly,
+                    Espacio: "Optica.Domain.Presupuestos"),
+                (Ensamblado: typeof(ConfiguracionNegocio).Assembly, Espacio: "Optica.Domain.Configuracion"),
+                (Ensamblado: typeof(Optica.Domain.Comun.ReglasImporte).Assembly, Espacio: "Optica.Domain.Comun"),
+            }
+            .SelectMany(revisado => revisado.Ensamblado.GetTypes()
+                .Where(tipo => EstaEn(tipo.Namespace, revisado.Espacio)))
+            .ToList();
+
+        var usos = revisados
+            .SelectMany(tipo => TiposUsados(tipo).Select(usado => (Tipo: tipo, Usado: usado)))
+            .Where(uso => EsDeFacturacion(uso.Usado))
+            .Select(uso => $"{uso.Tipo.FullName} usa {uso.Usado.FullName ?? uso.Usado.Name}")
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // La revisión tiene que ver algo: los tipos que se conocen de cada módulo están entre los revisados.
+        Assert.Contains(typeof(Optica.Application.Presupuestos.AltaPresupuesto), revisados);
+        Assert.Contains(typeof(DatosConfiguracion), revisados);
+        Assert.Contains(typeof(Optica.Domain.Presupuestos.Presupuesto), revisados);
+        Assert.Contains(typeof(ConfiguracionNegocio), revisados);
+        Assert.Contains(typeof(Optica.Domain.Comun.ReglasImporte), revisados);
+        Assert.Contains(revisados, tipo => tipo.DeclaringType is not null);
+        Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
+    }
+
+    /// <summary>
+    /// FEAT-007: el dominio de Facturación no usa tipos de Catálogo directamente; las reglas de la línea le llegan a
+    /// través de Presupuestos.
+    /// </summary>
+    [Fact]
+    public void Dependencias_FacturacionNoUsaCatalogoDirectamente()
+    {
+        var revisados = typeof(Optica.Domain.Facturacion.Factura).Assembly.GetTypes()
+            .Where(tipo => EstaEn(tipo.Namespace, "Optica.Domain.Facturacion"))
+            .ToList();
+
+        var usos = revisados
+            .SelectMany(tipo => TiposUsados(tipo).Select(usado => (Tipo: tipo, Usado: usado)))
+            .Where(uso => EsDeCatalogo(uso.Usado))
+            .Select(uso => $"{uso.Tipo.FullName} usa {uso.Usado.FullName ?? uso.Usado.Name}")
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // La revisión tiene que ver algo: los tipos que se conocen del módulo están entre los revisados.
+        Assert.Contains(typeof(Optica.Domain.Facturacion.Factura), revisados);
+        Assert.Contains(typeof(Optica.Domain.Facturacion.ReglasEmision), revisados);
+        Assert.Contains(typeof(Optica.Domain.Facturacion.LineaFactura), revisados);
+        Assert.True(usos.Count == 0, string.Join(Environment.NewLine, usos));
+    }
+
+    /// <summary>
+    /// Prueba de la propia revisión: el dominio de Facturación sí usa Presupuestos y Configuración (la dirección
+    /// permitida), y la revisión lo ve.
+    /// </summary>
+    [Fact]
+    public void TiposUsados_ReglasEmision_DetectaPresupuestosYConfiguracion()
+    {
+        var usados = TiposUsados(typeof(Optica.Domain.Facturacion.ReglasEmision)).ToList();
+
+        Assert.Contains(typeof(Optica.Domain.Presupuestos.Presupuesto), usados);
+        Assert.Contains(typeof(ConfiguracionNegocio), usados);
+        Assert.Contains(usados, EsDeFacturacion);
+    }
+
+    /// <summary>Prueba de la propia revisión: un tipo de Facturación usado solo en una variable local se detecta.</summary>
+    [Fact]
+    public void TiposUsados_FacturacionSoloEnVariableLocal_DetectaElUso()
+    {
+        var usados = TiposUsados(typeof(UsaFacturacionSoloEnVariableLocal)).ToList();
+
+        Assert.Contains(usados, EsDeFacturacion);
+    }
+
+    /// <summary>Usa Facturación solo en una variable local: ni en la firma ni en atributos.</summary>
+    private static class UsaFacturacionSoloEnVariableLocal
+    {
+        public static int Contar()
+        {
+            var comprobantes = new List<Optica.Domain.Facturacion.NumeroComprobante>();
+            GC.KeepAlive(comprobantes);
+            return comprobantes.Count;
+        }
+    }
+
     /// <summary>Prueba de la propia revisión: un tipo de Presupuestos sí usa tipos de Presupuestos.</summary>
     [Fact]
     public void TiposUsados_TipoDePresupuestos_DetectaElUso()
@@ -181,6 +282,12 @@ public class DependenciasDeModulosTests
     {
         var espacio = tipo.Namespace;
         return espacio is not null && espacio.Split('.').Contains("Presupuestos", StringComparer.Ordinal);
+    }
+
+    private static bool EsDeFacturacion(Type tipo)
+    {
+        var espacio = tipo.Namespace;
+        return espacio is not null && espacio.Split('.').Contains("Facturacion", StringComparer.Ordinal);
     }
 
     /// <summary>Los tipos que aparecen en la firma y en las variables locales de <paramref name="tipo"/>, desplegados.</summary>

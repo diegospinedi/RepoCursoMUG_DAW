@@ -109,6 +109,26 @@ public static class Http
         }
     }
 
+    /// <summary>
+    /// El final exacto del GET de un presupuesto sin factura y sin emisión pendiente (FEAT-007, D-19, D-28): las dos
+    /// claves de facturación van después de <c>version</c>.
+    /// </summary>
+    public const string SufijoSinFacturacion = ",\"factura\":null,\"emisionPendiente\":false}";
+
+    /// <summary>
+    /// El GET de un presupuesto sin factura ni pendiente, sin las dos claves de facturación: exige que el texto termine
+    /// con <see cref="SufijoSinFacturacion"/> y devuelve el resto, que es exactamente la respuesta del alta, de la
+    /// modificación o del paso a Final (que no llevan esas claves, D-28). Así las pruebas que comparan el GET con esas
+    /// respuestas byte a byte siguen comparando lo mismo.
+    /// </summary>
+    public static JsonElement SinFacturacion(JsonElement lectura)
+    {
+        var texto = lectura.GetRawText();
+        Assert.EndsWith(SufijoSinFacturacion, texto, StringComparison.Ordinal);
+        using var documento = JsonDocument.Parse(texto[..^SufijoSinFacturacion.Length] + "}");
+        return documento.RootElement.Clone();
+    }
+
     public static async Task<JsonElement> JsonAsync(HttpResponseMessage respuesta)
     {
         var texto = await respuesta.Content.ReadAsStringAsync();

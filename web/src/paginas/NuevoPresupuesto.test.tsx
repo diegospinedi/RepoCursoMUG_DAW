@@ -89,6 +89,9 @@ const GRABADO = {
   lineas: [LINEA_GRABADA],
   total: 1850,
   version: 0,
+  // El GET suma la facturación (FEAT-007, D-19); el alta no la lleva y la pantalla ignora lo que sobra.
+  factura: null,
+  emisionPendiente: false,
 };
 
 const conSesion = { 'GET /api/sesion': vacia(204) };

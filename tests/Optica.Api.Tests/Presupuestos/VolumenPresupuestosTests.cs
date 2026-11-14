@@ -28,6 +28,9 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
     private static readonly string[] CamposRespuesta =
         ["numero", "fecha", "estado", "cliente", "lineas", "total", "version"];
 
+    /// <summary>FEAT-007 (FR-20, D-28): el GET suma la factura y la emisión pendiente; el alta y los PUT no.</summary>
+    private static readonly string[] CamposLectura = [.. CamposRespuesta, "factura", "emisionPendiente"];
+
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
     private static readonly string[] CamposLinea =
@@ -105,7 +108,7 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
         Assert.Equal(FechaSembrada, json.GetProperty("fecha").GetString());
         Assert.Equal("borrador", json.GetProperty("estado").GetString());
         Assert.Equal(1, json.GetProperty("version").GetInt64());
-        AfirmarCliente(json, "Ficticiez", "99999999", "Calle Ficticia 123");
+        AfirmarCliente(json, "Ficticiez", "00718294", "Calle Ficticia 123");
         var linea = Assert.Single(json.GetProperty("lineas").EnumerateArray());
         var precio = PrecioVentaDe(fabrica, codigo);
         AfirmarLinea(linea, 1, codigo, "Cristal orgánico 00002", precio, 2, 0m, precio, precio * 2);
@@ -343,13 +346,13 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
         Assert.Equal(precioFinal, linea.GetProperty("precioFinal").GetDecimal());
     }
 
-    /// <summary>Un cliente ficticio válido (DNI 99.999.999, correo de example.com) como JSON.</summary>
+    /// <summary>Un cliente ficticio válido (DNI 00.718.294, correo de example.com) como JSON.</summary>
     private static string ClienteJson(string? domicilio) =>
         JsonSerializer.Serialize(new
         {
             apellido = "Ficticiez",
             nombre = "Prueboncia",
-            dni = "99.999.999",
+            dni = "00.718.294",
             domicilio,
             email = "prueba@example.com",
             telefono = (string?)null,
@@ -367,11 +370,17 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
     private static Task<HttpResponseMessage> PutAsync(HttpClient cliente, string cookie, string ruta, string cuerpo) =>
         Http.EnviarAsync(cliente, HttpMethod.Put, ruta, new StringContent(cuerpo, Encoding.UTF8, "application/json"), cookie);
 
+    /// <summary>
+    /// El GET del presupuesto: con 10.000 presupuestos también suma <c>factura</c> y <c>emisionPendiente</c> (FEAT-007,
+    /// D-28), vacías; devuelve el resto, que se compara con las respuestas del alta y de los PUT.
+    /// </summary>
     private static async Task<JsonElement> LeerAsync(HttpClient cliente, string cookie, long numero)
     {
         using var respuesta = await Http.GetAsync(cliente, $"{Ruta}/{numero}", cookie);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        return (await Http.JsonAsync(respuesta)).Clone();
+        var leido = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposLectura, Nombres(leido));
+        return Http.SinFacturacion(leido);
     }
 
     private static string CadenaDe(FabricaApi fabrica) =>

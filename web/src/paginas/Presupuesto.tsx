@@ -2,8 +2,13 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type SyntheticE
 import { Link, useLocation, useNavigate } from 'react-router';
 import {
   descargarPdfPresupuesto,
+  emitirFactura,
+  mensajeFacturaEmitida,
   pasarPresupuestoAFinal,
+  type ConceptoFactura,
   type EstadoPresupuesto,
+  type MotivoConflicto,
+  type PresupuestoConsultado,
   type PresupuestoGrabado,
 } from '../api/cliente';
 import { mostrarDecimal, mostrarImporte } from '../configuracion/numeros';
@@ -14,6 +19,21 @@ import { usePresupuestoDeLaRuta } from '../presupuestos/usePresupuestoDeLaRuta';
 export const SIN_DATO = '—';
 
 const TEXTO_DEL_ESTADO: Record<EstadoPresupuesto, string> = { borrador: 'Borrador', final: 'Final' };
+
+/**
+ * Lo que se muestra junto a Facturar mientras el presupuesto tiene una emisión pendiente de verificación (FEAT-007,
+ * FR-24): explica por qué el botón está deshabilitado, también al volver a abrir el presupuesto.
+ */
+export const AVISO_EMISION_PENDIENTE = 'La emisión de la factura de este presupuesto está pendiente de verificación.';
+
+/** Los conceptos del diálogo de Facturar (FR-08), con el texto de cada opción, en el orden en que se muestran. */
+const OPCIONES_CONCEPTO: readonly { valor: ConceptoFactura; texto: string }[] = [
+  { valor: 'productos', texto: 'Productos' },
+  { valor: 'productos_y_servicios', texto: 'Productos y servicios' },
+];
+
+/** Los 409 de la emisión que se resuelven en la configuración: su mensaje lleva el enlace (AC-13, AC-29, AC-32). */
+const MOTIVOS_DE_CONFIGURACION: readonly MotivoConflicto[] = ['sin_tope', 'sin_punto_venta', 'alicuota_no_admitida'];
 
 /**
  * Descarga el PDF recibido como `presupuesto-{numero}.pdf` (D-10): una URL de objeto, un enlace temporal con
@@ -50,10 +70,15 @@ interface Aviso {
   numero: number;
   tipo: 'exito' | 'error';
   texto: string;
+  /** Si el aviso lleva el enlace a la configuración (los 409 de la emisión que se resuelven ahí). */
+  enlaceConfiguracion?: boolean;
 }
 
-/** Adónde vuelve el foco al cerrar el diálogo: al botón que lo abrió o, si ya no está (pasó a Final), al aviso. */
-type DestinoDelFoco = 'boton' | 'aviso' | null;
+/**
+ * Adónde vuelve el foco al cerrar un diálogo: al botón que lo abrió o, si ya no está o quedó deshabilitado (pasó a
+ * Final, se emitió la factura), al aviso.
+ */
+type DestinoDelFoco = 'botonFinal' | 'botonFacturar' | 'aviso' | null;
 
 /**
  * Un presupuesto grabado, en solo lectura: número, fecha dd/mm/aaaa, estado, los seis datos del cliente, las líneas
@@ -67,6 +92,13 @@ type DestinoDelFoco = 'boton' | 'aviso' | null;
  * muestra otro número se descarta. La carga es la de {@link usePresupuestoDeLaRuta}: un número de ruta inválido o un
  * 404 muestran "No se encontró el presupuesto." (D-24) y sin sesión va a `/ingreso`. Los datos del cliente viven solo
  * en el estado de la pantalla (D-17); no hay consultas periódicas.
+ *
+ * "Facturar" (FEAT-007, FR-01) está habilitado solo en Final, sin factura y sin emisión pendiente (AC-02, AC-03,
+ * AC-22). Abre un diálogo que pide el concepto, sin ninguno elegido (FR-08), y "Emitir" envía solo el concepto. Con la
+ * factura autorizada muestra "Se emitió la Factura B 0003-00000125." y el presupuesto pasa a mostrar el comprobante
+ * (FR-19, FR-20). Cada 409 muestra el texto propio de su motivo, nunca el `detail` del servidor (el rechazo, con el
+ * código y la descripción de ARCA como texto; los de la configuración, con su enlace) y vuelve a leer el presupuesto:
+ * con una emisión pendiente, Facturar queda deshabilitado y un aviso lo explica.
  */
 export function Presupuesto() {
   const navegar = useNavigate();
@@ -75,16 +107,25 @@ export function Presupuesto() {
   const [avisoGuardado, setAviso] = useState<Aviso | null>(null);
   /** El número cuyo paso a Final se está confirmando en el diálogo, o `null`. */
   const [confirmandoNumero, setConfirmandoNumero] = useState<number | null>(null);
-  // Con otro número en la ruta, el aviso y el diálogo del anterior se borran en este mismo render (como la carga en
+  /** El número cuya factura se está pidiendo en el diálogo de Facturar, o `null`. */
+  const [facturandoNumero, setFacturandoNumero] = useState<number | null>(null);
+  // Con otro número en la ruta, el aviso y los diálogos del anterior se borran en este mismo render (como la carga en
   // `usePresupuestoDeLaRuta`): así no reaparecen al volver a ese número con atrás o adelante.
   const [numeroMostrado, setNumeroMostrado] = useState(numero);
   if (numero !== numeroMostrado) {
     setNumeroMostrado(numero);
     setAviso(null);
     setConfirmandoNumero(null);
+    setFacturandoNumero(null);
   }
   const [enviando, setEnviando] = useState(false);
   const envioEnCurso = useRef(false);
+  const [emitiendo, setEmitiendo] = useState(false);
+  /** Guarda contra dos emisiones seguidas antes de que React vuelva a dibujar (una emisión repetida no se reintenta). */
+  const emisionEnCurso = useRef(false);
+  const refBotonFacturar = useRef<HTMLButtonElement>(null);
+  /** El id del aviso de emisión pendiente, que describe al botón Facturar deshabilitado. */
+  const idAvisoPendiente = useId();
   /**
    * El número cuyo PDF se está pidiendo, o `null`. Con otro número en la ruta el botón del presupuesto nuevo no queda
    * bloqueado: `descargando` se deriva del número mostrado, como `aviso`.
@@ -98,24 +139,85 @@ export function Presupuesto() {
   // Además, una respuesta que llega tarde no los muestra para otro número (ver `sigueVigente`).
   const aviso = avisoGuardado !== null && avisoGuardado.numero === numero ? avisoGuardado : null;
   const confirmando = confirmandoNumero !== null && confirmandoNumero === numero;
+  const facturando = facturandoNumero !== null && facturandoNumero === numero;
 
-  /** Al cerrarse el diálogo (ya fuera del DOM, así el foco no queda atrapado en él), el foco vuelve adonde corresponde. */
+  /**
+   * Al cerrarse un diálogo (ya fuera del DOM, así el foco no queda atrapado en él), el foco vuelve adonde corresponde.
+   */
   useEffect(() => {
-    if (confirmando) {
+    if (confirmando || facturando) {
       return;
     }
     const destino = destinoDelFoco.current;
     destinoDelFoco.current = null;
-    if (destino === 'boton') {
+    if (destino === 'botonFinal') {
       refBotonFinal.current?.focus();
+    } else if (destino === 'botonFacturar') {
+      refBotonFacturar.current?.focus();
     } else if (destino === 'aviso') {
       refAviso.current?.focus();
     }
-  }, [confirmando]);
+  }, [confirmando, facturando]);
 
   function cancelarFinal() {
-    destinoDelFoco.current = 'boton';
+    destinoDelFoco.current = 'botonFinal';
     setConfirmandoNumero(null);
+  }
+
+  function cancelarFactura() {
+    destinoDelFoco.current = 'botonFacturar';
+    setFacturandoNumero(null);
+  }
+
+  /**
+   * Emite la factura con el concepto elegido (FEAT-007, FR-01, FR-08). Una sola emisión a la vez y sin reintentos. Con
+   * 201 muestra el comprobante; un 409 muestra el texto propio de su motivo y vuelve a leer el presupuesto (factura,
+   * emisión pendiente); sin sesión va a `/ingreso`; cualquier otra falla muestra el mensaje fijo del cliente. Una
+   * respuesta que llega cuando la ruta ya muestra otro número se descarta.
+   */
+  async function emitir(presupuesto: PresupuestoConsultado, concepto: ConceptoFactura) {
+    if (emisionEnCurso.current) {
+      return;
+    }
+    emisionEnCurso.current = true;
+    setEmitiendo(true);
+    const resultado = await emitirFactura(presupuesto.numero, concepto);
+    emisionEnCurso.current = false;
+    setEmitiendo(false);
+    if (!sigueVigente(presupuesto.numero)) {
+      setFacturandoNumero(null);
+      return;
+    }
+    switch (resultado.tipo) {
+      case 'ok':
+        // FR-20: el presupuesto muestra la factura; Facturar queda deshabilitado y el foco va al aviso.
+        mostrar({ ...presupuesto, factura: { comprobante: resultado.datos.comprobante }, emisionPendiente: false });
+        setAviso({ numero: presupuesto.numero, tipo: 'exito', texto: mensajeFacturaEmitida(resultado.datos.comprobante) });
+        destinoDelFoco.current = 'aviso';
+        break;
+      case 'sinSesion':
+        navegar('/ingreso', { replace: true });
+        return;
+      case 'conflicto':
+        setAviso({
+          numero: presupuesto.numero,
+          tipo: 'error',
+          texto: resultado.mensaje,
+          enlaceConfiguracion: resultado.motivo !== undefined && MOTIVOS_DE_CONFIGURACION.includes(resultado.motivo),
+        });
+        destinoDelFoco.current = 'aviso';
+        // La factura o la emisión pendiente pueden haber cambiado (otra sesión, ARCA sin respuesta): se vuelve a leer.
+        recargar();
+        break;
+      default:
+        setAviso({ numero: presupuesto.numero, tipo: 'error', texto: resultado.mensaje });
+        // Sin respuesta legible no se sabe si la Api llegó a grabar la factura: se vuelve a leer antes de ofrecerla. El
+        // botón puede quedar deshabilitado (factura o emisión pendiente), así que el foco va al mensaje, como en un 409.
+        destinoDelFoco.current = 'aviso';
+        recargar();
+        break;
+    }
+    setFacturandoNumero(null);
   }
 
   async function confirmarFinal(presupuesto: PresupuestoGrabado) {
@@ -136,7 +238,8 @@ export function Presupuesto() {
     }
     switch (resultado.tipo) {
       case 'ok':
-        mostrar(resultado.datos);
+        // El PUT no informa la facturación (D-28); un presupuesto que recién pasó a Final no tiene factura ni emisión.
+        mostrar({ ...resultado.datos, factura: null, emisionPendiente: false });
         setAviso({ numero: presupuesto.numero, tipo: 'exito', texto: mensajePasadoAFinal(resultado.datos.numero) });
         // En Final el botón ya no está: el foco va al aviso, que anuncia el resultado.
         destinoDelFoco.current = 'aviso';
@@ -154,7 +257,7 @@ export function Presupuesto() {
         break;
       default:
         setAviso({ numero: presupuesto.numero, tipo: 'error', texto: resultado.mensaje });
-        destinoDelFoco.current = 'boton';
+        destinoDelFoco.current = 'botonFinal';
         break;
     }
     setConfirmandoNumero(null);
@@ -218,6 +321,12 @@ export function Presupuesto() {
           tabIndex={-1}
         >
           {aviso.texto}
+          {aviso.enlaceConfiguracion === true && (
+            <>
+              {' '}
+              <Link to="/configuracion">Ir a la configuración</Link>
+            </>
+          )}
         </p>
       )}
       {carga.tipo === 'cargando' && <p className="cargando">Cargando…</p>}
@@ -270,6 +379,44 @@ export function Presupuesto() {
           </button>
         </p>
       )}
+      {carga.tipo === 'listo' && (
+        <div>
+          <p>
+            {/*
+              FEAT-007, AC-02, AC-03, AC-22: deshabilitado (`disabled`) en Borrador, con factura o con una emisión
+              pendiente; la Api rechaza igual esos pedidos (409). Mientras emite, el diálogo sigue abierto.
+            */}
+            <button
+              ref={refBotonFacturar}
+              type="button"
+              disabled={
+                carga.presupuesto.estado !== 'final' ||
+                carga.presupuesto.factura !== null ||
+                carga.presupuesto.emisionPendiente
+              }
+              aria-describedby={carga.presupuesto.emisionPendiente ? idAvisoPendiente : undefined}
+              onClick={() => {
+                setAviso(null);
+                setFacturandoNumero(carga.presupuesto.numero);
+              }}
+            >
+              Facturar
+            </button>
+          </p>
+          {carga.presupuesto.emisionPendiente && (
+            <p id={idAvisoPendiente} className="aviso" role="status">
+              {AVISO_EMISION_PENDIENTE}
+            </p>
+          )}
+          {facturando && (
+            <DialogoFacturar
+              emitiendo={emitiendo}
+              alEmitir={(concepto) => void emitir(carga.presupuesto, concepto)}
+              alCancelar={cancelarFactura}
+            />
+          )}
+        </div>
+      )}
       <p>
         <Link to="/presupuestos/nuevo">Nuevo presupuesto</Link>
       </p>
@@ -280,12 +427,14 @@ export function Presupuesto() {
   );
 }
 
-function DetallePresupuesto({ presupuesto }: { presupuesto: PresupuestoGrabado }) {
+function DetallePresupuesto({ presupuesto }: { presupuesto: PresupuestoConsultado }) {
   const { cliente } = presupuesto;
   const datos: [string, string][] = [
     ['Número', String(presupuesto.numero)],
     ['Fecha', mostrarFecha(presupuesto.fecha)],
     ['Estado', TEXTO_DEL_ESTADO[presupuesto.estado]],
+    // FR-20, AC-19: la factura emitida desde el presupuesto, "Factura B 0003-00000125"; sin factura, no se muestra.
+    ...(presupuesto.factura === null ? [] : [['Factura', presupuesto.factura.comprobante] as [string, string]]),
     ['Apellido', cliente.apellido],
     ['Nombre', cliente.nombre],
     ['DNI', cliente.dni],
@@ -427,6 +576,106 @@ function DialogoConfirmarFinal({ enviando, alConfirmar, alCancelar }: PropsDialo
         Pasar a Final
       </button>
       <button ref={refCancelar} type="button" aria-disabled={enviando} onClick={() => !enviando && alCancelar()}>
+        Cancelar
+      </button>
+    </dialog>
+  );
+}
+
+interface PropsDialogoFacturar {
+  emitiendo: boolean;
+  alEmitir: (concepto: ConceptoFactura) => void;
+  alCancelar: () => void;
+}
+
+/**
+ * El diálogo de Facturar (FEAT-007, FR-08): un `<dialog>` modal con el título visible "Facturar" (su nombre accesible),
+ * el grupo "Concepto" con las opciones "Productos" y "Productos y servicios", ninguna elegida al abrirse (se monta solo
+ * mientras está abierto, así cada apertura empieza sin concepto), y los botones "Emitir" y "Cancelar". "Emitir" está
+ * deshabilitado (`disabled`) mientras no hay concepto. Al abrirse el foco va a la primera opción, sin elegirla. Mientras
+ * se emite, "Emitir" y "Cancelar" quedan `aria-disabled` (con `disabled` el foco caería fuera del diálogo) y no hacen
+ * nada, el concepto no cambia y Escape no lo cierra: la emisión puede tardar hasta el tiempo máximo de ARCA (NFR-01).
+ */
+function DialogoFacturar({ emitiendo, alEmitir, alCancelar }: PropsDialogoFacturar) {
+  const idTitulo = useId();
+  const idTexto = useId();
+  const nombreGrupo = useId();
+  const refDialogo = useRef<HTMLDialogElement>(null);
+  const refPrimeraOpcion = useRef<HTMLInputElement>(null);
+  const [concepto, setConcepto] = useState<ConceptoFactura | null>(null);
+
+  useEffect(() => {
+    const dialogo = refDialogo.current;
+    if (dialogo === null) {
+      return;
+    }
+    if (typeof dialogo.showModal === 'function') {
+      if (!dialogo.open) {
+        dialogo.showModal();
+      }
+    } else {
+      dialogo.setAttribute('open', '');
+    }
+    refPrimeraOpcion.current?.focus();
+    return () => {
+      if (typeof dialogo.close === 'function') {
+        dialogo.close();
+      } else {
+        dialogo.removeAttribute('open');
+      }
+    };
+  }, []);
+
+  function cancelar(evento: SyntheticEvent) {
+    evento.preventDefault();
+    if (!emitiendo) {
+      alCancelar();
+    }
+  }
+
+  function alPulsarTecla(evento: KeyboardEvent<HTMLDialogElement>) {
+    if (evento.key === 'Escape') {
+      cancelar(evento);
+    }
+  }
+
+  return (
+    <dialog
+      ref={refDialogo}
+      aria-labelledby={idTitulo}
+      aria-describedby={idTexto}
+      aria-busy={emitiendo || undefined}
+      onCancel={cancelar}
+      onKeyDown={alPulsarTecla}
+    >
+      <h2 id={idTitulo}>Facturar</h2>
+      <p id={idTexto}>Elegí el concepto de la factura.</p>
+      <fieldset>
+        <legend>Concepto</legend>
+        {OPCIONES_CONCEPTO.map((opcion, indice) => (
+          <label key={opcion.valor}>
+            <input
+              ref={indice === 0 ? refPrimeraOpcion : undefined}
+              type="radio"
+              name={nombreGrupo}
+              value={opcion.valor}
+              checked={concepto === opcion.valor}
+              onChange={() => !emitiendo && setConcepto(opcion.valor)}
+            />
+            {opcion.texto}
+          </label>
+        ))}
+      </fieldset>
+      {emitiendo && <p role="status">Enviando la factura a ARCA…</p>}
+      <button
+        type="button"
+        disabled={concepto === null}
+        aria-disabled={emitiendo}
+        onClick={() => !emitiendo && concepto !== null && alEmitir(concepto)}
+      >
+        Emitir
+      </button>
+      <button type="button" aria-disabled={emitiendo} onClick={() => !emitiendo && alCancelar()}>
         Cancelar
       </button>
     </dialog>

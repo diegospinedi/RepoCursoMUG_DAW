@@ -60,6 +60,21 @@ public sealed class InstalacionTests
         var texto = raiz.GetRawText();
         Assert.DoesNotContain("Password", texto, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Contrasena", texto, StringComparison.OrdinalIgnoreCase);
+
+        // D-26 de FEAT-007: ninguna clave (la del certificado de ARCA, Arca:Certificado:Clave) con valor en el archivo
+        // versionado; se carga con una variable de entorno o la configuración local.
+        Assert.Empty(ClavesConValor(raiz, "$"));
+    }
+
+    [Fact]
+    public void ClavesConValor_DetectaClaveConValorEnCualquierNivel()
+    {
+        using var json = JsonDocument.Parse(
+            """{"Arca":{"Certificado":{"Ruta":"","Clave":"secreta"}},"Otra":{"ClaveApi":"x","Clave":""},"Nula":{"Clave":null},"Lista":[{"Clave":"en-arreglo"},{"Clave":""},[{"Clave":"anidada"}]]}""");
+
+        Assert.Equal(
+            ["$.Arca.Certificado.Clave", "$.Otra.ClaveApi", "$.Lista[0].Clave", "$.Lista[2][0].Clave"],
+            ClavesConValor(json.RootElement, "$"));
     }
 
     [Fact]
@@ -72,6 +87,48 @@ public sealed class InstalacionTests
 
         Assert.Empty(fabrica.Services.GetServices<IConfigureOptions<HttpLoggingOptions>>());
         Assert.Empty(fabrica.Services.GetServices<IConfigureOptions<W3CLoggerOptions>>());
+    }
+
+    /// <summary>
+    /// Los caminos de las propiedades cuyo nombre contiene <c>Clave</c> (sin distinguir mayúsculas) y tienen un valor
+    /// que no es un texto vacío ni null, a cualquier profundidad, dentro de objetos y de arreglos. Solo se informa el
+    /// camino, nunca el valor.
+    /// </summary>
+    private static List<string> ClavesConValor(JsonElement elemento, string camino)
+    {
+        var encontradas = new List<string>();
+        if (elemento.ValueKind == JsonValueKind.Array)
+        {
+            var indice = 0;
+            foreach (var item in elemento.EnumerateArray())
+            {
+                encontradas.AddRange(ClavesConValor(item, $"{camino}[{indice}]"));
+                indice++;
+            }
+
+            return encontradas;
+        }
+
+        if (elemento.ValueKind != JsonValueKind.Object)
+        {
+            return encontradas;
+        }
+
+        foreach (var propiedad in elemento.EnumerateObject())
+        {
+            var hijo = $"{camino}.{propiedad.Name}";
+            var valor = propiedad.Value;
+            var vacio = valor.ValueKind == JsonValueKind.Null
+                || (valor.ValueKind == JsonValueKind.String && valor.GetString()!.Length == 0);
+            if (propiedad.Name.Contains("Clave", StringComparison.OrdinalIgnoreCase) && !vacio)
+            {
+                encontradas.Add(hijo);
+            }
+
+            encontradas.AddRange(ClavesConValor(valor, hijo));
+        }
+
+        return encontradas;
     }
 
     private static Task<HttpResponseMessage> PedirConHost(HttpClient cliente, string host)

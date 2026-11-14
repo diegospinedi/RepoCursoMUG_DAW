@@ -381,14 +381,15 @@ public class AccesoPersistenciaTests
         var cadena = CadenaDe(baseTemporal);
         var contexto = baseTemporal.CrearContexto();
 
-        // Las migraciones del ensamblado, en orden, y todas aplicadas.
+        // Las migraciones del ensamblado, en orden, y todas aplicadas. Se buscan por nombre (D-29 de FEAT-007): las
+        // conocidas tienen que estar y en este orden; una migración nueva no rompe la prueba.
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.Equal(
-            [
-                "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
-                "CatalogoActivo", "Presupuestos", "CierrePresupuestos",
-            ],
-            migraciones.Select(m => m[(m.IndexOf('_') + 1)..]));
+        string[] conocidas =
+        [
+            "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
+            "CatalogoActivo", "Presupuestos", "CierrePresupuestos", "ConfiguracionPuntoVenta", "Facturas",
+        ];
+        Assert.Equal(conocidas, migraciones.Select(m => m[(m.IndexOf('_') + 1)..]).Where(conocidas.Contains));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);
         Assert.Equal("20261030220627_Inicial", migraciones[0]);
         Assert.Equal(migraciones, contexto.Database.GetAppliedMigrations());

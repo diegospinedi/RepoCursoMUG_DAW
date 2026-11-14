@@ -4,7 +4,7 @@ namespace Optica.Domain.Configuracion;
 
 /// <summary>
 /// Qué regla de la configuración de negocio incumple un campo. Cada valor pertenece a un solo campo: el nombre
-/// empieza por el campo (alícuota, condición, múltiplo o tope).
+/// empieza por el campo (alícuota, condición, múltiplo, tope o punto de venta).
 /// </summary>
 public enum InfraccionConfiguracion
 {
@@ -19,17 +19,30 @@ public enum InfraccionConfiguracion
     TopeNoPositivo,
     TopeConMasDeDosDecimales,
     TopeFueraDeRango,
+
+    /// <summary>La alícuota no es una de <see cref="AlicuotasAdmitidas"/>: solo al grabar (FR-26 y D-06 de FEAT-007).</summary>
+    AlicuotaNoAdmitida,
+
+    /// <summary>El punto de venta no es un entero de 1 a 99999 (FR-28 y D-33 de FEAT-007).</summary>
+    PuntoVentaFueraDeRango,
 }
 
 /// <summary>
-/// Reglas de los parámetros de negocio (FR-02 a FR-05, D-01 y D-02 de FEAT-001c) y la única traducción entre
-/// <see cref="CondicionFiscal"/> y su texto (D-07).
+/// Reglas de los parámetros de negocio (FR-02 a FR-05, D-01 y D-02 de FEAT-001c; FR-26 y FR-28 de FEAT-007) y la
+/// única traducción entre <see cref="CondicionFiscal"/> y su texto (D-07).
 /// </summary>
+/// <remarks>
+/// Dos niveles (D-06 y D-33 de FEAT-007): <see cref="Evaluar"/> son las invariantes de lectura, que cumple toda
+/// configuración guardada (alícuota de 0 a 100 y punto de venta de 1 a 99999); <see cref="EvaluarParaGrabar"/> suma la
+/// regla de escritura de las 6 alícuotas de ARCA. Así una alícuota grabada antes de FEAT-007 se sigue leyendo.
+/// </remarks>
 public static class PoliticaConfiguracionNegocio
 {
     public const decimal AlicuotaMinima = 0m;
     public const decimal AlicuotaMaxima = 100m;
     public const decimal MultiploMinimo = 0.01m;
+    public const int PuntoVentaMinimo = 1;
+    public const int PuntoVentaMaximo = 99999;
 
     /// <summary>Alias de <see cref="ReglasImporte.ImporteMaximo"/>, que es donde vive la regla (D-12 de FEAT-002a).</summary>
     public const decimal ImporteMaximo = ReglasImporte.ImporteMaximo;
@@ -38,15 +51,37 @@ public static class PoliticaConfiguracionNegocio
     private const string TextoMonotributo = "monotributo";
 
     /// <summary>
-    /// Evalúa los cuatro campos y devuelve sus infracciones, una por campo como máximo, en el orden alícuota,
-    /// condición, múltiplo, tope. Por campo gana la primera regla incumplida. Nunca lanza.
+    /// Evalúa los cinco campos con las invariantes de lectura y devuelve sus infracciones, una por campo como máximo, en
+    /// el orden alícuota, condición, múltiplo, tope, punto de venta. Por campo gana la primera regla incumplida. Un tope
+    /// o un punto de venta sin valor son válidos. Nunca lanza.
     /// </summary>
     public static IReadOnlyList<InfraccionConfiguracion> Evaluar(
-        decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion)
-    {
-        var infracciones = new List<InfraccionConfiguracion>(4);
+        decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion,
+        int? puntoVenta) =>
+        EvaluarCampos(alicuotaIva, condicionFiscal, multiploRedondeo, topeIdentificacion, puntoVenta, paraGrabar: false);
 
-        if (EvaluarAlicuota(alicuotaIva) is { } alicuota)
+    /// <summary>
+    /// Lo mismo que <see cref="Evaluar"/>, salvo la alícuota, que tiene que ser una de <see cref="AlicuotasAdmitidas"/>
+    /// (FR-26 de FEAT-007): sin valor es <see cref="InfraccionConfiguracion.AlicuotaFaltante"/>, y cualquier otra
+    /// (19, 101, -1, 21,555) es <see cref="InfraccionConfiguracion.AlicuotaNoAdmitida"/>, sin informar rango ni decimales
+    /// (decisión del usuario del 2026-11-13). Nunca lanza.
+    /// </summary>
+    public static IReadOnlyList<InfraccionConfiguracion> EvaluarParaGrabar(
+        decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion,
+        int? puntoVenta) =>
+        EvaluarCampos(alicuotaIva, condicionFiscal, multiploRedondeo, topeIdentificacion, puntoVenta, paraGrabar: true);
+
+    private static List<InfraccionConfiguracion> EvaluarCampos(
+        decimal? alicuotaIva,
+        string? condicionFiscal,
+        decimal? multiploRedondeo,
+        decimal? topeIdentificacion,
+        int? puntoVenta,
+        bool paraGrabar)
+    {
+        var infracciones = new List<InfraccionConfiguracion>(5);
+
+        if ((paraGrabar ? EvaluarAlicuotaParaGrabar(alicuotaIva) : EvaluarAlicuota(alicuotaIva)) is { } alicuota)
         {
             infracciones.Add(alicuota);
         }
@@ -64,6 +99,12 @@ public static class PoliticaConfiguracionNegocio
         if (EvaluarTope(topeIdentificacion) is { } tope)
         {
             infracciones.Add(tope);
+        }
+
+        // D-07 de FEAT-007: sin punto de venta es un valor válido; la emisión lo exige (FR-29).
+        if (puntoVenta is < PuntoVentaMinimo or > PuntoVentaMaximo)
+        {
+            infracciones.Add(InfraccionConfiguracion.PuntoVentaFueraDeRango);
         }
 
         return infracciones;
@@ -103,6 +144,15 @@ public static class PoliticaConfiguracionNegocio
 
         return TieneMasDeDosDecimales(alicuota) ? InfraccionConfiguracion.AlicuotaConMasDeDosDecimales : null;
     }
+
+    // Decisión del usuario (2026-11-13): al grabar, toda alícuota presente que no sea una de las 6 informa la lista de
+    // ARCA, sin distinguir rango ni decimales; el rango y los decimales quedan para la lectura (D-06).
+    private static InfraccionConfiguracion? EvaluarAlicuotaParaGrabar(decimal? valor) => valor switch
+    {
+        null => InfraccionConfiguracion.AlicuotaFaltante,
+        { } alicuota when !AlicuotasAdmitidas.EsAdmitida(alicuota) => InfraccionConfiguracion.AlicuotaNoAdmitida,
+        _ => null,
+    };
 
     private static InfraccionConfiguracion? EvaluarMultiplo(decimal? valor)
     {

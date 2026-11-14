@@ -496,6 +496,11 @@
         "resolved": "10.0.12",
         "contentHash": "sOZM+VyRj1pg/ItlHsvrSbjws6oGqZveTzTNBGZ9ziwRDyKsOF3ub6vhvOdxotCIqtlnyHAIwP5sLNvgiZC+pQ=="
       },
+      "System.Security.Cryptography.Pkcs": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
+      },
       "xunit.abstractions": {
         "type": "Transitive",
         "resolved": "2.0.3",
@@ -560,7 +565,8 @@
           "Microsoft.Extensions.Configuration.Abstractions": "[10.0.12, )",
           "Optica.Application": "[1.0.0, )",
           "Optica.Domain": "[1.0.0, )",
-          "QuestPDF": "[2026.9.1, )"
+          "QuestPDF": "[2026.9.1, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )"
         }
       }
     }

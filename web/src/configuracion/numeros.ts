@@ -22,6 +22,13 @@ export const IMPORTE_MAXIMO_SEGURO = Number.MAX_SAFE_INTEGER / 100;
  */
 export const IMPORTE_MAXIMO_SEGURO_CENTESIMOS = BigInt(Number.MAX_SAFE_INTEGER);
 
+/**
+ * El rango del punto de venta (FR-28 de FEAT-007), invariante al leer y al grabar (D-33). Vive acá, en un módulo que
+ * no importa nada, para que `api/cliente.ts` y `configuracion/reglas.ts` lo compartan sin un ciclo.
+ */
+export const PUNTO_VENTA_MINIMO = 1;
+export const PUNTO_VENTA_MAXIMO = 99999;
+
 /** El resultado de leer un texto: un número con sus decimales significativos, sin valor (vacío) o inválido. */
 export type LecturaDecimal = { tipo: 'numero'; valor: number; decimales: number } | { tipo: 'vacio' } | { tipo: 'invalido' };
 

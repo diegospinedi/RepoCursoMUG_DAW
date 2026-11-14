@@ -32,6 +32,12 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
     /// <summary>Los presupuestos; sus líneas se leen y se graban por la navegación <see cref="PresupuestoFila.Lineas"/>.</summary>
     public DbSet<PresupuestoFila> Presupuestos => Set<PresupuestoFila>();
 
+    /// <summary>Las facturas (FEAT-007); sus líneas se leen y se graban por la navegación <see cref="FacturaFila.Lineas"/>.</summary>
+    public DbSet<FacturaFila> Facturas => Set<FacturaFila>();
+
+    /// <summary>Las emisiones pendientes (FEAT-007, D-09, ADR-021): una como máximo por presupuesto.</summary>
+    public DbSet<EmisionPendienteFila> EmisionesPendientes => Set<EmisionPendienteFila>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<CredencialAccesoFila>(credencial =>
@@ -77,6 +83,13 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 tabla.HasCheckConstraint(
                     "CK_ConfiguracionNegocio_Tope",
                     "\"TopeIdentificacionCentavos\" IS NULL OR \"TopeIdentificacionCentavos\" > 0");
+
+                // FEAT-007 (D-07): la migración ConfiguracionPuntoVenta lo crea como CHECK de la columna, con ALTER TABLE
+                // ADD COLUMN, para no reconstruir la tabla (ADR-012); el modelo y el snapshot declaran el mismo nombre y
+                // la misma expresión.
+                tabla.HasCheckConstraint(
+                    "CK_ConfiguracionNegocio_PuntoVenta",
+                    "\"PuntoVenta\" IS NULL OR \"PuntoVenta\" BETWEEN 1 AND 99999");
             });
             configuracion.HasKey(c => c.Id);
             configuracion.Property(c => c.Id).ValueGeneratedNever();
@@ -87,6 +100,7 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 .HasColumnName("MultiploRedondeoCentavos").IsRequired().HasConversion(Centesimos);
             configuracion.Property(c => c.TopeIdentificacion)
                 .HasColumnName("TopeIdentificacionCentavos").HasConversion(Centesimos);
+            configuracion.Property(c => c.PuntoVenta);
         });
 
         modelBuilder.Entity<ArticuloFila>(articulo =>
@@ -222,6 +236,150 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<FacturaFila>(factura =>
+        {
+            // ADVERTENCIA (ADR-012, ADR-017): toda migración que toque Factura o LineaFactura se revisa antes de aplicarla
+            // para que EF Core no reconstruya la tabla (lo hace con AddCheckConstraint, DropCheckConstraint, AlterColumn y
+            // similares). La tabla reconstruida pierde los triggers de la migración Facturas, que impiden modificar o borrar
+            // una factura con CAE y sus líneas (FR-25), y reinicia la secuencia de Id. Si hace falta, se escribe a mano
+            // como CierrePresupuestos.
+            // FEAT-007. Tabla nueva, creada con CreateTable (ADR-012). Los CHECK son la segunda barrera detrás del dominio
+            // de facturación (D-45). Sin DEFAULT: el repositorio asigna todas las columnas. Lleva el DNI del receptor
+            // (Ley 25.326).
+            factura.ToTable("Factura", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_Factura_Tipo", "\"Tipo\" IN ('b', 'c')");
+                tabla.HasCheckConstraint("CK_Factura_PuntoVenta", "\"PuntoVenta\" BETWEEN 1 AND 99999");
+                // El rango de NumeroComprobante (D-45).
+                tabla.HasCheckConstraint("CK_Factura_Numero", "\"Numero\" BETWEEN 1 AND 99999999");
+                tabla.HasCheckConstraint(
+                    "CK_Factura_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+                tabla.HasCheckConstraint(
+                    "CK_Factura_Concepto", "\"Concepto\" IN ('productos', 'productos_y_servicios')");
+                tabla.HasCheckConstraint(
+                    "CK_Factura_ReceptorDni",
+                    "\"ReceptorDni\" IS NULL OR (length(\"ReceptorDni\") BETWEEN 7 AND 8 AND \"ReceptorDni\" NOT GLOB '*[^0-9]*')");
+                tabla.HasCheckConstraint("CK_Factura_TotalCentavos", "\"TotalCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_Factura_NetoCentavos", "\"NetoCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_Factura_IvaCentavos", "\"IvaCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_Factura_Importes", "\"NetoCentavos\" + \"IvaCentavos\" = \"TotalCentavos\"");
+
+                // La alícuota solo en la Factura B (FR-14); la C no lleva alícuota ni IVA (FR-16).
+                tabla.HasCheckConstraint(
+                    "CK_Factura_Alicuota",
+                    "(\"Tipo\" = 'b' AND \"AlicuotaCentesimas\" BETWEEN 0 AND 10000) OR " +
+                    "(\"Tipo\" = 'c' AND \"AlicuotaCentesimas\" IS NULL AND \"IvaCentavos\" = 0)");
+                tabla.HasCheckConstraint("CK_Factura_Cae", "length(\"Cae\") = 14 AND \"Cae\" NOT GLOB '*[^0-9]*'");
+
+                // Formato de fecha y no anterior a la del comprobante (D-45): las dos son TEXT yyyy-MM-dd, que se
+                // comparan como texto en el mismo orden que como fechas.
+                tabla.HasCheckConstraint(
+                    "CK_Factura_VencimientoCae",
+                    "\"VencimientoCae\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND \"VencimientoCae\" >= \"Fecha\"");
+                tabla.HasCheckConstraint(
+                    "CK_Factura_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+                tabla.HasCheckConstraint("CK_Factura_CantidadLineas", "\"CantidadLineas\" >= 1");
+            });
+            factura.HasKey(f => f.Id);
+            factura.Property(f => f.Id).ValueGeneratedOnAdd();
+
+            // DateOnly: EF Core lo guarda como TEXT yyyy-MM-dd, como la fecha del presupuesto.
+            factura.Property(f => f.Fecha).IsRequired();
+            factura.Property(f => f.VencimientoCae).IsRequired();
+            factura.Property(f => f.Tipo).IsRequired();
+            factura.Property(f => f.Concepto).IsRequired();
+            factura.Property(f => f.Cae).IsRequired();
+            factura.Property(f => f.Entorno).IsRequired();
+            factura.Property(f => f.Total).HasColumnName("TotalCentavos").IsRequired().HasConversion(Centesimos);
+            factura.Property(f => f.Neto).HasColumnName("NetoCentavos").IsRequired().HasConversion(Centesimos);
+            factura.Property(f => f.Iva).HasColumnName("IvaCentavos").IsRequired().HasConversion(Centesimos);
+            factura.Property(f => f.Alicuota).HasColumnName("AlicuotaCentesimas").HasConversion(Centesimos);
+
+            // Una factura por presupuesto (FR-03) y un comprobante por entorno: un conflicto al confirmar el alta es
+            // unicidad (D-18 de FEAT-002c).
+            factura.HasIndex(f => f.PresupuestoNumero).IsUnique();
+            factura.HasIndex(f => new { f.Entorno, f.Tipo, f.PuntoVenta, f.Numero })
+                .IsUnique()
+                .HasDatabaseName("IX_Factura_Comprobante");
+
+            // Facturación conoce a Presupuestos y no al revés: la relación vive solo de este lado.
+            factura.HasOne<PresupuestoFila>()
+                .WithOne()
+                .HasForeignKey<FacturaFila>(f => f.PresupuestoNumero)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            factura.HasMany(f => f.Lineas)
+                .WithOne()
+                .HasForeignKey(l => l.FacturaId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LineaFacturaFila>(linea =>
+        {
+            // ADVERTENCIA (ADR-012, ADR-017): como Factura, esta tabla no se reconstruye; reconstruirla borra los triggers
+            // que protegen las líneas de una factura.
+            // Las mismas columnas y CHECK que LineaPresupuesto (D-34), sin clave foránea al artículo: la factura conserva
+            // la descripción y los importes aunque el artículo cambie.
+            linea.ToTable("LineaFactura", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_LineaFactura_Orden", "\"Orden\" >= 1");
+                tabla.HasCheckConstraint("CK_LineaFactura_Descripcion", "length(\"Descripcion\") BETWEEN 1 AND 200");
+                tabla.HasCheckConstraint(
+                    "CK_LineaFactura_PrecioUnitarioCentavos", "\"PrecioUnitarioCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_LineaFactura_PrecioConDescuentoCentavos", "\"PrecioConDescuentoCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_LineaFactura_PrecioFinalCentavos", "\"PrecioFinalCentavos\" >= 0");
+                tabla.HasCheckConstraint("CK_LineaFactura_Cantidad", "\"Cantidad\" >= 1");
+                tabla.HasCheckConstraint(
+                    "CK_LineaFactura_DescuentoCentesimos", "\"DescuentoCentesimos\" BETWEEN 0 AND 10000");
+            });
+            linea.HasKey(l => new { l.FacturaId, l.Orden });
+            linea.Property(l => l.Orden).ValueGeneratedNever();
+            linea.Property(l => l.Descripcion).IsRequired();
+            linea.Property(l => l.PrecioUnitario)
+                .HasColumnName("PrecioUnitarioCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.PrecioConDescuento)
+                .HasColumnName("PrecioConDescuentoCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.PrecioFinal)
+                .HasColumnName("PrecioFinalCentavos").IsRequired().HasConversion(Centesimos);
+            linea.Property(l => l.Cantidad).IsRequired();
+            linea.Property(l => l.PorcentajeDescuento)
+                .HasColumnName("DescuentoCentesimos").IsRequired().HasConversion(Centesimos);
+        });
+
+        modelBuilder.Entity<EmisionPendienteFila>(pendiente =>
+        {
+            // ADVERTENCIA (ADR-012, ADR-017): como Factura, esta tabla no se reconstruye (la crea a mano la migración
+            // Facturas) y perdería TR_EmisionPendiente_Inmutable: la pendiente se agrega y se quita, no se modifica.
+            // Los datos de la solicitud que verifica el PRD 07, con los mismos CHECK que Factura. Sin el DNI del
+            // receptor.
+            pendiente.ToTable("EmisionPendiente", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_EmisionPendiente_Tipo", "\"Tipo\" IN ('b', 'c')");
+                tabla.HasCheckConstraint("CK_EmisionPendiente_PuntoVenta", "\"PuntoVenta\" BETWEEN 1 AND 99999");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+                tabla.HasCheckConstraint("CK_EmisionPendiente_TotalCentavos", "\"TotalCentavos\" >= 0");
+                tabla.HasCheckConstraint(
+                    "CK_EmisionPendiente_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+            });
+
+            // La clave es el presupuesto: una segunda pendiente para el mismo choca con la clave primaria (FR-24).
+            pendiente.HasKey(p => p.PresupuestoNumero);
+            pendiente.Property(p => p.PresupuestoNumero).ValueGeneratedNever();
+            pendiente.Property(p => p.Momento).IsRequired().HasConversion(FechaUtcIso8601);
+            pendiente.Property(p => p.Tipo).IsRequired();
+            pendiente.Property(p => p.Fecha).IsRequired();
+            pendiente.Property(p => p.Total).HasColumnName("TotalCentavos").IsRequired().HasConversion(Centesimos);
+            pendiente.Property(p => p.Entorno).IsRequired();
+
+            pendiente.HasOne<PresupuestoFila>()
+                .WithOne()
+                .HasForeignKey<EmisionPendienteFila>(p => p.PresupuestoNumero)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // Las funciones de la búsqueda de artículos, registradas en cada conexión por FabricaConexion (ADR-011).
         modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.Plegar))!)
             .HasName(FuncionesSqlite.NombrePlegar);
@@ -280,6 +438,9 @@ public sealed class ConfiguracionNegocioFila
 
     /// <summary>Importe, o null mientras no se cargue (D-02); columna <c>TopeIdentificacionCentavos</c>.</summary>
     public decimal? TopeIdentificacion { get; set; }
+
+    /// <summary>Punto de venta de ARCA, de 1 a 99999, o null mientras no se cargue (D-07 de FEAT-007).</summary>
+    public int? PuntoVenta { get; set; }
 }
 
 /// <summary>
@@ -390,6 +551,127 @@ public sealed class LineaPresupuestoFila
 
     /// <summary>Porcentaje; columna <c>DescuentoCentesimos</c>.</summary>
     public decimal PorcentajeDescuento { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>Factura</c> (FEAT-007): una factura autorizada por ARCA, inmutable (FR-25, triggers de la
+/// migración <c>Facturas</c>). Los importes y la alícuota se ven como <c>decimal</c> y se guardan en centésimos enteros
+/// (ADR-008). Lleva el DNI del receptor (Ley 25.326): no sobrescribe <see cref="object.ToString"/>.
+/// </summary>
+public sealed class FacturaFila
+{
+    /// <summary>Autonumérico; las líneas lo usan como clave foránea.</summary>
+    public long Id { get; set; }
+
+    /// <summary>El presupuesto que le dio origen; índice único (FR-03).</summary>
+    public long PresupuestoNumero { get; set; }
+
+    /// <summary><c>b</c> o <c>c</c>.</summary>
+    public string Tipo { get; set; } = string.Empty;
+
+    /// <summary>
+    /// De 1 a 99999. Es <c>long</c> y no <c>int</c> a propósito, como <see cref="LineaPresupuestoFila.Cantidad"/>: así el
+    /// repositorio reconoce como estado corrupto un valor que no entra en el dominio.
+    /// </summary>
+    public long PuntoVenta { get; set; }
+
+    /// <summary>De 1 a 99.999.999 (D-45).</summary>
+    public long Numero { get; set; }
+
+    /// <summary>TEXT <c>yyyy-MM-dd</c>.</summary>
+    public DateOnly Fecha { get; set; }
+
+    /// <summary><c>productos</c> o <c>productos_y_servicios</c>.</summary>
+    public string Concepto { get; set; } = string.Empty;
+
+    /// <summary>7 u 8 dígitos; null si el receptor no se identifica (FR-10).</summary>
+    public string? ReceptorDni { get; set; }
+
+    /// <summary>Importe; columna <c>TotalCentavos</c>.</summary>
+    public decimal Total { get; set; }
+
+    /// <summary>Importe; columna <c>NetoCentavos</c>.</summary>
+    public decimal Neto { get; set; }
+
+    /// <summary>Importe; columna <c>IvaCentavos</c>.</summary>
+    public decimal Iva { get; set; }
+
+    /// <summary>Porcentaje, solo en la Factura B; columna <c>AlicuotaCentesimas</c>.</summary>
+    public decimal? Alicuota { get; set; }
+
+    /// <summary>14 dígitos.</summary>
+    public string Cae { get; set; } = string.Empty;
+
+    /// <summary>TEXT <c>yyyy-MM-dd</c>.</summary>
+    public DateOnly VencimientoCae { get; set; }
+
+    /// <summary><c>simulado</c>, <c>homologacion</c> o <c>produccion</c> (FR-18).</summary>
+    public string Entorno { get; set; } = string.Empty;
+
+    /// <summary>Cuántas líneas tiene; <c>TR_LineaFactura_Cerrada</c> rechaza una de más (D-34).</summary>
+    public long CantidadLineas { get; set; }
+
+    /// <summary>Las líneas, con <see cref="LineaFacturaFila.Orden"/> desde 1.</summary>
+    public List<LineaFacturaFila> Lineas { get; set; } = [];
+}
+
+/// <summary>
+/// Fila de la tabla <c>LineaFactura</c>: la copia de una línea del presupuesto, con las mismas columnas que
+/// <c>LineaPresupuesto</c> (D-34). Inmutable (FR-25).
+/// </summary>
+public sealed class LineaFacturaFila
+{
+    public long FacturaId { get; set; }
+
+    /// <summary>La posición de la línea en la factura, desde 1.</summary>
+    public long Orden { get; set; }
+
+    /// <summary>El código del artículo, sin clave foránea: la factura no depende del catálogo.</summary>
+    public long CodigoArticulo { get; set; }
+
+    public string Descripcion { get; set; } = string.Empty;
+
+    /// <summary>Importe; columna <c>PrecioUnitarioCentavos</c>.</summary>
+    public decimal PrecioUnitario { get; set; }
+
+    /// <summary>Importe; columna <c>PrecioConDescuentoCentavos</c>.</summary>
+    public decimal PrecioConDescuento { get; set; }
+
+    /// <summary>Importe; columna <c>PrecioFinalCentavos</c>.</summary>
+    public decimal PrecioFinal { get; set; }
+
+    /// <summary>Desde 1. Es <c>long</c> por lo mismo que <see cref="LineaPresupuestoFila.Cantidad"/>.</summary>
+    public long Cantidad { get; set; }
+
+    /// <summary>Porcentaje; columna <c>DescuentoCentesimos</c>.</summary>
+    public decimal PorcentajeDescuento { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>EmisionPendiente</c> (FEAT-007, D-09, ADR-021): un intento de emisión registrado antes de llamar
+/// a ARCA. Guarda los datos de la solicitud que verifica el PRD 07, sin el DNI del receptor.
+/// </summary>
+public sealed class EmisionPendienteFila
+{
+    /// <summary>Clave primaria: una pendiente como máximo por presupuesto (FR-24).</summary>
+    public long PresupuestoNumero { get; set; }
+
+    /// <summary>Fecha y hora UTC del registro, TEXT ISO 8601.</summary>
+    public DateTime Momento { get; set; }
+
+    /// <summary><c>b</c> o <c>c</c>.</summary>
+    public string Tipo { get; set; } = string.Empty;
+
+    public long PuntoVenta { get; set; }
+
+    /// <summary>La fecha del comprobante pedida; TEXT <c>yyyy-MM-dd</c>.</summary>
+    public DateOnly Fecha { get; set; }
+
+    /// <summary>Importe; columna <c>TotalCentavos</c>.</summary>
+    public decimal Total { get; set; }
+
+    /// <summary><c>simulado</c>, <c>homologacion</c> o <c>produccion</c>.</summary>
+    public string Entorno { get; set; } = string.Empty;
 }
 
 /// <summary>

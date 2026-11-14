@@ -126,7 +126,7 @@ async function configuracionVigente(request: APIRequestContext) {
 async function configurarAlicuota21YMultiplo001(page: Page) {
   await page.getByRole('link', { name: 'Configuración' }).click();
   await expect(page).toHaveURL(/\/configuracion$/);
-  await page.getByLabel(ETIQUETA_ALICUOTA, { exact: true }).fill('21');
+  await page.getByLabel(ETIQUETA_ALICUOTA, { exact: true }).selectOption('21');
   await page.getByLabel(ETIQUETA_CONDICION, { exact: true }).selectOption('responsable_inscripto');
   await page.getByLabel(ETIQUETA_MULTIPLO, { exact: true }).fill('0,01');
   const [respuesta] = await Promise.all([

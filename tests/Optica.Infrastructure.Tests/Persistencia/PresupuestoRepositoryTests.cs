@@ -535,12 +535,11 @@ public partial class PresupuestoRepositoryTests
         var cadena = CadenaDe(baseTemporal);
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
+        // Por nombre, no por posición (D-29 de FEAT-007).
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.EndsWith("_CierrePresupuestos", migraciones[^1], StringComparison.Ordinal);
-        var presupuestos = migraciones[^2];
-        Assert.EndsWith("_Presupuestos", presupuestos, StringComparison.Ordinal);
-        var anterior = migraciones[^3];
-        Assert.EndsWith("_CatalogoActivo", anterior, StringComparison.Ordinal);
+        var presupuestos = Migracion(migraciones, "_Presupuestos");
+        var anterior = Migracion(migraciones, "_CatalogoActivo");
+        Assert.Equal(migraciones.IndexOf(anterior) + 1, migraciones.IndexOf(presupuestos));
 
         // ADR-012: el Up solo crea tablas e índices nuevos, nada sobre Articulo; el Down borra las líneas y después
         // los presupuestos.
@@ -1216,11 +1215,11 @@ public partial class PresupuestoRepositoryTests
         var cadena = CadenaDe(baseTemporal);
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
+        // Por nombre, no por posición (D-29 de FEAT-007).
         var migraciones = contexto.Database.GetMigrations().ToList();
-        var cierre = migraciones[^1];
-        Assert.EndsWith("_CierrePresupuestos", cierre, StringComparison.Ordinal);
-        var presupuestos = migraciones[^2];
-        Assert.EndsWith("_Presupuestos", presupuestos, StringComparison.Ordinal);
+        var cierre = Migracion(migraciones, "_CierrePresupuestos");
+        var presupuestos = Migracion(migraciones, "_Presupuestos");
+        Assert.Equal(migraciones.IndexOf(presupuestos) + 1, migraciones.IndexOf(cierre));
 
         // ADR-012: SQL escrito a mano; ni AddColumn ni AddCheckConstraint, que en SQLite reconstruyen la tabla.
         var ensamblado = contexto.GetService<IMigrationsAssembly>();
@@ -1258,10 +1257,12 @@ public partial class PresupuestoRepositoryTests
         Assert.Equal(lineas, Filas(cadena, SelectLinea));
         Assert.Equal([["0"], ["0"]], Filas(cadena, "SELECT Version FROM Presupuesto ORDER BY Numero"));
         Assert.Equal(TriggersDeCierre, Triggers(cadena));
-        Assert.Empty(contexto.Database.GetPendingMigrations());
+        Assert.Equal(cierre, contexto.Database.GetAppliedMigrations().Last());
 
         // Los Final que ya estaban quedan protegidos, y los Borradores se leen con versión 0.
         AfirmarRegistroCerrado(cadena, "UPDATE Presupuesto SET Apellido = 'Otroapellido' WHERE Numero = 2");
+        migrador.Migrate();
+        Assert.Empty(contexto.Database.GetPendingMigrations());
         var leido = await new PresupuestoRepository(baseTemporal.CrearContexto()).ObtenerAsync(1);
         Assert.Equal(0, leido!.Version);
     }
@@ -1276,7 +1277,7 @@ public partial class PresupuestoRepositoryTests
         await GrabarFinal(baseTemporal, Presupuesto.Nuevo(2, Fecha, ClienteCompleto(), [Linea(articulo)]));
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
-        var presupuestos = contexto.Database.GetMigrations().ToList()[^2];
+        var presupuestos = Migracion(contexto.Database.GetMigrations().ToList(), "_Presupuestos");
         var encabezados = Filas(cadena, SelectPresupuesto);
         var lineas = Filas(cadena, SelectLinea);
 
@@ -1296,6 +1297,10 @@ public partial class PresupuestoRepositoryTests
         Assert.Equal(encabezados, Filas(cadena, SelectPresupuesto));
         Assert.Empty(contexto.Database.GetPendingMigrations());
     }
+
+    /// <summary>La migración del ensamblado con ese sufijo, buscada por nombre (D-29 de FEAT-007).</summary>
+    private static string Migracion(IReadOnlyList<string> migraciones, string sufijo) =>
+        Assert.Single(migraciones, m => m.EndsWith(sufijo, StringComparison.Ordinal));
 
     private static ClientePresupuesto OtroCliente() => new(OtroApellido, OtroNombre, OtroDni, null, OtroEmail, null);
 

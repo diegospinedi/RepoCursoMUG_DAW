@@ -98,6 +98,8 @@ public sealed class ProteccionTests
             (HttpMethods.Post, RutaBusqueda),
             // FEAT-006: el PDF del presupuesto lleva los datos del cliente (R-03).
             (HttpMethods.Get, RutaPresupuestos + "/{numero:long}/pdf"),
+            // FEAT-007: la emisión de la factura manda el DNI del receptor a ARCA (R-03, R-07).
+            (HttpMethods.Post, RutaFactura),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -150,6 +152,14 @@ public sealed class ProteccionTests
             ("POST busqueda grande", EnviarJsonAsync(
                 cliente, HttpMethod.Post, RutaBusqueda, CuerpoBusquedaDeBytes(LimiteBusqueda + 1))),
             ("GET pdf", Http.GetAsync(cliente, $"{RutaPresupuestos}/1/pdf")),
+            ("POST factura", EnviarJsonAsync(cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura", CuerpoFactura)),
+            ("POST factura texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                $"{RutaPresupuestos}/1/factura",
+                new StringContent(CuerpoFactura, Encoding.UTF8, "text/plain"))),
+            ("POST factura grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura", CuerpoFacturaDeBytes(LimiteFactura + 1))),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -172,6 +182,112 @@ public sealed class ProteccionTests
     }
 
     private const string RutaPresupuestos = "/api/presupuestos";
+
+    // FEAT-007: la emisión de la factura.
+
+    private const string RutaFactura = RutaPresupuestos + "/{numero:long}/factura";
+
+    /// <summary>El límite del cuerpo de la emisión: 1 KB (<c>[RequestSizeLimit]</c>).</summary>
+    private const int LimiteFactura = 1024;
+
+    private const string CuerpoFactura = "{\"concepto\":\"productos\"}";
+
+    /// <summary>
+    /// R-03 (sad path): sin sesión, <c>POST /api/presupuestos/{numero}/factura</c> responde 401 sin cuerpo, antes de leer
+    /// el cuerpo y antes del 415 y del 413; la ruta existe y no es anónima, y no se emitió nada.
+    /// </summary>
+    [Fact]
+    public async Task Proteccion_RutaFactura_SinSesion401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        AfirmarQueElEndpointExiste(fabrica, RutaFactura);
+        Assert.False(RutasAnonimas.Contiene(HttpMethods.Post, RutaFactura));
+
+        foreach (var contenido in new HttpContent?[]
+        {
+            new StringContent(CuerpoFactura, Encoding.UTF8, "application/json"),
+            new StringContent("esto no es json", Encoding.UTF8, "application/json"),
+            new StringContent(CuerpoFactura, Encoding.UTF8, "text/plain"),
+            new StringContent(CuerpoFacturaDeBytes(LimiteFactura + 1), Encoding.UTF8, "application/json"),
+            null,
+        })
+        {
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura", contenido);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        Assert.False(File.Exists(Path.Combine(fabrica.DirectorioDatos, "arca-simulado.json")));
+    }
+
+    /// <summary>La emisión exige <c>Content-Type: application/json</c>: texto plano, ningún tipo o ningún cuerpo, 415.</summary>
+    [Theory]
+    [InlineData("textoPlano")]
+    [InlineData("sinTipo")]
+    [InlineData("sinTipoNiCuerpo")]
+    public async Task PostFactura_SinJson_415(string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(CuerpoFactura, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoFactura)),
+            _ => new ByteArrayContent([]),
+        };
+        var respuesta = await Http.EnviarAsync(
+            cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura", contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        AfirmarQueElEndpointExiste(fabrica, RutaFactura);
+    }
+
+    /// <summary>
+    /// La emisión acepta hasta 1 KB: un byte más, 413, con <c>Content-Length</c> y sin él (en partes); en el límite exacto
+    /// el pedido llega a la acción, que responde el 404 del presupuesto inexistente.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PostFactura_DemasiadoGrande_413(bool conLargo)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var rechazo = await EnviarFacturaAsync(cliente, CuerpoFacturaDeBytes(LimiteFactura + 1), conLargo, cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, rechazo.StatusCode);
+
+        var aceptado = await EnviarFacturaAsync(cliente, CuerpoFacturaDeBytes(LimiteFactura), conLargo, cookie);
+        Assert.Equal(HttpStatusCode.NotFound, aceptado.StatusCode);
+        Assert.Equal("application/problem+json", aceptado.Content.Headers.ContentType?.MediaType);
+    }
+
+    /// <summary><see cref="CuerpoFactura"/> con una propiedad que se ignora, hasta ocupar <paramref name="bytes"/>.</summary>
+    private static string CuerpoFacturaDeBytes(int bytes)
+    {
+        var sinRelleno = CuerpoFactura[..^1] + ",\"relleno\":\"\"}";
+        var faltan = bytes - Encoding.UTF8.GetByteCount(sinRelleno);
+        Assert.True(faltan >= 0, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = CuerpoFactura[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
+    private static Task<HttpResponseMessage> EnviarFacturaAsync(
+        HttpClient cliente, string cuerpo, bool conLargo, string cookie)
+    {
+        HttpContent contenido = conLargo
+            ? new StringContent(cuerpo, Encoding.UTF8, "application/json")
+            : new Http.ContenidoSinLargo(cuerpo, "application/json");
+        return Http.EnviarAsync(cliente, HttpMethod.Post, $"{RutaPresupuestos}/999/factura", contenido, cookie);
+    }
 
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
 
@@ -348,7 +464,7 @@ public sealed class ProteccionTests
 
     /// <summary>Una modificación válida del presupuesto 1 (versión 0, la línea 1), con datos ficticios.</summary>
     private static string CuerpoModificacionPresupuesto(long codigo) =>
-        "{\"version\":0,\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"99999999\"},"
+        "{\"version\":0,\"cliente\":{\"apellido\":\"Perez\",\"nombre\":\"Ana\",\"dni\":\"00718294\"},"
         + "\"lineas\":[{\"orden\":1,\"codigoArticulo\":" + codigo + ",\"cantidad\":2,\"porcentajeDescuento\":0}]}";
 
     private static string CuerpoPresupuestoDeBytes(long codigo, int bytes)

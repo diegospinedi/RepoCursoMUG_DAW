@@ -61,6 +61,9 @@ const GRABADO = {
   lineas: [ARMAZON_GRABADO, LENTE_GRABADO],
   total: 4330,
   version: 3,
+  // El GET suma la facturación (FEAT-007, D-19); el PUT no la lleva y la pantalla ignora lo que sobra.
+  factura: null,
+  emisionPendiente: false,
 };
 /** El artículo 7 en el catálogo de hoy: recalculado a $2.000,00 (AC-09). */
 const ARMAZON_HOY = { codigo: 7, codigoProveedor: 'ARM-7', descripcion: 'Armazón metálico', precioVenta: 2000, activo: true };

@@ -240,7 +240,9 @@ test('alicuota 10,5 y luego costo 1.105 con margen 50 graba 1.657,50', async ({ 
   });
   expect(previo.precioVenta).toBe(1815);
 
-  const cantidad = await grabarConRecalculo(page, () => alicuota(page).fill('10,5'));
+  const cantidad = await grabarConRecalculo(page, async () => {
+    await alicuota(page).selectOption('10,5');
+  });
 
   // D-22: la configuración queda en 10,5 con múltiplo 0,01, ningún precio cambia y ninguna versión se incrementa.
   expect(cantidad).toBe(0);

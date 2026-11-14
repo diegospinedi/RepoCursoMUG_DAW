@@ -13,6 +13,7 @@ using Optica.Application.Acceso;
 using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
+using Optica.Application.Facturacion;
 using Optica.Application.Marca;
 using Optica.Application.Presupuestos;
 using Optica.Infrastructure;
@@ -157,6 +158,14 @@ public partial class Program
         // FEAT-006: el PDF de un Final, una lectura; el generador (QuestPDF) lo registra Infrastructure (ADR-018).
         builder.Services.AddScoped<GenerarPdfPresupuesto>();
 
+        // FEAT-007: la emisión de la factura, con sesión (lleva el DNI del receptor hacia ARCA, R-07). Graba la emisión
+        // pendiente, llama a ARCA fuera de toda transacción y graba la factura en una segunda transacción (ADR-021). El
+        // candado de emisión (uno solo para toda la Api, D-10, D-32) lo registra la infraestructura. El estado de
+        // facturación lo suma el GET del presupuesto (D-28). El protector del ticket de WSAA (D-30) es el
+        // IProtectorDatos registrado más abajo.
+        builder.Services.AddScoped<EmitirFactura>();
+        builder.Services.AddScoped<ObtenerEstadoFacturacion>();
+
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de
         // Windows solo se usa en pruebas, con el directorio de datos temporal.
@@ -168,6 +177,10 @@ public partial class Program
         {
             proteccion.ProtectKeysWithDpapi();
         }
+
+        // Las mismas claves, por un puerto neutro, para lo que la infraestructura guarda cifrado en el directorio de
+        // datos (el ticket de acceso de ARCA, D-30). La Api no conoce qué protege.
+        builder.Services.AddSingleton<IProtectorDatos, ProtectorDatos>();
 
         // Sesión: cookie HttpOnly, Secure y SameSite=Strict que vence a los 60 minutos del último pedido. Sin sesión,
         // 401 sin cuerpo, nunca una redirección.

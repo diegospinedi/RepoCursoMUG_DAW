@@ -366,7 +366,7 @@ public class ArticuloTests
         var articulo = new Articulo(11L, "ABC-2", "Lente", 1105m, 50m, 1657.50m, activo: true, version: 2L);
 
         var resultado = articulo.ConPrecioRecalculado(
-            new ConfiguracionNegocio(10.5m, CondicionFiscal.ResponsableInscripto, 0.01m, null));
+            new ConfiguracionNegocio(10.5m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null));
 
         Assert.Same(ResultadoRecalculo.SinCambio, resultado);
         Assert.True(resultado.EsSinCambio);
@@ -406,7 +406,7 @@ public class ArticuloTests
         new(7L, "ABC-1", "Lente", 1210m, 50m, 1815m, activo, version: 3L);
 
     private static ConfiguracionNegocio ResponsableInscripto(decimal multiplo = 0.01m) =>
-        new(21m, CondicionFiscal.ResponsableInscripto, multiplo, null);
+        new(21m, CondicionFiscal.ResponsableInscripto, multiplo, null, puntoVenta: null);
 
     private static decimal Leer(string texto) => decimal.Parse(texto, CultureInfo.InvariantCulture);
 }

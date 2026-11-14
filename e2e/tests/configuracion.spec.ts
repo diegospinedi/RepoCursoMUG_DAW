@@ -7,6 +7,9 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  * su base con otra contraseña y bloqueada. Las pruebas corren en orden porque dependen de lo grabado: primero los
  * valores iniciales y el aviso (AC-06, AC-07), después los rechazos que no graban nada (AC-03, AC-04, AC-05) y al
  * final lo que sí se graba (AC-02, AC-01). Los valores se escriben como los escribiría la operadora, con coma decimal.
+ *
+ * FEAT-007: la alícuota se elige de la lista de las 6 de ARCA (AC-28), la 19 por la Api se rechaza (AC-27) y el punto
+ * de venta fuera de rango no se envía ni se graba (AC-31); al final se graban una alícuota y un punto de venta.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -17,10 +20,15 @@ const ETIQUETA_ALICUOTA = 'Alícuota de IVA (%)';
 const ETIQUETA_CONDICION = 'Condición fiscal';
 const ETIQUETA_MULTIPLO = 'Múltiplo de redondeo comercial ($)';
 const ETIQUETA_TOPE = 'Tope de identificación del receptor ($)';
+const ETIQUETA_PUNTO_VENTA = 'Punto de venta';
 
 const MENSAJE_FALTA_TOPE = 'Falta cargar el tope de identificación del receptor.';
 const MENSAJE_GRABADA = 'La configuración se grabó.';
-const MENSAJE_ALICUOTA_FUERA_DE_RANGO = 'La alícuota de IVA debe estar entre 0 y 100.';
+/** D-35: la alícuota que no es una de las 6 de ARCA. */
+const MENSAJE_ALICUOTA_NO_ADMITIDA = 'La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.';
+const MENSAJE_PUNTO_VENTA = 'El punto de venta debe ser un número entero de 1 a 99999.';
+/** Las 6 alícuotas de ARCA (FR-26), como las muestra la lista. */
+const OPCIONES_ALICUOTA = ['0', '2,5', '5', '10,5', '21', '27'];
 const MENSAJE_MULTIPLO_MINIMO = 'El valor mínimo es 0,01.';
 const MENSAJE_TOPE_NO_POSITIVO = 'El tope debe ser mayor a 0.';
 
@@ -35,6 +43,16 @@ const INICIALES = {
   multiploRedondeo: 0.01,
   topeIdentificacion: null,
   faltaTope: true,
+  puntoVenta: null,
+  alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
+};
+
+/** El cuerpo de un POST directo a la Api con los valores iniciales. */
+const PEDIDO_INICIAL = {
+  alicuotaIva: 21,
+  condicionFiscal: 'responsable_inscripto',
+  multiploRedondeo: 0.01,
+  topeIdentificacion: null,
 };
 
 let violacionesCsp: string[] = [];
@@ -68,6 +86,7 @@ const alicuota = (page: Page) => page.getByLabel(ETIQUETA_ALICUOTA, { exact: tru
 const condicion = (page: Page) => page.getByLabel(ETIQUETA_CONDICION, { exact: true });
 const multiplo = (page: Page) => page.getByLabel(ETIQUETA_MULTIPLO, { exact: true });
 const tope = (page: Page) => page.getByLabel(ETIQUETA_TOPE, { exact: true });
+const puntoVenta = (page: Page) => page.getByLabel(ETIQUETA_PUNTO_VENTA, { exact: true });
 const avisoFaltaTope = (page: Page) => page.getByRole('status').filter({ hasText: MENSAJE_FALTA_TOPE });
 
 /** Ingresa con la contraseña ya definida y abre la configuración desde el inicio, como la operadora. */
@@ -133,6 +152,14 @@ async function rechazadoSinGrabar(page: Page, campo: Locator, mensaje: string) {
 
 /** La opción elegida en el selector de condición fiscal. */
 const condicionElegida = (page: Page) => condicion(page).getByRole('option', { selected: true });
+/** La opción elegida en la lista de alícuotas. */
+const alicuotaElegida = (page: Page) => alicuota(page).getByRole('option', { selected: true });
+
+/** POST directo a la Api con la sesión de la página: devuelve el código y el cuerpo. */
+async function grabarPorLaApi(page: Page, cambios: Record<string, unknown>) {
+  const respuesta = await page.request.post('/api/configuracion', { data: { ...PEDIDO_INICIAL, ...cambios } });
+  return { estado: respuesta.status(), cuerpo: await respuesta.json() };
+}
 
 test('configuracion: primera vez muestra 21, Responsable Inscripto y 0,01', async ({ page }) => {
   // Base nueva: define la contraseña e ingresa (FEAT-001a), y abre la configuración por primera vez (AC-06).
@@ -144,10 +171,14 @@ test('configuracion: primera vez muestra 21, Responsable Inscripto y 0,01', asyn
   await abrirDesdeElInicio(page);
 
   await expect(alicuota(page)).toHaveValue('21');
+  // AC-28: la lista con las 6 alícuotas de ARCA y la guardada elegida.
+  await expect(alicuota(page).getByRole('option')).toHaveText(OPCIONES_ALICUOTA);
+  await expect(alicuotaElegida(page)).toHaveText('21');
   await expect(condicion(page)).toHaveValue('responsable_inscripto');
   await expect(condicionElegida(page)).toHaveText('Responsable Inscripto');
   await expect(multiplo(page)).toHaveValue('0,01');
   await expect(tope(page)).toHaveValue('');
+  await expect(puntoVenta(page)).toHaveValue('');
   expect(await grabado(page)).toEqual(INICIALES);
 });
 
@@ -159,22 +190,45 @@ test('configuracion: sin tope muestra el aviso', async ({ page }) => {
   expect((await grabado(page)).faltaTope).toBe(true);
 });
 
-test('configuracion: alícuota 101 y -1 rechazado junto al campo', async ({ page }) => {
+test('configuración: alícuota 19 por la Api rechazada', async ({ page }) => {
   await ingresarYAbrir(page);
 
-  for (const valor of ['101', '-1']) {
-    // Cada valor en una pantalla recién abierta, sin el error del anterior: así -1 se prueba por separado.
-    await expect(alicuota(page)).toHaveValue('21');
-    await expect(alicuota(page)).not.toHaveAttribute('aria-invalid', 'true');
+  // AC-27 por la Api: 400 en alicuotaIva con el mensaje de las 6 (D-35), y no se graba nada.
+  const { estado, cuerpo } = await grabarPorLaApi(page, { alicuotaIva: 19 });
+  expect(estado).toBe(400);
+  expect(cuerpo.errors).toEqual({ alicuotaIva: [MENSAJE_ALICUOTA_NO_ADMITIDA] });
+  expect(await grabado(page)).toEqual(INICIALES);
 
-    await alicuota(page).fill(valor);
-    await rechazadoSinGrabar(page, alicuota(page), MENSAJE_ALICUOTA_FUERA_DE_RANGO);
+  // Desde la pantalla la 19 no se puede elegir: la lista solo tiene las 6.
+  await volverAAbrir(page);
+  await expect(alicuota(page).getByRole('option')).toHaveText(OPCIONES_ALICUOTA);
+  await expect(alicuotaElegida(page)).toHaveText('21');
+  expect(grabaciones, 'La pantalla no debía enviar nada').toEqual([]);
+});
+
+test('configuración: punto de venta 0, 100000 y 2,5 rechazado junto al campo', async ({ page }) => {
+  await ingresarYAbrir(page);
+
+  for (const valor of ['0', '100000', '2,5']) {
+    // Cada valor en una pantalla recién abierta, sin el error del anterior.
+    await expect(puntoVenta(page)).toHaveValue('');
+    await expect(puntoVenta(page)).not.toHaveAttribute('aria-invalid', 'true');
+
+    await puntoVenta(page).fill(valor);
+    await expect(puntoVenta(page)).toHaveValue(valor);
+    await rechazadoSinGrabar(page, puntoVenta(page), MENSAJE_PUNTO_VENTA);
 
     await volverAAbrir(page);
   }
 
-  await expect(alicuota(page)).toHaveValue('21');
-  expect(grabaciones, 'La pantalla envió una alícuota que debía rechazar').toEqual([]);
+  // AC-31 por la Api: el mismo mensaje en puntoVenta, y no se graba nada.
+  for (const valor of [0, 100000, 2.5]) {
+    const { estado, cuerpo } = await grabarPorLaApi(page, { puntoVenta: valor });
+    expect(estado, String(valor)).toBe(400);
+    expect(cuerpo.errors, String(valor)).toEqual({ puntoVenta: [MENSAJE_PUNTO_VENTA] });
+  }
+  expect(await grabado(page)).toEqual(INICIALES);
+  expect(grabaciones, 'La pantalla envió un punto de venta que debía rechazar').toEqual([]);
 });
 
 test('configuracion: múltiplo 0,001 rechazado con el mínimo', async ({ page }) => {
@@ -237,4 +291,29 @@ test('configuracion: el tope grabado se ve al volver a abrir y sin reiniciar', a
   await expect(page.getByRole('heading', { name: 'Configuración' })).toBeVisible();
   await expect(tope(page)).toHaveValue(TOPE_ESCRITO);
   await expect(avisoFaltaTope(page)).toHaveCount(0);
+});
+
+test('configuración: elegir alícuota y punto de venta y grabar', async ({ page }) => {
+  await ingresarYAbrir(page);
+
+  // AC-28 y AC-31: se elige 10,5 de la lista y se carga el punto de venta 3.
+  await alicuota(page).selectOption('10,5');
+  await puntoVenta(page).fill('3');
+  expect(await grabar(page)).toBe(200);
+  await expect(page.getByRole('status').filter({ hasText: MENSAJE_GRABADA })).toBeVisible();
+  await expect(alicuotaElegida(page)).toHaveText('10,5');
+  await expect(puntoVenta(page)).toHaveValue('3');
+
+  // Al volver a abrir, la guardada queda elegida y el punto de venta se ve.
+  await volverAAbrir(page);
+  await expect(alicuota(page)).toHaveValue('10,5');
+  await expect(alicuotaElegida(page)).toHaveText('10,5');
+  await expect(puntoVenta(page)).toHaveValue('3');
+  expect(await grabado(page)).toMatchObject({ alicuotaIva: 10.5, puntoVenta: 3 });
+
+  // Vacío conserva el guardado (D-27).
+  await puntoVenta(page).fill('');
+  expect(await grabar(page)).toBe(200);
+  await expect(puntoVenta(page)).toHaveValue('3');
+  expect((await grabado(page)).puntoVenta).toBe(3);
 });

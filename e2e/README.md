@@ -19,23 +19,29 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
 | `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
 | `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5547 |
-| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5548 |
-| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5549 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5550 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5551 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5552 |
-| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5553 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5554 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5555 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5556 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5557 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5558 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5559 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5560 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5561 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5562 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5563 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5564 |
+| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5548 |
+| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5549 |
+| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5550 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5551 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5552 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5553 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5554 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5555 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5556 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5557 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5558 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5559 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5560 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5561 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5562 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5563 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5564 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5565 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5566 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5567 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5568 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5569 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5570 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -50,9 +56,38 @@ movió `chrome-configuracion` de 5544 a 5545 y los de Edge de 5545–5546 a 5546
 `presupuestos-concurrencia.spec.ts` (FEAT-003d) ocupa 5550 en Chrome, mueve `chrome-presupuestos-edicion` a 5551 y los
 de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec.ts` y `presupuestos-pdf.spec.ts`
 (FEAT-006) ocupan 5549 y 5553 en Chrome, mueven `chrome-presupuestos-calculos`, `-concurrencia` y `-edicion` a
-5550–5552 y los de Edge a 5554–5559 y 5561–5563, con los suyos en 5560 y 5564. Son 22 proyectos, de 5543 a 5564. Si
-tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
-al arrancar.
+5550–5552 y los de Edge a 5554–5559 y 5561–5563, con los suyos en 5560 y 5564; y `facturacion.spec.ts`,
+`facturacion-rechazo.spec.ts` y `facturacion-sin-respuesta.spec.ts` (FEAT-007) ocupan 5548–5550 en Chrome, mueven los
+`chrome-presupuestos-*` a 5551–5556 y los de Edge a 5557–5561 y 5565–5570, con los suyos en 5562–5564. Son 28
+proyectos, de 5543 a 5570. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
+`[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
+
+**ARCA en la suite (FEAT-007).** Todas las Api de la suite arrancan con ARCA simulada (`Arca__Entorno=Simulado`), con
+un tiempo máximo de 2 s (`Arca__TiempoMaximoSegundos=2`) y sin CUIT ni certificado (`Arca__Cuit`,
+`Arca__Certificado__Ruta` y `Arca__Certificado__Clave` vacíos). Antes, `entornoDeLaApi` (`compilacion.mjs`) quita
+del entorno de quien corre la suite toda clave de ARCA, en cualquier mayúscula, con `__` o `:` y también con los
+prefijos `ASPNETCORE_` y `DOTNET_` (por ejemplo, `ARCA__ENTORNO=Produccion`). Así ninguna prueba llega a ARCA, ni a
+homologación ni a producción, y sus comprobantes no tienen validez fiscal. La revisión de hosts externos de
+`npm run test:unidad` admite solo las direcciones de homologación de WSAA y WSFEv1 y los espacios de nombres SOAP que
+escriben las pruebas de .NET del cliente de ARCA, cada uno con su ruta exacta; producción nunca. La
+respuesta del simulador (`Arca__Simulado__Respuesta`) sale del archivo de pruebas, que `servidor.mjs` conoce por el
+nombre del proyecto (`variablesDeArca` en `compilacion.mjs`): `rechazar` para `facturacion-rechazo.spec.ts`,
+`no_responder` para `facturacion-sin-respuesta.spec.ts` y `autorizar` para todos los demás. Solo la Api de
+`facturacion.spec.ts` arranca con el contador del simulador (`arca-simulado.json` en su directorio de datos) en 124
+para la Factura B del punto de venta 3, así su primera factura autorizada es la 0003-00000125 de AC-19 y AC-30.
+
+`facturacion.spec.ts` (FEAT-007, AC-01, AC-02, AC-03, AC-13, AC-18, AC-19, AC-30 y AC-32) emite la factura desde la
+pantalla del presupuesto. Sus pruebas van en orden: primero la configuración incompleta (la base nueva no tiene tope
+ni punto de venta, y el punto de venta no se puede borrar una vez cargado), que no consume ningún número; después la
+emisión de la Factura B 0003-00000125 de un Final de 3 líneas y $3.000,00, que el presupuesto muestra también al
+volver a abrirlo; y al final un Borrador y un presupuesto ya facturado, con el botón deshabilitado y la Api rechazando
+el pedido directo (409 `borrador` y `facturado`). `facturacion-rechazo.spec.ts` (AC-20) muestra "ARCA rechazó la
+factura: 10016 – …" con Facturar habilitado y vuelve a emitir; `facturacion-sin-respuesta.spec.ts` (AC-21 y AC-22)
+espera los 2 s del tiempo máximo, muestra "ARCA no respondió. La emisión quedó pendiente de verificación.", deja
+Facturar deshabilitado también al volver a abrir el presupuesto y comprueba que un pedido directo recibe 409
+`pendiente` sin esperar a ARCA. Las tres cargan la configuración por la Api antes de emitir, crean sus artículos con
+códigos propios (`FA-…`, `FR-…`, `FS-…`) y graban sus presupuestos en Borrador y después en Final. Los clientes son
+ficticios, con el DNI 00.718.294 (un DNI que empieza con 00 no se emite, D-50 de FEAT-007) y emails en `example.com`.
 
 `articulos.spec.ts` cambia la configuración de su propia base desde la pantalla de configuración: pasa el múltiplo a 50
 y lo vuelve a 0,01 (AC-10), y al final deja Monotributo (AC-09). Por eso sus pruebas también van en ese orden.
@@ -140,8 +175,8 @@ hay advertencias.
 
 Dentro de un proyecto las pruebas corren en orden y de a una porque así lo fija `playwright.config.ts`
 (`workers: 1`, `fullyParallel: false`): comparten la base del proyecto. Solo algunos archivos dependen además de lo que
-dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts` y la primera prueba de
-`presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
+dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts`, `facturacion.spec.ts` y la primera
+prueba de `presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
 `presupuestos-calculos.spec.ts`, `presupuestos-concurrencia.spec.ts`, `presupuestos-edicion.spec.ts` y
 `presupuestos-pdf.spec.ts` no dependen del orden, como se describe arriba.
 Para correr un solo navegador: `npx playwright test --project="chrome-*"`; un solo archivo en un navegador:
@@ -231,7 +266,8 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
 (proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion`,
-`chromium-configuracion-recalculo`, `chromium-presupuestos-alta`, `chromium-presupuestos-busqueda`,
+`chromium-configuracion-recalculo`, `chromium-facturacion`, `chromium-facturacion-rechazo`,
+`chromium-facturacion-sin-respuesta`, `chromium-presupuestos-alta`, `chromium-presupuestos-busqueda`,
 `chromium-presupuestos-calculos`, `chromium-presupuestos-concurrencia`, `chromium-presupuestos-edicion` y
 `chromium-presupuestos-pdf`).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

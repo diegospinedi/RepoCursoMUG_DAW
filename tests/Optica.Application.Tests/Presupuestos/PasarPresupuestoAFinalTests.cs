@@ -24,7 +24,7 @@ public class PasarPresupuestoAFinalTests
             5,
             new DateOnly(2026, 3, 10),
             estado,
-            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, "prueba@example.com", null),
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "00718294", null, "prueba@example.com", null),
             [new LineaPresupuesto(15, "Armazón de acetato", 1850m, 2, 10m, 1665m, 3330m)],
             version);
         _unidad.Guardados.Add(presupuesto);

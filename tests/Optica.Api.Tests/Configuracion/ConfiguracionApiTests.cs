@@ -20,6 +20,11 @@ public sealed class ConfiguracionApiTests
 {
     private const string Ruta = "/api/configuracion";
     private const string AccionCuerpoIlegible = "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
+    private const string AccionAlicuotaNoAdmitida = "La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.";
+    private const string AccionPuntoVenta = "El punto de venta debe ser un número entero de 1 a 99999.";
+
+    /// <summary>Las 6 alícuotas de ARCA, tal como las escribe la Api (FR-26, AC-28).</summary>
+    private const string AlicuotasAdmitidasJson = "[0,2.5,5,10.5,21,27]";
 
     /// <summary>Con margen 50 da 92.233.720.368.547.758, justo bajo el importe máximo; con múltiplo 50 lo supera.</summary>
     private const decimal CostoAlBorde = 61_489_146_912_365_172m;
@@ -76,7 +81,7 @@ public sealed class ConfiguracionApiTests
         await AfirmarRechazoEnUnCampoAsync(
             Cuerpo(101m, "responsable_inscripto", 0.01m, null),
             ValidacionConfiguracion.CampoAlicuotaIva,
-            ValidacionConfiguracion.AccionAlicuotaFueraDeRango);
+            AccionAlicuotaNoAdmitida);
     }
 
     [Fact]
@@ -112,7 +117,7 @@ public sealed class ConfiguracionApiTests
         Assert.Equal(
             new Dictionary<string, string[]>
             {
-                [ValidacionConfiguracion.CampoAlicuotaIva] = [ValidacionConfiguracion.AccionAlicuotaFueraDeRango],
+                [ValidacionConfiguracion.CampoAlicuotaIva] = [AccionAlicuotaNoAdmitida],
                 [ValidacionConfiguracion.CampoCondicionFiscal] = [ValidacionConfiguracion.AccionCondicionFiscal],
                 [ValidacionConfiguracion.CampoTopeIdentificacion] = [ValidacionConfiguracion.AccionTopeNoPositivo],
             },
@@ -272,7 +277,10 @@ public sealed class ConfiguracionApiTests
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         var json = await Http.JsonAsync(respuesta);
         Assert.Equal(
-            ["alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope", "preciosCambiados"],
+            [
+                "alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope", "puntoVenta",
+                "alicuotasAdmitidas", "preciosCambiados",
+            ],
             json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
         Assert.Equal(1, json.GetProperty("preciosCambiados").GetInt32());
         Assert.Equal(50m, json.GetProperty("multiploRedondeo").GetDecimal());
@@ -381,13 +389,118 @@ public sealed class ConfiguracionApiTests
     [Fact]
     public void SolicitudConfiguracion_ToString_NoMuestraDatos()
     {
-        var texto = new SolicitudConfiguracion(17.35m, "Zq7-condicion", 43.21m, 765_432.1m).ToString();
+        var texto = new SolicitudConfiguracion(17.35m, "Zq7-condicion", 43.21m, 765_432.1m, 4321).ToString();
 
         Assert.Equal("SolicitudConfiguracion { }", texto);
         Assert.DoesNotContain("17.35", texto, StringComparison.Ordinal);
         Assert.DoesNotContain("Zq7", texto, StringComparison.Ordinal);
         Assert.DoesNotContain("43.21", texto, StringComparison.Ordinal);
         Assert.DoesNotContain("765432", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("4321", texto, StringComparison.Ordinal);
+    }
+
+    // ---- FEAT-007: alícuotas de ARCA (FR-26, AC-27, AC-28, D-06) y punto de venta (FR-28, AC-31, D-27) ----
+
+    [Fact]
+    public async Task Get_Configuracion_DevuelveAlicuotasAdmitidasYPuntoVenta()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var inicial = await Http.JsonAsync(await Http.GetAsync(cliente, Ruta, cookie));
+        var grabacion = await GrabarAsync(cliente, CuerpoConPuntoVenta(21m, "responsable_inscripto", 0.01m, null, 3), cookie);
+        var posterior = await Http.JsonAsync(await Http.GetAsync(cliente, Ruta, cookie));
+
+        // AC-28: la lista de la pantalla sale del GET; el punto de venta arranca sin valor (D-07).
+        Assert.Equal(AlicuotasAdmitidasJson, inicial.GetProperty("alicuotasAdmitidas").GetRawText());
+        Assert.Equal(JsonValueKind.Null, inicial.GetProperty("puntoVenta").ValueKind);
+        Assert.Equal(HttpStatusCode.OK, grabacion.StatusCode);
+        AfirmarConfiguracion(
+            await Http.JsonAsync(grabacion), 21m, "responsable_inscripto", 0.01m, null, preciosCambiados: 0, puntoVenta: 3);
+        AfirmarConfiguracion(posterior, 21m, "responsable_inscripto", 0.01m, null, puntoVenta: 3);
+        Assert.Equal("3", posterior.GetProperty("puntoVenta").GetRawText());
+    }
+
+    [Fact]
+    public async Task Grabar_Alicuota19PorApi_Rechazado400()
+    {
+        // AC-27: un pedido directo a la Api con 19 no graba nada.
+        await AfirmarRechazoEnUnCampoAsync(
+            Cuerpo(19m, "responsable_inscripto", 0.01m, null),
+            ValidacionConfiguracion.CampoAlicuotaIva,
+            AccionAlicuotaNoAdmitida);
+    }
+
+    [Theory]
+    [InlineData("2.5")]
+    [InlineData("3.0")]
+    [InlineData("\"3\"")]
+    [InlineData("1e10")]
+    public async Task Grabar_PuntoVentaConDecimales_Invalido400(string puntoVenta)
+    {
+        // AC-31: 2,5 (o un texto, o un número que no entra) se rechaza en el campo, con su mensaje y sin grabar.
+        await AfirmarRechazoEnUnCampoAsync(
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"responsable_inscripto\",\"multiploRedondeo\":0.01," +
+            "\"topeIdentificacion\":null,\"puntoVenta\":" + puntoVenta + "}",
+            ValidacionConfiguracion.CampoPuntoVenta,
+            AccionPuntoVenta);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100000)]
+    public async Task Grabar_PuntoVentaFueraDeRango_Rechazado400(int puntoVenta)
+    {
+        await AfirmarRechazoEnUnCampoAsync(
+            CuerpoConPuntoVenta(21m, "responsable_inscripto", 0.01m, null, puntoVenta),
+            ValidacionConfiguracion.CampoPuntoVenta,
+            AccionPuntoVenta);
+    }
+
+    [Fact]
+    public async Task Grabar_PuntoVentaAusenteONull_ConservaElGuardado()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await GrabarAsync(cliente, CuerpoConPuntoVenta(21m, "responsable_inscripto", 0.01m, null, 3), cookie)).StatusCode);
+
+        // D-27: sin el campo (como mandan los e2e y las pruebas anteriores) y con null, el punto de venta queda.
+        var sinCampo = await GrabarAsync(cliente, Cuerpo(10.5m, "monotributo", 10m, null), cookie);
+        var conNull = await GrabarAsync(cliente, CuerpoConPuntoVenta(10.5m, "monotributo", 10m, 1m, null), cookie);
+
+        AfirmarConfiguracion(
+            await Http.JsonAsync(sinCampo), 10.5m, "monotributo", 10m, null, preciosCambiados: 0, puntoVenta: 3);
+        AfirmarConfiguracion(
+            await Http.JsonAsync(conNull), 10.5m, "monotributo", 10m, 1m, preciosCambiados: 0, puntoVenta: 3);
+    }
+
+    [Fact]
+    public async Task Get_AlicuotaGuardada19_SeLeeYSePuedeCorregir()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        using (var alcance = fabrica.Services.CreateScope())
+        {
+            // Una base con la alícuota 19 grabada antes de FR-26 (cumple el CHECK de 0 a 100).
+            var contexto = alcance.ServiceProvider.GetRequiredService<OpticaDbContext>();
+            Assert.Equal(1, await contexto.ConfiguracionesNegocio.ExecuteUpdateAsync(
+                fila => fila.SetProperty(c => c.AlicuotaIva, 19m)));
+        }
+
+        var lectura = await Http.GetAsync(cliente, Ruta, cookie);
+        var correccion = await GrabarAsync(cliente, Cuerpo(21m, "responsable_inscripto", 0.01m, null), cookie);
+
+        // D-06: ni el GET ni la grabación con recálculo responden 500.
+        Assert.Equal(HttpStatusCode.OK, lectura.StatusCode);
+        AfirmarConfiguracion(await Http.JsonAsync(lectura), 19m, "responsable_inscripto", 0.01m, null);
+        Assert.Equal(HttpStatusCode.OK, correccion.StatusCode);
+        AfirmarConfiguracion(
+            await Http.JsonAsync(correccion), 21m, "responsable_inscripto", 0.01m, null, preciosCambiados: 0);
     }
 
     [Fact]
@@ -472,6 +585,10 @@ public sealed class ConfiguracionApiTests
     private static string Cuerpo(decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion) =>
         JsonSerializer.Serialize(new { alicuotaIva, condicionFiscal, multiploRedondeo, topeIdentificacion });
 
+    private static string CuerpoConPuntoVenta(
+        decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion, int? puntoVenta) =>
+        JsonSerializer.Serialize(new { alicuotaIva, condicionFiscal, multiploRedondeo, topeIdentificacion, puntoVenta });
+
     private static Task<HttpResponseMessage> GrabarAsync(HttpClient cliente, string cuerpo, string? cookie) =>
         Http.PostJsonAsync(cliente, Ruta, cuerpo, cookie);
 
@@ -527,7 +644,7 @@ public sealed class ConfiguracionApiTests
 
     /// <summary>
     /// La configuración con la forma del GET; con <paramref name="preciosCambiados"/>, la del POST, que agrega esa clave
-    /// al final (D-23 de FEAT-002c).
+    /// al final (D-23 de FEAT-002c). Desde FEAT-007 lleva el punto de venta y las 6 alícuotas de ARCA.
     /// </summary>
     private static void AfirmarConfiguracion(
         JsonElement json,
@@ -535,9 +652,14 @@ public sealed class ConfiguracionApiTests
         string condicionFiscal,
         decimal multiploRedondeo,
         decimal? topeIdentificacion,
-        int? preciosCambiados = null)
+        int? preciosCambiados = null,
+        int? puntoVenta = null)
     {
-        string[] claves = ["alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope"];
+        string[] claves =
+        [
+            "alicuotaIva", "condicionFiscal", "multiploRedondeo", "topeIdentificacion", "faltaTope", "puntoVenta",
+            "alicuotasAdmitidas",
+        ];
         Assert.Equal(
             preciosCambiados is null ? claves : [.. claves, "preciosCambiados"],
             json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
@@ -560,6 +682,17 @@ public sealed class ConfiguracionApiTests
         }
 
         Assert.Equal(topeIdentificacion is null, json.GetProperty("faltaTope").GetBoolean());
+        var punto = json.GetProperty("puntoVenta");
+        if (puntoVenta is null)
+        {
+            Assert.Equal(JsonValueKind.Null, punto.ValueKind);
+        }
+        else
+        {
+            Assert.Equal(puntoVenta.Value, punto.GetInt32());
+        }
+
+        Assert.Equal(AlicuotasAdmitidasJson, json.GetProperty("alicuotasAdmitidas").GetRawText());
     }
 
     private static async Task<Dictionary<string, string[]>> ErroresAsync(HttpResponseMessage respuesta)

@@ -3,7 +3,9 @@
 Procedimiento para instalar la aplicación en la PC de la óptica (Windows 10 u 11). Corresponde a FEAT-001a
 (ingreso, sesión y marca) y FEAT-001b (bloqueo por intentos fallidos, cambio y restablecimiento de la contraseña).
 Seguí los pasos en orden: el paso 6 (definir la contraseña) se hace **antes** de conectar la aplicación a la red local.
-Si se olvida la contraseña, el restablecimiento en la PC está en la sección 10.
+Si se olvida la contraseña, el restablecimiento en la PC está en la sección 10. La facturación electrónica con ARCA
+(FEAT-007) se configura en la sección 11: **sin esa configuración la aplicación factura en un entorno simulado, sin
+validez fiscal**.
 
 > **Bloqueo por intentos fallidos.** Desde FEAT-001b, después de 5 intentos de ingreso fallidos seguidos el ingreso
 > queda bloqueado 5 minutos, también si se reinicia la Api (riesgo R-03 del modelo de amenazas, ya mitigado). Si la
@@ -22,7 +24,8 @@ absolutas y fuera de la copia del código):
 | `C:\OpticaSistema\App` | La Api publicada (`Optica.Api.exe` y sus archivos) | — |
 | `C:\OpticaSistema\App\wwwroot` | La interfaz web compilada (`index.html` y `assets\`) | `Optica:Web:Directorio` |
 | `C:\OpticaSistema\Marca` | La marca real: `branding.json` y el logo | `Optica:Marca:Directorio` |
-| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db`, las claves de sesión (`claves\`) y el candado de instancia (`optica.instancia`) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
+| `%LOCALAPPDATA%\OpticaSistema` de la cuenta que ejecuta la Api | La base `optica.db`, las claves de sesión (`claves\`), el candado de instancia (`optica.instancia`) y los archivos de ARCA: `arca-simulado.json` (contador del simulador) y `arca-ta-<entorno>.json` (ticket de acceso a ARCA, cifrado; sección 11) | `Optica:Datos:Directorio` (vacía = esta ubicación) |
+| Fuera del repositorio y de las carpetas anteriores, con acceso solo para la cuenta de la Api | El certificado de ARCA (`.pfx`), solo si se factura con ARCA (sección 11) | `Arca:Certificado:Ruta` |
 
 `optica.instancia` es un archivo vacío que la Api mantiene abierto en exclusiva mientras corre: una segunda Api sobre la
 misma carpeta de datos no arranca (registra un error crítico y termina), y el restablecimiento de la sección 10 se niega
@@ -378,3 +381,90 @@ física de la PC y de esa cuenta queda a cargo del negocio. El evento queda regi
 5. **Iniciá la Api y definí la contraseña desde la PC**, como en los pasos 2 a 4 de la sección 6.
 6. **Recién entonces habilitá otra vez el acceso desde la red**, como en el paso 1 de la sección 7, y reiniciá la Api.
    Cada equipo vuelve a ingresar con la contraseña nueva.
+
+## 11. Facturación electrónica (ARCA)
+
+Desde FEAT-007 el botón **Facturar** de un presupuesto en Final emite la factura a consumidor final por los web
+services de ARCA (WSAA y WSFEv1). La conexión se configura con las claves `Arca:*`; el punto de venta, el tope de
+identificación y la alícuota de IVA se cargan en la pantalla de configuración, nunca acá.
+
+> **Entorno simulado: sin validez fiscal (R-10).** Sin `Arca:Entorno`, o con `Arca:Entorno = Simulado`, la aplicación
+> **no se comunica con ARCA**: un simulador local numera los comprobantes y les da un CAE inventado. Esas facturas
+> **no existen en ARCA, no tienen validez fiscal y no se pueden entregar a un cliente como comprobante**. La factura
+> guarda el entorno en que se emitió, y el PDF de la factura (PRD 08) llevará la leyenda "COMPROBANTE SIMULADO — SIN
+> VALIDEZ FISCAL". Al arrancar en simulado, la Api lo advierte en el registro. Antes de facturar de verdad, comprobá en la configuración de la Api
+> que el entorno es el que corresponde.
+
+| Clave | Valores | Qué hace |
+|---|---|---|
+| `Arca:Entorno` | `Simulado` (por defecto), `Homologacion`, `Produccion` | `Simulado` no sale de la PC (sin validez fiscal). `Homologacion` es el entorno de prueba de ARCA. `Produccion` emite comprobantes reales. Otro valor: la Api no arranca y registra qué clave corregir. |
+| `Arca:Cuit` | Los 11 dígitos del CUIT de la óptica, sin guiones | Solo en `Homologacion` y `Produccion`. Un CUIT con dígito verificador inválido no deja arrancar la Api. |
+| `Arca:Certificado:Ruta` | Ruta absoluta del certificado (`.pfx`) emitido por ARCA para ese entorno | Solo en `Homologacion` y `Produccion`. |
+| `Arca:Certificado:Clave` | La clave del `.pfx` | Solo en `Homologacion` y `Produccion`. |
+| `Arca:TiempoMaximoSegundos` | Entero de 1 a 120; por defecto, 30 | Cuánto espera la Api a ARCA en cada emisión (NFR-01). Dejalo en 30. |
+
+`Arca:Simulado:Respuesta` (`autorizar`, `rechazar`, `no_responder`) es solo para las pruebas automáticas: no la
+configures en la PC del local.
+
+**El CUIT, la ruta y la clave del certificado nunca van en el repositorio ni en `appsettings.json`.** Cargalos solo en
+variables de entorno de la cuenta de la Api (`Arca__Cuit`, `Arca__Certificado__Ruta`, `Arca__Certificado__Clave`: dos
+guiones bajos en lugar de `:`) o en un archivo local que no se versiona, como `appsettings.Production.json`
+(`.gitignore`), con los permisos de la carpeta de la aplicación (sección 4). Para la **clave del certificado**
+preferí la variable de entorno: un archivo con la clave se copia junto con la aplicación sin que nadie lo note. Por
+ejemplo, en PowerShell con la cuenta de la Api:
+
+```powershell
+[Environment]::SetEnvironmentVariable("Arca__Entorno", "Homologacion", "User")
+[Environment]::SetEnvironmentVariable("Arca__Cuit", "<CUIT de la óptica>", "User")
+[Environment]::SetEnvironmentVariable("Arca__Certificado__Ruta", "C:\OpticaSistema\Certificados\arca-homologacion.pfx", "User")
+[Environment]::SetEnvironmentVariable("Arca__Certificado__Clave", [System.Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Clave del .pfx")).Password, "User")
+```
+
+La última línea pide la clave sin mostrarla (`Read-Host -AsSecureString`) y la convierte dentro de la misma llamada:
+la clave no queda escrita en el comando, ni en una variable de la consola, ni en el historial. **Nunca escribas la clave
+en la línea de comandos.** Si ya la escribiste (por ejemplo, `SetEnvironmentVariable(..., "laclave", ...)`), borrala
+del historial de esa misma cuenta:
+
+```powershell
+Clear-History
+Remove-Item (Get-PSReadLineOption).HistorySavePath
+```
+
+`Clear-History` borra el historial de la sesión abierta; el archivo de PSReadLine (`ConsoleHost_history.txt`, en
+`%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\`) guarda los comandos de todas las sesiones y hay que borrarlo
+aparte. Cerrá después la consola.
+
+Tené en cuenta que una variable de entorno de alcance `User` se guarda **sin cifrar** en el registro
+(`HKCU\Environment`) de esa cuenta: la puede leer cualquier proceso que corra con la cuenta de la Api. Por eso la
+cuenta de la Api se usa solo para la Api (sección 1) y nadie navega ni abre correo con ella.
+
+Después de cambiar cualquiera de estas claves, reiniciá la Api. Si faltan el CUIT, la ruta o la clave en
+`Homologacion` o `Produccion`, la Api arranca, lo advierte en el registro nombrando las claves (nunca los valores) y
+cada emisión termina con "No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.".
+
+**El certificado de ARCA** (`.pfx`) identifica a la óptica ante ARCA: guardalo fuera del repositorio y de las carpetas
+de la aplicación, de la marca y de datos (por ejemplo, `C:\OpticaSistema\Certificados`), con permisos solo para la cuenta
+de la Api y para quien administra, como la carpeta de datos de la sección 4. No lo copies a otras PC ni lo mandes por
+correo o mensajería.
+
+**Nunca uses el certificado de producción para probar.** Las pruebas van siempre contra `Homologacion`, con el
+certificado de homologación. Un comprobante autorizado en producción por error no se puede anular desde el sistema
+(las notas de crédito están fuera del alcance de esta versión). Pasá a `Produccion` recién cuando una factura de
+homologación salió bien (AC-24) y las dueñas lo decidan.
+
+**Archivos de ARCA en la carpeta de datos** (`Optica:Datos:Directorio`, sección 1):
+
+- `arca-simulado.json`: el contador del simulador (último número por tipo y punto de venta). Solo se usa en
+  `Simulado`. Si se borra, el simulador vuelve a numerar desde 1.
+- `arca-ta-homologacion.json` y `arca-ta-produccion.json`: el ticket de acceso de ARCA (vale unas 12 horas), cifrado
+  con las claves de `claves\`. Se puede borrar con la Api detenida: se pide otro en la emisión siguiente. No lo copies
+  a otra PC.
+
+**Datos personales.** La carpeta de datos, `optica.db` y cada backup guardan los datos de los clientes **sin cifrar**,
+entre ellos su DNI (en los presupuestos y en las facturas que lo identifican ante ARCA). Tienen que estar en una carpeta
+con permisos restringidos a la cuenta de la Api y a quien administra (sección 4), **nunca compartida en red** ni
+sincronizada con servicios en la nube, y los backups con la misma protección (sección 9).
+
+Si ARCA no responde dentro del tiempo máximo, la pantalla dice "ARCA no respondió. La emisión quedó pendiente de
+verificación." y Facturar queda deshabilitado en ese presupuesto: no se vuelve a pedir la factura hasta verificar en
+ARCA si se autorizó, porque una segunda emisión podría duplicarla.

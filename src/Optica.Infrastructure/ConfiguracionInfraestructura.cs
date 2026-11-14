@@ -7,12 +7,16 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Optica.Application.Acceso;
 using Optica.Application.Comun;
+using Optica.Application.Facturacion;
 using Optica.Application.Marca;
 using Optica.Application.Presupuestos;
 using Optica.Domain.Acceso;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
+using Optica.Domain.Facturacion;
 using Optica.Domain.Presupuestos;
+using Optica.Infrastructure.Arca;
+using Optica.Infrastructure.Facturacion;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Pdf;
 using Optica.Infrastructure.Persistencia;
@@ -55,6 +59,24 @@ public static class ConfiguracionInfraestructura
         // graba dentro de la misma transacción (ADR-013, ADR-015).
         servicios.AddScoped<IPresupuestoRepository, PresupuestoRepository>();
 
+        // Facturación (FEAT-007): comparten el contexto (y la unidad de trabajo) del alcance, así la emisión graba la
+        // pendiente, y después la factura y la baja de la pendiente, cada una en su transacción (D-09, ADR-021).
+        servicios.AddScoped<IFacturaRepository, FacturaRepository>();
+        servicios.AddScoped<IEmisionPendienteRepository, EmisionPendienteRepository>();
+
+        // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
+        // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.
+        servicios.AddSingleton<ICandadoEmision, CandadoEmision>();
+
+        // ARCA (FEAT-007, ADR-022): las claves Arca:* se leen al resolver, como el directorio de datos; ValidarArca las
+        // resuelve al arrancar. Sin Arca:Entorno, el simulador (R-14). Singleton: el simulador serializa su contador.
+        servicios.AddSingleton(_ => OpcionesArca.Leer(configuracion));
+        servicios.AddSingleton<IAutorizadorComprobantes>(CrearAutorizador);
+
+        // El HttpClient propio de ARCA (spec FEAT-007, Block 6): uno solo para toda la Api, con la validación TLS por
+        // defecto (sin callback de certificados, R-12). Solo lo pide el autorizador de homologación o producción.
+        servicios.AddKeyedSingleton(ClaveClienteHttpArca, (_, _) => ServiciosArca.CrearClienteHttp());
+
         // PDF del presupuesto con QuestPDF (ADR-018). Singleton: no guarda estado y la configuración de QuestPDF es
         // global, fijada una vez en su constructor estático (D-13).
         servicios.AddSingleton<IGeneradorPdfPresupuesto, GeneradorPdfPresupuesto>();
@@ -71,16 +93,126 @@ public static class ConfiguracionInfraestructura
         return servicios;
     }
 
+    /// <summary>La clave del <see cref="HttpClient"/> propio de ARCA en el contenedor.</summary>
+    internal const string ClaveClienteHttpArca = "Optica.Arca";
+
+    /// <summary>
+    /// Elige el autorizador por <see cref="OpcionesArca.Entorno"/>: el simulador en el directorio de datos; en
+    /// homologación y producción, el cliente de WSAA y WSFEv1 (<see cref="AutorizadorWsfe"/>, con el ticket cifrado por el
+    /// <see cref="IProtectorDatos"/> que registra la Api, D-30), o <see cref="AutorizadorNoConfigurado"/> si faltan el
+    /// CUIT, el certificado o su clave.
+    /// </summary>
+    private static IAutorizadorComprobantes CrearAutorizador(IServiceProvider proveedor)
+    {
+        var opciones = proveedor.GetRequiredService<OpcionesArca>();
+        if (opciones.Entorno == EntornoArca.Simulado)
+        {
+            return new SimuladorArca(
+                proveedor.GetRequiredService<FabricaConexion>().Directorio,
+                opciones.RespuestaSimulado,
+                opciones.TiempoMaximo,
+                proveedor.GetRequiredService<ILogger<SimuladorArca>>());
+        }
+
+        if (!opciones.CredencialesCompletas)
+        {
+            return new AutorizadorNoConfigurado(
+                opciones.Entorno, opciones.TiempoMaximo, AutorizadorNoConfigurado.MotivoNoConfigurada);
+        }
+
+        return AutorizadorWsfe.Crear(
+            opciones,
+            proveedor.GetRequiredService<FabricaConexion>().Directorio,
+            proveedor.GetRequiredKeyedService<HttpClient>(ClaveClienteHttpArca),
+            proveedor.GetRequiredService<IProtectorDatos>(),
+            proveedor.GetRequiredService<TimeProvider>(),
+            proveedor.GetRequiredService<ILoggerFactory>());
+    }
+
+    /// <summary>
+    /// Lee y valida las claves <c>Arca:*</c> y arma el autorizador. Con un valor inválido registra un crítico con la clave
+    /// (nunca el valor ni la excepción) y lanza: la Api no arranca. En simulado advierte que los comprobantes no tienen
+    /// validez fiscal (R-10); en homologación o producción sin credenciales advierte qué claves faltan (solo sus nombres).
+    /// </summary>
+    /// <exception cref="OpcionesArcaInvalidasException">Una clave <c>Arca:*</c> tiene un valor inválido.</exception>
+    public static void ValidarArca(this IServiceProvider servicios)
+    {
+        var registro = servicios.GetService<ILoggerFactory>()?.CreateLogger(typeof(ConfiguracionInfraestructura))
+            ?? NullLogger.Instance;
+        OpcionesArca opciones;
+        try
+        {
+            opciones = servicios.GetRequiredService<OpcionesArca>();
+        }
+        catch (OpcionesArcaInvalidasException error)
+        {
+            registro.LogCritical(
+                "La Api no puede arrancar: el valor de la clave de configuración {Clave} no es válido. Corregí esa clave.",
+                error.Clave);
+            throw;
+        }
+
+        // El autorizador no se resuelve acá: el simulador necesita el directorio de datos, cuyo error tiene su propio
+        // crítico en InicializarBaseDeDatos.
+        if (opciones.Entorno == EntornoArca.Simulado)
+        {
+            registro.LogWarning(
+                "La facturación usa ARCA simulada ({Clave} = Simulado): los comprobantes emitidos no tienen validez " +
+                "fiscal. Para facturar con ARCA configurá esa clave, el CUIT y el certificado (docs/instalacion.md).",
+                OpcionesArca.ClaveEntorno);
+
+            // R-10: credenciales cargadas y entorno simulado suele ser una instalación a medio cambiar. No se cambia de
+            // entorno por eso (R-14): solo se advierte, sin valores.
+            if (opciones.CredencialesPresentes)
+            {
+                registro.LogWarning(
+                    "Hay credenciales de ARCA configuradas pero Arca:Entorno es Simulado: la facturación no tiene " +
+                    "validez fiscal. Si corresponde facturar con ARCA, configurá {Clave} con Homologacion o Produccion.",
+                    OpcionesArca.ClaveEntorno);
+            }
+        }
+        else if (!opciones.CredencialesCompletas)
+        {
+            registro.LogWarning(
+                "La facturación con ARCA ({Clave} = {Entorno}) no está configurada: faltan las claves {Faltantes}. Cada " +
+                "emisión va a terminar sin enviarse.",
+                OpcionesArca.ClaveEntorno,
+                opciones.Entorno,
+                string.Join(", ", opciones.ClavesFaltantes));
+        }
+        else if (opciones.Entorno == EntornoArca.Homologacion)
+        {
+            // Homologación es el entorno de prueba de ARCA: sus CAE no tienen validez fiscal.
+            registro.LogWarning(
+                "La facturación usa ARCA de homologación ({Clave} = {Entorno}): los comprobantes emitidos no tienen " +
+                "validez fiscal.",
+                OpcionesArca.ClaveEntorno,
+                opciones.Entorno);
+        }
+        else
+        {
+            // Warning y no Information (ronda 2): cada comprobante es fiscal y no se puede anular desde el sistema.
+            registro.LogWarning(
+                "La facturación usa ARCA de producción ({Clave} = {Entorno}): los comprobantes emitidos son fiscales.",
+                OpcionesArca.ClaveEntorno,
+                opciones.Entorno);
+        }
+    }
+
     /// <summary>
     /// Valida el directorio de datos, toma el candado de instancia única y aplica las migraciones pendientes. Si el
     /// directorio no sirve o el candado lo tiene otra instancia, registra un crítico con la ruta visible (sin la
     /// excepción) y lanza: la Api no arranca. El candado se toma antes de migrar, así dos instancias no migran a la vez,
-    /// y no lo toma <c>dotnet ef</c>, que no pasa por acá.
+    /// y no lo toma <c>dotnet ef</c>, que no pasa por acá. Antes de todo valida las claves <c>Arca:*</c>
+    /// (<see cref="ValidarArca"/>): con un valor inválido la Api tampoco arranca.
     /// </summary>
     public static void InicializarBaseDeDatos(this IServiceProvider servicios)
     {
         var registro = servicios.GetService<ILoggerFactory>()?.CreateLogger(typeof(ConfiguracionInfraestructura))
             ?? NullLogger.Instance;
+        // ARCA primero: un valor inválido frena el arranque antes de tomar el candado o migrar (spec FEAT-007, Block 5).
+        servicios.ValidarArca();
+
         FabricaConexion? fabrica = null;
         try
         {

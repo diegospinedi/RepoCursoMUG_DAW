@@ -11,7 +11,12 @@
  *   "sin sesión" y avisa al manejador registrado con {@link alPerderLaSesion}.
  */
 
-import { IMPORTE_MAXIMO_SEGURO, sumarCentesimos } from '../configuracion/numeros';
+import {
+  IMPORTE_MAXIMO_SEGURO,
+  PUNTO_VENTA_MAXIMO,
+  PUNTO_VENTA_MINIMO,
+  sumarCentesimos,
+} from '../configuracion/numeros';
 
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
@@ -47,6 +52,8 @@ export const CAMPO_ALICUOTA = 'alicuotaIva';
 export const CAMPO_CONDICION = 'condicionFiscal';
 export const CAMPO_MULTIPLO = 'multiploRedondeo';
 export const CAMPO_TOPE = 'topeIdentificacion';
+/** El punto de venta (FEAT-007, FR-28). */
+export const CAMPO_PUNTO_VENTA = 'puntoVenta';
 
 /** Campos del cuerpo y de `errors` de `/api/articulos`. */
 export const CAMPO_CODIGO_PROVEEDOR = 'codigoProveedor';
@@ -98,12 +105,39 @@ export interface PaginaArticulos {
 }
 
 /**
- * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05) y `borrador` del PDF
- * del presupuesto (FEAT-006, D-11).
+ * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05), `borrador` del PDF
+ * del presupuesto (FEAT-006, D-11) y de la factura, y los demás de la emisión de la factura (FEAT-007, D-18, D-31).
  */
-export type MotivoConflicto = 'inactivo' | 'cambiado' | 'final' | 'borrador';
+export type MotivoConflicto =
+  | 'inactivo'
+  | 'cambiado'
+  | 'final'
+  | 'borrador'
+  | 'facturado'
+  | 'pendiente'
+  | 'sin_tope'
+  | 'sin_punto_venta'
+  | 'alicuota_no_admitida'
+  | 'rechazada'
+  | 'sin_respuesta'
+  | 'no_enviada'
+  | 'pendiente_verificacion';
 
-const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = ['inactivo', 'cambiado', 'final', 'borrador'];
+const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = [
+  'inactivo',
+  'cambiado',
+  'final',
+  'borrador',
+  'facturado',
+  'pendiente',
+  'sin_tope',
+  'sin_punto_venta',
+  'alicuota_no_admitida',
+  'rechazada',
+  'sin_respuesta',
+  'no_enviada',
+  'pendiente_verificacion',
+];
 
 const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
 
@@ -121,11 +155,21 @@ export interface DatosConfiguracion {
   multiploRedondeo: number;
   /** `null`: sin tope cargado. */
   topeIdentificacion: number | null;
+  /**
+   * Entero de 1 a 99999 (FR-28 de FEAT-007). En la respuesta, `null` mientras no se cargue; al grabar, `null` conserva
+   * el guardado (D-27).
+   */
+  puntoVenta: number | null;
 }
 
 /** Lo que devuelve `GET /api/configuracion`. */
 export interface ConfiguracionNegocio extends DatosConfiguracion {
   faltaTope: boolean;
+  /**
+   * Las alícuotas que acepta ARCA (FR-26), para la lista de la pantalla. La guardada puede no estar entre ellas si se
+   * grabó antes de FR-26 (D-06).
+   */
+  alicuotasAdmitidas: number[];
 }
 
 /**
@@ -179,6 +223,9 @@ export function alPerderLaSesion(manejador: (() => void) | null): void {
 
 type Lector<T> = (cuerpo: unknown) => T | undefined;
 
+/** El texto propio de un motivo de 409: fijo, o armado con el cuerpo del 409 (`undefined` si es ilegible). */
+type TextoDelMotivo = string | ((cuerpo: Record<string, unknown>) => string | undefined);
+
 /** Cualquier resultado que no sea `ok`: sirve para un {@link Resultado} de cualquier tipo de datos. */
 type Fallo = Exclude<Resultado<never>, { tipo: 'ok' }>;
 
@@ -189,9 +236,10 @@ interface Opciones {
   mensaje409?: string;
   /**
    * Para los 409 con `motivo` (D-19): el texto propio de cada motivo que la operación admite. Con esta opción el 409
-   * se lee: un motivo que no está acá, o un cuerpo ilegible, es una respuesta ilegible.
+   * se lee: un motivo que no está acá, o un cuerpo ilegible, es una respuesta ilegible. Un motivo cuyo texto depende
+   * del cuerpo (el rechazo de ARCA, FEAT-007) lleva una función que lo arma, o `undefined` si el cuerpo es ilegible.
    */
-  motivos409?: Partial<Record<MotivoConflicto, string>>;
+  motivos409?: Partial<Record<MotivoConflicto, TextoDelMotivo>>;
   /** Mensaje general de un 404; sin él, el mensaje de pedido rechazado. */
   mensaje404?: string;
   /** Campo del formulario donde se muestra un 413 (cuerpo demasiado grande); por defecto, {@link CAMPO_CONTRASENA}. */
@@ -288,10 +336,11 @@ async function traducirError(
  * El `detail` del servidor no se usa. Un motivo desconocido, ausente o un cuerpo ilegible es una respuesta ilegible:
  * el mismo mensaje general que una respuesta exitosa con una forma inesperada.
  */
-function conflictoConMotivo(cuerpo: unknown, motivos: Partial<Record<MotivoConflicto, string>>): Fallo {
-  const motivo = esObjeto(cuerpo) ? cuerpo.motivo : undefined;
-  if (esMotivoConflicto(motivo)) {
-    const mensaje = motivos[motivo];
+function conflictoConMotivo(cuerpo: unknown, motivos: Partial<Record<MotivoConflicto, TextoDelMotivo>>): Fallo {
+  if (esObjeto(cuerpo) && esMotivoConflicto(cuerpo.motivo)) {
+    const motivo = cuerpo.motivo;
+    const texto = motivos[motivo];
+    const mensaje = typeof texto === 'function' ? texto(cuerpo) : texto;
     if (mensaje !== undefined) {
       return { tipo: 'conflicto', motivo, mensaje };
     }
@@ -359,19 +408,38 @@ const esNumero = (valor: unknown): valor is number => typeof valor === 'number' 
 const esCondicion = (valor: unknown): valor is CondicionFiscal =>
   CONDICIONES_FISCALES.some((condicion) => condicion === valor);
 
+/**
+ * El punto de venta de la respuesta: `null` o un entero de {@link PUNTO_VENTA_MINIMO} a {@link PUNTO_VENTA_MAXIMO},
+ * invariante también al leer (D-33).
+ */
+const esPuntoVenta = (valor: unknown): valor is number | null =>
+  valor === null || (esEnteroEntre(valor, PUNTO_VENTA_MINIMO) && valor <= PUNTO_VENTA_MAXIMO);
+
+/** La lista de alícuotas admitidas: un arreglo no vacío de números, sin repetidos (cada uno es una opción). */
+const esListaDeAlicuotas = (valor: unknown): valor is number[] =>
+  Array.isArray(valor) && valor.length > 0 && valor.every(esNumero) && new Set(valor).size === valor.length;
+
+/**
+ * La configuración vigente. Exige `puntoVenta` (null o entero de 1 a 99999) y `alicuotasAdmitidas` (FEAT-007): sin
+ * ellos la respuesta es ilegible. La alícuota guardada no se compara con la lista (D-06): la pantalla la marca.
+ */
 const leerConfiguracion: Lector<ConfiguracionNegocio> = (cuerpo) =>
   esObjeto(cuerpo) &&
   esNumero(cuerpo.alicuotaIva) &&
   esCondicion(cuerpo.condicionFiscal) &&
   esNumero(cuerpo.multiploRedondeo) &&
   (cuerpo.topeIdentificacion === null || esNumero(cuerpo.topeIdentificacion)) &&
-  typeof cuerpo.faltaTope === 'boolean'
+  typeof cuerpo.faltaTope === 'boolean' &&
+  esPuntoVenta(cuerpo.puntoVenta) &&
+  esListaDeAlicuotas(cuerpo.alicuotasAdmitidas)
     ? {
         alicuotaIva: cuerpo.alicuotaIva,
         condicionFiscal: cuerpo.condicionFiscal,
         multiploRedondeo: cuerpo.multiploRedondeo,
         topeIdentificacion: cuerpo.topeIdentificacion,
         faltaTope: cuerpo.faltaTope,
+        puntoVenta: cuerpo.puntoVenta,
+        alicuotasAdmitidas: [...cuerpo.alicuotasAdmitidas],
       }
     : undefined;
 
@@ -511,8 +579,9 @@ export const cambiarContrasena = (actual: string, nueva: string) =>
 export const consultarConfiguracion = () => pedir({ metodo: 'GET', ruta: '/api/configuracion' }, leerConfiguracion);
 
 /**
- * Graba los cuatro parámetros juntos y devuelve lo que quedó guardado (D-03), con cuántos precios de venta cambiaron
- * al recalcular el catálogo (D-09 y D-23 de FEAT-002c). A diferencia de las pantallas de acceso,
+ * Graba los parámetros juntos (el punto de venta en `null` conserva el guardado, D-27 de FEAT-007) y devuelve lo que
+ * quedó guardado (D-03), con cuántos precios de venta cambiaron al recalcular el catálogo (D-09 y D-23 de FEAT-002c).
+ * A diferencia de las pantallas de acceso,
  * un 400 devuelve TODOS los campos de `errors`, y un 413 es un mensaje general propio (no el de la contraseña): el
  * navegador limita cada número a 32 caracteres, así que solo un cuerpo alterado supera el límite de la Api, y no hay
  * un campo al que atribuirlo.
@@ -804,15 +873,64 @@ export const grabarPresupuesto = (
     leerPresupuesto,
   );
 
+/** La factura emitida desde un presupuesto, como la informa su GET (FEAT-007, D-19): solo el comprobante. */
+export interface FacturaDelPresupuesto {
+  /** "Factura B 0003-00000125": tipo, punto de venta de 4 o 5 dígitos y número de 8 (AC-19). */
+  comprobante: string;
+}
+
 /**
- * Un presupuesto por su número. Un número que no es un entero positivo seguro no se consulta (no puede existir); ese
- * caso y un 404 son el mensaje general {@link MENSAJE_PRESUPUESTO_NO_ENCONTRADO}.
+ * Lo que devuelve `GET /api/presupuestos/{numero}`: el presupuesto grabado más su estado de facturación (FEAT-007,
+ * FR-20, FR-24, D-19). El alta y los PUT no llevan estos dos datos.
  */
-export const consultarPresupuesto = (numero: number): Promise<Resultado<PresupuestoGrabado>> =>
+export interface PresupuestoConsultado extends PresupuestoGrabado {
+  /** La factura emitida desde el presupuesto, o `null`. */
+  factura: FacturaDelPresupuesto | null;
+  /** Si hay una emisión pendiente de verificación (FR-24): mientras la haya, no se factura. */
+  emisionPendiente: boolean;
+}
+
+/**
+ * El comprobante de una factura: "Factura", la letra B o C, el punto de venta de 4 o 5 dígitos (1 a 99999, con ceros a
+ * la izquierda) y el número de 8 (1 a 99999999). Así lo arma la Api (D-19); cualquier otro texto, incluidos un punto de
+ * venta o un número todo ceros, hace ilegible la respuesta.
+ */
+const FORMATO_COMPROBANTE = /^Factura ([BC]) (?!0+-)(\d{4,5})-(?!0{8}$)(\d{8})$/;
+
+const esComprobante = (valor: unknown): valor is string =>
+  typeof valor === 'string' && FORMATO_COMPROBANTE.test(valor);
+
+/** La factura del GET: `null` o un objeto con el comprobante; solo copia el comprobante. */
+const leerFacturaDelPresupuesto: Lector<FacturaDelPresupuesto | null> = (cuerpo) => {
+  if (cuerpo === null) {
+    return null;
+  }
+  return esObjeto(cuerpo) && esComprobante(cuerpo.comprobante) ? { comprobante: cuerpo.comprobante } : undefined;
+};
+
+/**
+ * El GET de un presupuesto: lo que lee {@link leerPresupuesto} más `factura` y `emisionPendiente`, obligatorios. Sin
+ * ellos, o con otra forma, la respuesta es ilegible: la pantalla no puede decidir si ofrece Facturar.
+ */
+const leerPresupuestoConsultado: Lector<PresupuestoConsultado> = (cuerpo) => {
+  const presupuesto = leerPresupuesto(cuerpo);
+  if (presupuesto === undefined || !esObjeto(cuerpo) || typeof cuerpo.emisionPendiente !== 'boolean') {
+    return undefined;
+  }
+  const factura = leerFacturaDelPresupuesto(cuerpo.factura);
+  return factura === undefined ? undefined : { ...presupuesto, factura, emisionPendiente: cuerpo.emisionPendiente };
+};
+
+/**
+ * Un presupuesto por su número, con su factura y su emisión pendiente (FEAT-007). Un número que no es un entero
+ * positivo seguro no se consulta (no puede existir); ese caso y un 404 son el mensaje general
+ * {@link MENSAJE_PRESUPUESTO_NO_ENCONTRADO}.
+ */
+export const consultarPresupuesto = (numero: number): Promise<Resultado<PresupuestoConsultado>> =>
   esEnteroEntre(numero, 1)
     ? pedir(
         { metodo: 'GET', ruta: `/api/presupuestos/${numero}`, mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO },
-        leerPresupuesto,
+        leerPresupuestoConsultado,
       )
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
 
@@ -909,6 +1027,158 @@ export async function descargarPdfPresupuesto(numero: number): Promise<Resultado
     return { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
   }
 }
+
+/*
+ * Emisión de la factura a consumidor final (FEAT-007, D-18).
+ */
+
+/** Los dos conceptos de la factura en el contrato de la Api (FR-08). */
+export const CONCEPTOS_FACTURA = ['productos', 'productos_y_servicios'] as const;
+export type ConceptoFactura = (typeof CONCEPTOS_FACTURA)[number];
+
+/**
+ * Textos propios de los 409 de la emisión según su `motivo` (D-61): nunca el `detail` del servidor. El del rechazo de
+ * ARCA lo arma {@link mensajeRechazoArca} con el código y la descripción que informó ARCA (AC-20).
+ */
+export const MENSAJE_FACTURA_BORRADOR = 'El presupuesto está en Borrador: pasalo a Final para facturarlo.';
+export const MENSAJE_FACTURA_FACTURADO = 'El presupuesto ya tiene una factura.';
+export const MENSAJE_FACTURA_PENDIENTE = 'La emisión anterior está pendiente de verificación.';
+export const MENSAJE_FACTURA_SIN_TOPE = 'Cargá el tope de identificación en la configuración para facturar.';
+export const MENSAJE_FACTURA_SIN_PUNTO_VENTA = 'Cargá el punto de venta en la configuración para facturar.';
+export const MENSAJE_FACTURA_ALICUOTA_NO_ADMITIDA = 'Elegí una alícuota de IVA válida en la configuración para facturar.';
+export const MENSAJE_FACTURA_SIN_RESPUESTA = 'ARCA no respondió. La emisión quedó pendiente de verificación.';
+export const MENSAJE_FACTURA_NO_ENVIADA = 'No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.';
+export const MENSAJE_FACTURA_PENDIENTE_VERIFICACION = 'La factura quedó pendiente de verificación.';
+
+/** La confirmación de una factura autorizada (FR-19, AC-18): "Se emitió la Factura B 0003-00000125.". */
+export const mensajeFacturaEmitida = (comprobante: string) => `Se emitió la ${comprobante}.`;
+
+/** Un rechazo de ARCA sin código (D-57): ni el "0" ni el texto fijo de la Api, que repetiría la frase. */
+export const MENSAJE_FACTURA_RECHAZADA_SIN_MOTIVO = 'ARCA rechazó la factura sin informar el motivo.';
+
+/**
+ * El largo máximo de la descripción de un rechazo de ARCA en la respuesta: el mismo que
+ * `RespuestasValidacion.DescripcionArcaMaxima` de la Api, que la recorta a ese largo.
+ */
+const DESCRIPCION_ARCA_MAXIMA = 500;
+
+/**
+ * El texto de un rechazo de ARCA (FR-21, AC-20): "ARCA rechazó la factura: código – descripción". El código 0 es el
+ * que usa la Api cuando ARCA rechazó sin informar un código ni un motivo (D-57): entonces el texto es solo
+ * {@link MENSAJE_FACTURA_RECHAZADA_SIN_MOTIVO}, porque "0" haría creer que ARCA informó ese código. La descripción la
+ * recorta la Api y la pantalla la muestra como texto, nunca como HTML. Un código que no es un entero de 0 en adelante,
+ * o una descripción vacía, que no es texto o de más de 500 caracteres, hacen ilegible la respuesta.
+ */
+function mensajeRechazoArca(cuerpo: Record<string, unknown>): string | undefined {
+  const { codigo, descripcion } = cuerpo;
+  if (
+    !esEnteroEntre(codigo, 0) ||
+    typeof descripcion !== 'string' ||
+    descripcion.length === 0 ||
+    descripcion.length > DESCRIPCION_ARCA_MAXIMA
+  ) {
+    return undefined;
+  }
+  return codigo === 0 ? MENSAJE_FACTURA_RECHAZADA_SIN_MOTIVO : `ARCA rechazó la factura: ${codigo} – ${descripcion}`;
+}
+
+/** Los textos de los 409 de la emisión, uno por motivo (D-18, D-31, D-61). */
+const MOTIVOS_409_FACTURA: Partial<Record<MotivoConflicto, TextoDelMotivo>> = {
+  borrador: MENSAJE_FACTURA_BORRADOR,
+  facturado: MENSAJE_FACTURA_FACTURADO,
+  pendiente: MENSAJE_FACTURA_PENDIENTE,
+  sin_tope: MENSAJE_FACTURA_SIN_TOPE,
+  sin_punto_venta: MENSAJE_FACTURA_SIN_PUNTO_VENTA,
+  alicuota_no_admitida: MENSAJE_FACTURA_ALICUOTA_NO_ADMITIDA,
+  rechazada: mensajeRechazoArca,
+  sin_respuesta: MENSAJE_FACTURA_SIN_RESPUESTA,
+  no_enviada: MENSAJE_FACTURA_NO_ENVIADA,
+  pendiente_verificacion: MENSAJE_FACTURA_PENDIENTE_VERIFICACION,
+};
+
+/** Lo que devuelve `POST /api/presupuestos/{numero}/factura` (201, D-18). */
+export interface FacturaEmitida {
+  /** "Factura B 0003-00000125". */
+  comprobante: string;
+  tipo: 'b' | 'c';
+  numero: number;
+  /** Los 14 dígitos del CAE. */
+  cae: string;
+  /** `yyyy-MM-dd`. */
+  vencimientoCae: string;
+  /** `yyyy-MM-dd`. */
+  fecha: string;
+  total: number;
+  neto: number;
+  iva: number;
+}
+
+const FORMATO_CAE = /^\d{14}$/;
+
+/**
+ * La respuesta 201 de la emisión: todos los datos, con el comprobante en el formato de D-19 y coherente con el tipo y
+ * el número informados, el CAE de 14 dígitos, fechas `yyyy-MM-dd` que existen e importes dentro del límite del
+ * navegador. Cualquier dato ilegible hace ilegible la respuesta.
+ */
+const leerFacturaEmitida: Lector<FacturaEmitida> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    typeof cuerpo.comprobante !== 'string' ||
+    (cuerpo.tipo !== 'b' && cuerpo.tipo !== 'c') ||
+    !esEnteroEntre(cuerpo.numero, 1) ||
+    typeof cuerpo.cae !== 'string' ||
+    !FORMATO_CAE.test(cuerpo.cae) ||
+    !esFecha(cuerpo.vencimientoCae) ||
+    !esFecha(cuerpo.fecha) ||
+    !esImporte(cuerpo.total) ||
+    !esImporte(cuerpo.neto) ||
+    !esImporte(cuerpo.iva)
+  ) {
+    return undefined;
+  }
+  const partes = FORMATO_COMPROBANTE.exec(cuerpo.comprobante);
+  if (partes === null || partes[1] !== cuerpo.tipo.toUpperCase() || Number(partes[3]) !== cuerpo.numero) {
+    return undefined;
+  }
+  return {
+    comprobante: cuerpo.comprobante,
+    tipo: cuerpo.tipo,
+    numero: cuerpo.numero,
+    cae: cuerpo.cae,
+    vencimientoCae: cuerpo.vencimientoCae,
+    fecha: cuerpo.fecha,
+    total: cuerpo.total,
+    neto: cuerpo.neto,
+    iva: cuerpo.iva,
+  };
+};
+
+/**
+ * Emite la factura a consumidor final de un presupuesto en Final (FEAT-007, FR-01, D-18) con
+ * `POST /api/presupuestos/{numero}/factura`. Envía solo el concepto: tipo, importes, receptor y fecha los arma el
+ * servidor (R-06). Un 409 trae su motivo con el texto propio de {@link MOTIVOS_409_FACTURA}; un motivo ajeno o un cuerpo
+ * ilegible es {@link MENSAJE_SIN_CONEXION}. El cuerpo es fijo, así que un 400, un 413 o un 415 son el mensaje general de
+ * pedido rechazado; un 404, "No se encontró el presupuesto."; un 401 sin cuerpo avisa a {@link alPerderLaSesion}. Un
+ * número que no puede existir no se envía. No hay reintentos: una emisión repetida podría autorizar dos comprobantes
+ * (FR-23).
+ */
+export const emitirFactura = (numero: number, concepto: ConceptoFactura): Promise<Resultado<FacturaEmitida>> =>
+  esEnteroEntre(numero, 1)
+    ? pedir(
+        {
+          metodo: 'POST',
+          ruta: `/api/presupuestos/${numero}/factura`,
+          cuerpo: { concepto },
+          motivos409: MOTIVOS_409_FACTURA,
+          mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+          mensaje413: MENSAJE_PEDIDO_RECHAZADO,
+        },
+        leerFacturaEmitida,
+      ).then((resultado) =>
+        // Un 400 del cuerpo fijo no tiene un campo en la pantalla.
+        resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
 
 /*
  * Búsqueda de presupuestos (FEAT-006, ADR-019).

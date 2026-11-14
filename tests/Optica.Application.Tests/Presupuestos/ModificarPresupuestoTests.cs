@@ -7,7 +7,7 @@ namespace Optica.Application.Tests.Presupuestos;
 
 /// <summary>
 /// <see cref="ModificarPresupuesto"/> (FEAT-003c, Block 3) contra el doble <see cref="PresupuestosEnMemoria"/>, que imita
-/// el token de versión y los triggers de cierre. Datos ficticios: DNI 99.999.999 y correos de example.com.
+/// el token de versión y los triggers de cierre. Datos ficticios: DNI 00.718.294 y correos de example.com.
 /// </summary>
 public class ModificarPresupuestoTests
 {
@@ -31,7 +31,7 @@ public class ModificarPresupuestoTests
     private ModificarPresupuesto CrearCasoDeUso() => new(_unidad, _unidad.Articulos, _unidad);
 
     private static DatosCliente Cliente(string? domicilio = null) =>
-        new("Ficticiez", "Prueboncia", "99.999.999", domicilio, "prueba@example.com", null);
+        new("Ficticiez", "Prueboncia", "00.718.294", domicilio, "prueba@example.com", null);
 
     /// <summary>
     /// Guarda el presupuesto <paramref name="numero"/> con dos líneas: el armazón 15 (1.850 × 2 con 10 %) y el lente 16
@@ -44,7 +44,7 @@ public class ModificarPresupuestoTests
             numero,
             FechaAlta,
             estado,
-            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, "prueba@example.com", null),
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "00718294", null, "prueba@example.com", null),
             [
                 new LineaPresupuesto(15, "Armazón de acetato", 1850m, 2, 10m, 1665m, 3330m),
                 new LineaPresupuesto(16, "Lente orgánico", 1000m, 1, 0m, 1000m, 1000m),
@@ -181,7 +181,7 @@ public class ModificarPresupuestoTests
         Assert.Equal("borrador", grabado.Estado);
         Assert.Equal(4, grabado.Version);
         Assert.Equal("Calle Ficticia 123", grabado.Cliente.Domicilio);
-        Assert.Equal("99999999", grabado.Cliente.Dni);
+        Assert.Equal("00718294", grabado.Cliente.Dni);
         Assert.Equal(
             [
                 new LineaGrabada(17, "Estuche", 500m, 2, 0m, 500m, 1000m, 1),
@@ -245,7 +245,7 @@ public class ModificarPresupuestoTests
             1,
             FechaAlta,
             EstadoPresupuesto.Borrador,
-            new ClientePresupuesto("Ficticiez", "Prueboncia", "99999999", null, null, null),
+            new ClientePresupuesto("Ficticiez", "Prueboncia", "00718294", null, null, null),
             [new LineaPresupuesto(15, "Armazón", 9_007_199_000_000m, 1, 0m, 9_007_199_000_000m, 9_007_199_000_000m)],
             0);
         _unidad.Guardados.Add(guardado);
@@ -360,7 +360,7 @@ public class ModificarPresupuestoTests
         Assert.True(resultado.EsGrabado);
         foreach (var texto in new[] { resultado.ToString(), resultado.Presupuesto.ToString(), new DatosLinea(15, 7531, 12.34m, 4).ToString() })
         {
-            Assert.DoesNotContain("99999999", texto ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("00718294", texto ?? string.Empty, StringComparison.Ordinal);
             Assert.DoesNotContain("Ficticiez", texto ?? string.Empty, StringComparison.Ordinal);
             Assert.DoesNotContain("example.com", texto ?? string.Empty, StringComparison.Ordinal);
             Assert.DoesNotContain("7531", texto ?? string.Empty, StringComparison.Ordinal);

@@ -928,6 +928,41 @@ describe('pruebas sin servicios externos', () => {
       assert.deepEqual(hostsExternos(`'${url('https', resto)}'`), ['www.w3.org'], `${resto} tiene que ser externo.`);
     }
 
+    // ARCA (FEAT-007): las pruebas del cliente de WSAA y WSFEv1 escriben espacios de nombres SOAP y las direcciones de
+    // homologación, que nunca piden (un HttpMessageHandler falso responde). Valen solo esos pares exactos de host y ruta.
+    for (const resto of [
+      'schemas.xmlsoap.org/soap/envelope/',
+      'ar.gov.afip.dif.FEV1/',
+      'ar.gov.afip.dif.FEV1/FECAESolicitar',
+      'ar.gov.afip.dif.FEV1/FECompUltimoAutorizado',
+      'wsaahomo.afip.gov.ar/ws/services/LoginCms',
+      'wswhomo.afip.gov.ar/wsfev1/service.asmx',
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('https', resto)}"`), [], `${resto} vale.`);
+    }
+    // Producción de ARCA nunca: ni WSAA ni WSFEv1, con cualquier ruta.
+    for (const [resto, host] of [
+      ['wsaa.afip.gov.ar/ws/services/LoginCms', 'wsaa.afip.gov.ar'],
+      ['servicios1.afip.gov.ar/wsfev1/service.asmx', 'servicios1.afip.gov.ar'],
+      ['wsaa.afip.gov.ar', 'wsaa.afip.gov.ar'],
+      ['servicios1.afip.gov.ar/', 'servicios1.afip.gov.ar'],
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('https', resto)}"`), [host], `${resto} tiene que ser externo.`);
+    }
+    // De los hosts de ARCA permitidos, cualquier otra ruta es externa (también con otras mayúsculas).
+    for (const [resto, host] of [
+      ['schemas.xmlsoap.org/', 'schemas.xmlsoap.org'],
+      ['schemas.xmlsoap.org/wsdl/', 'schemas.xmlsoap.org'],
+      ['ar.gov.afip.dif.FEV1/FECAEAConsultar', 'ar.gov.afip.dif.fev1'],
+      ['ar.gov.afip.dif.FEV1/fecaesolicitar', 'ar.gov.afip.dif.fev1'],
+      ['wsaahomo.afip.gov.ar/', 'wsaahomo.afip.gov.ar'],
+      ['wsaahomo.afip.gov.ar/ws/services/LoginCms/otra', 'wsaahomo.afip.gov.ar'],
+      ['wswhomo.afip.gov.ar/wsfev1/service.asmx/otra', 'wswhomo.afip.gov.ar'],
+      ['wswhomo.afip.gov.ar', 'wswhomo.afip.gov.ar'],
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('https', resto)}"`), [host], `${resto} tiene que ser externo.`);
+    }
+
     // En minúsculas y sin repetir, aunque el esquema esté en mayúsculas.
     assert.deepEqual(
       hostsExternos(`${url('HTTPS', 'Servicios1.AFIP.gov.ar')} ${url('https', 'servicios1.afip.gov.ar/x')}`),

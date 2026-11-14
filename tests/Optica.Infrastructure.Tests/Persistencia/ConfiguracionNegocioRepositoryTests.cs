@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Optica.Domain.Configuracion;
 using Optica.Infrastructure.Persistencia;
@@ -19,6 +20,13 @@ public class ConfiguracionNegocioRepositoryTests
     private const string SelectFila =
         "SELECT Id, AlicuotaIvaCentesimas, CondicionFiscal, MultiploRedondeoCentavos, " +
         "IFNULL(TopeIdentificacionCentavos, 'NULL') FROM ConfiguracionNegocio";
+
+    private const string SelectPuntoVenta = "SELECT IFNULL(PuntoVenta, 'NULL') FROM ConfiguracionNegocio";
+
+    /// <summary>La migración de FEAT-007 que agrega el punto de venta (D-07) y la anterior, buscadas por nombre (D-29).</summary>
+    private const string SufijoPuntoVenta = "_ConfiguracionPuntoVenta";
+
+    private const string SufijoAnteriorAPuntoVenta = "_CierrePresupuestos";
 
     [Fact]
     public async Task BaseNueva_TieneFilaConValoresIniciales()
@@ -97,7 +105,7 @@ public class ConfiguracionNegocioRepositoryTests
         var contexto = baseTemporal.CrearContexto();
         var repositorio = new ConfiguracionNegocioRepository(contexto);
         var unidad = new UnidadDeTrabajoEf(contexto);
-        repositorio.Reemplazar(new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m));
+        repositorio.Reemplazar(new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m, puntoVenta: null));
 
         // Sin confirmar, nada llega a la base.
         Assert.Equal(["1", "2100", "responsable_inscripto", "1", "NULL"], Assert.Single(Filas(cadena, SelectFila)));
@@ -114,7 +122,7 @@ public class ConfiguracionNegocioRepositoryTests
         Assert.Equal(1000.25m, leida.TopeIdentificacion);
 
         // Un segundo reemplazo en el mismo contexto reutiliza la entrada seguida y la última grabación gana (D-03).
-        repositorio.Reemplazar(new ConfiguracionNegocio(27m, CondicionFiscal.ResponsableInscripto, 10m, 99999.99m));
+        repositorio.Reemplazar(new ConfiguracionNegocio(27m, CondicionFiscal.ResponsableInscripto, 10m, 99999.99m, puntoVenta: null));
         await unidad.ConfirmarAsync();
 
         Assert.Equal(["1", "2700", "responsable_inscripto", "1000", "9999999"], Assert.Single(Filas(cadena, SelectFila)));
@@ -133,7 +141,7 @@ public class ConfiguracionNegocioRepositoryTests
         var contexto = baseTemporal.CrearContexto();
         var repositorio = new ConfiguracionNegocioRepository(contexto);
         var unidad = new UnidadDeTrabajoEf(contexto);
-        var original = new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m);
+        var original = new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m, puntoVenta: null);
 
         // El primer contexto graba y se queda con la entrada seguida.
         repositorio.Reemplazar(original);
@@ -142,12 +150,12 @@ public class ConfiguracionNegocioRepositoryTests
         // Otro alcance graba otros valores: la entrada del primero queda desactualizada.
         var otroContexto = baseTemporal.CrearContexto();
         new ConfiguracionNegocioRepository(otroContexto)
-            .Reemplazar(new ConfiguracionNegocio(27m, CondicionFiscal.ResponsableInscripto, 10m, null));
+            .Reemplazar(new ConfiguracionNegocio(27m, CondicionFiscal.ResponsableInscripto, 10m, null, puntoVenta: null));
         await new UnidadDeTrabajoEf(otroContexto).ConfirmarAsync();
         Assert.Equal(["1", "2700", "responsable_inscripto", "1000", "NULL"], Assert.Single(Filas(cadena, SelectFila)));
 
         // El primero vuelve a grabar los valores que su entrada ya tenía: igual tiene que llegar a la base (D-03).
-        repositorio.Reemplazar(new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m));
+        repositorio.Reemplazar(new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 0.05m, 1000.25m, puntoVenta: null));
         await unidad.ConfirmarAsync();
 
         Assert.Equal(["1", "1050", "monotributo", "5", "100025"], Assert.Single(Filas(cadena, SelectFila)));
@@ -186,12 +194,12 @@ public class ConfiguracionNegocioRepositoryTests
         var repositorio = new ConfiguracionNegocioRepository(contexto);
         var unidad = new UnidadDeTrabajoEf(contexto);
 
-        repositorio.Reemplazar(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 500m));
+        repositorio.Reemplazar(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, 500m, puntoVenta: null));
         await unidad.ConfirmarAsync();
         Assert.Equal("50000", Assert.Single(Filas(cadena, SelectFila))[4]);
 
         // Un tope ya cargado se puede vaciar: queda NULL, no 0 (D-02).
-        repositorio.Reemplazar(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null));
+        repositorio.Reemplazar(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null));
         await unidad.ConfirmarAsync();
 
         Assert.Equal("NULL", Assert.Single(Filas(cadena, SelectFila))[4]);
@@ -291,7 +299,7 @@ public class ConfiguracionNegocioRepositoryTests
         var repositorio = new ConfiguracionNegocioRepository(contexto);
 
         var error = Assert.Throws<InvalidOperationException>(() => repositorio.Reemplazar(
-            new ConfiguracionNegocio(10m, CondicionFiscal.Monotributo, 1m, null)));
+            new ConfiguracionNegocio(10.5m, CondicionFiscal.Monotributo, 1m, null, puntoVenta: null)));
 
         Assert.Equal("No hay configuración de negocio.", error.Message);
         Assert.False(contexto.ChangeTracker.HasChanges());
@@ -317,6 +325,161 @@ public class ConfiguracionNegocioRepositoryTests
         Assert.Equal("La configuración de negocio guardada no es válida.", error.Message);
     }
 
+    // ---- FEAT-007: punto de venta (D-07, D-27, D-33) y alícuotas de ARCA (D-06) ----
+
+    [Fact]
+    public async Task BaseNueva_PuntoVentaSinValor()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+
+        Assert.Equal(["NULL"], Assert.Single(Filas(cadena, SelectPuntoVenta)));
+        Assert.Equal("INTEGER", TipoColumna(cadena, "PuntoVenta"));
+        var configuracion = await new ConfiguracionNegocioRepository(baseTemporal.CrearContexto()).ObtenerAsync();
+        Assert.Null(configuracion.PuntoVenta);
+        Assert.True(configuracion.FaltaPuntoVenta);
+    }
+
+    [Fact]
+    public async Task Reemplazar_PuntoVenta_SeGuardaYSeLee()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+
+        new ConfiguracionNegocioRepository(contexto).Reemplazar(
+            new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: 3));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        Assert.Equal(["3"], Assert.Single(Filas(cadena, SelectPuntoVenta)));
+        var leida = await new ConfiguracionNegocioRepository(baseTemporal.CrearContexto()).ObtenerAsync();
+        Assert.Equal(3, leida.PuntoVenta);
+    }
+
+    [Fact]
+    public void Reemplazar_AlicuotaNoAdmitida_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ConfiguracionNegocioRepository(contexto);
+        // Una configuración de lectura (D-06) con una alícuota que ARCA no acepta: la escritura la frena igual (D-33).
+        var leidaDeUnaBaseAnterior =
+            new ConfiguracionNegocio(19m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
+
+        var error = Assert.Throws<ArgumentException>(() => repositorio.Reemplazar(leidaDeUnaBaseAnterior));
+
+        Assert.DoesNotContain("19", error.Message, StringComparison.Ordinal);
+        Assert.False(contexto.ChangeTracker.HasChanges());
+        Assert.Equal(["1", "2100", "responsable_inscripto", "1", "NULL"], Assert.Single(Filas(cadena, SelectFila)));
+
+        // La regla de las 6 se controla antes que la fila faltante.
+        Ejecutar(cadena, "DELETE FROM ConfiguracionNegocio");
+        Assert.Throws<ArgumentException>(() => new ConfiguracionNegocioRepository(baseTemporal.CrearContexto())
+            .Reemplazar(leidaDeUnaBaseAnterior));
+    }
+
+    [Fact]
+    public async Task Obtener_AlicuotaGuardada19_SeLeeNoAdmitida()
+    {
+        using var baseTemporal = new BaseTemporal();
+        // Una base con la alícuota 19 grabada antes de FR-26: cumple el CHECK de 0 a 100.
+        Ejecutar(CadenaDe(baseTemporal), "UPDATE ConfiguracionNegocio SET AlicuotaIvaCentesimas = 1900");
+
+        var configuracion = await new ConfiguracionNegocioRepository(baseTemporal.CrearContexto()).ObtenerAsync();
+
+        // D-06: se lee sin error; ni el GET ni el recálculo responden 500.
+        Assert.Equal(19m, configuracion.AlicuotaIva);
+        Assert.False(configuracion.AlicuotaAdmitidaPorArca);
+    }
+
+    [Fact]
+    public async Task Obtener_PuntoVentaGuardadoCero_ErrorDeEstadoCorrupto()
+    {
+        using var baseTemporal = new BaseTemporal();
+        // Editada a mano con los CHECK desactivados, con una conexión propia y sin grupo.
+        var sinGrupo = new SqliteConnectionStringBuilder(CadenaDe(baseTemporal)) { Pooling = false }.ToString();
+        Ejecutar(sinGrupo, "PRAGMA ignore_check_constraints = ON; UPDATE ConfiguracionNegocio SET PuntoVenta = 0;");
+        var repositorio = new ConfiguracionNegocioRepository(baseTemporal.CrearContexto());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repositorio.ObtenerAsync());
+
+        Assert.Equal("La configuración de negocio guardada no es válida.", error.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(100000)]
+    public void Migracion_PuntoVenta_CheckRechazaCero(int puntoVenta)
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+
+        var error = Assert.Throws<SqliteException>(() =>
+            Ejecutar(cadena, $"UPDATE ConfiguracionNegocio SET PuntoVenta = {puntoVenta}"));
+
+        AfirmarCheck(error, "CK_ConfiguracionNegocio_PuntoVenta");
+        Assert.Equal(["NULL"], Assert.Single(Filas(cadena, SelectPuntoVenta)));
+
+        // Los extremos y la falta de valor sí entran.
+        Ejecutar(cadena, "UPDATE ConfiguracionNegocio SET PuntoVenta = 1");
+        Ejecutar(cadena, "UPDATE ConfiguracionNegocio SET PuntoVenta = 99999");
+        Ejecutar(cadena, "UPDATE ConfiguracionNegocio SET PuntoVenta = NULL");
+    }
+
+    [Fact]
+    public void Migracion_ConfiguracionPuntoVenta_AgregaLaColumnaSinReconstruirYRevierte()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var contexto = baseTemporal.CrearContexto();
+        var migrador = contexto.GetService<IMigrator>();
+        var migraciones = contexto.Database.GetMigrations().ToList();
+        var puntoVenta = Assert.Single(migraciones, m => m.EndsWith(SufijoPuntoVenta, StringComparison.Ordinal));
+        var anterior = Assert.Single(migraciones, m => m.EndsWith(SufijoAnteriorAPuntoVenta, StringComparison.Ordinal));
+        Assert.Equal(migraciones.IndexOf(anterior) + 1, migraciones.IndexOf(puntoVenta));
+
+        // ADR-012: SQL escrito a mano; ni AddColumn ni AddCheckConstraint, que en SQLite reconstruyen la tabla.
+        var ensamblado = contexto.GetService<IMigrationsAssembly>();
+        var migracion = ensamblado.CreateMigration(ensamblado.Migrations[puntoVenta], contexto.Database.ProviderName!);
+        Assert.All(migracion.UpOperations, operacion => Assert.IsType<SqlOperation>(operacion));
+        Assert.All(migracion.DownOperations, operacion => Assert.IsType<SqlOperation>(operacion));
+
+        // Una base anterior con la configuración ya cargada por la operadora.
+        migrador.Migrate(anterior);
+        Assert.DoesNotContain("PuntoVenta", Columnas(cadena));
+        Ejecutar(cadena,
+            "UPDATE ConfiguracionNegocio SET AlicuotaIvaCentesimas = 1050, CondicionFiscal = 'monotributo', " +
+            "MultiploRedondeoCentavos = 5000, TopeIdentificacionCentavos = 100025");
+        var sqlAntes = SqlTabla(cadena);
+        var datos = Filas(cadena, SelectFila);
+
+        migrador.Migrate(puntoVenta);
+
+        // Sin reconstruir: el CREATE TABLE es el mismo, con la columna nueva al final; los datos iguales y sin punto de
+        // venta (D-07).
+        const string columna =
+            ", \"PuntoVenta\" INTEGER NULL CONSTRAINT \"CK_ConfiguracionNegocio_PuntoVenta\" CHECK " +
+            "(\"PuntoVenta\" IS NULL OR \"PuntoVenta\" BETWEEN 1 AND 99999)";
+        var sqlDespues = SqlTabla(cadena);
+        Assert.Contains(columna, sqlDespues, StringComparison.Ordinal);
+        Assert.Equal(sqlAntes, sqlDespues.Replace(columna, string.Empty, StringComparison.Ordinal));
+        Assert.Equal(datos, Filas(cadena, SelectFila));
+        Assert.Equal(["NULL"], Assert.Single(Filas(cadena, SelectPuntoVenta)));
+
+        // Down (solo desarrollo): DROP COLUMN deja la tabla como estaba, con los datos.
+        Ejecutar(cadena, "UPDATE ConfiguracionNegocio SET PuntoVenta = 3");
+        migrador.Migrate(anterior);
+        Assert.DoesNotContain("PuntoVenta", Columnas(cadena));
+        Assert.Equal(sqlAntes, SqlTabla(cadena));
+        Assert.Equal(datos, Filas(cadena, SelectFila));
+
+        migrador.Migrate();
+        Assert.Empty(contexto.Database.GetPendingMigrations());
+        Assert.Equal(["NULL"], Assert.Single(Filas(cadena, SelectPuntoVenta)));
+    }
+
     [Fact]
     public void AgregarInfraestructura_RegistraRepositorioDeConfiguracion()
     {
@@ -340,6 +503,12 @@ public class ConfiguracionNegocioRepositoryTests
 
     private static string CadenaDe(BaseTemporal baseTemporal) =>
         baseTemporal.Servicios.GetRequiredService<FabricaConexion>().CadenaConexion;
+
+    private static List<string> Columnas(string cadena) =>
+        [.. Filas(cadena, "SELECT name FROM pragma_table_info('ConfiguracionNegocio')").Select(fila => fila[0])];
+
+    private static string SqlTabla(string cadena) =>
+        Assert.Single(Filas(cadena, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ConfiguracionNegocio'"))[0];
 
     private static string TipoColumna(string cadena, string columna) =>
         Assert.Single(Filas(cadena, $"SELECT type FROM pragma_table_info('ConfiguracionNegocio') WHERE name = '{columna}'"))[0];

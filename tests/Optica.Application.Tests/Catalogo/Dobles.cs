@@ -438,7 +438,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
 internal sealed class ConfiguracionVariable : IConfiguracionNegocioRepository
 {
     public ConfiguracionNegocio? Vigente { get; set; } =
-        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
     public int Lecturas { get; private set; }
 
@@ -479,7 +479,7 @@ internal sealed class CatalogoYConfiguracionEnMemoria : IConfiguracionNegocioRep
 
     /// <summary>La configuración confirmada; null simula la base sin fila (D-04 de FEAT-001c).</summary>
     public ConfiguracionNegocio? Guardada { get; set; } =
-        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
     public int Lecturas { get; private set; }
 

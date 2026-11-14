@@ -56,17 +56,26 @@ public static class RespuestasValidacion
     /// textos elegiría esta sobrecarga en lugar de la anterior.
     /// </summary>
     public static ActionResult CuerpoIlegible(
-        this ControllerBase controller, string accion, string campoPorDefecto, IReadOnlyList<string> campos)
+        this ControllerBase controller, string accion, string campoPorDefecto, IReadOnlyList<string> campos) =>
+        controller.Invalido(new ErrorValidacion(controller.CampoIlegible(campoPorDefecto, campos), accion));
+
+    /// <summary>
+    /// El campo que <see cref="CuerpoIlegible(ControllerBase, string, string, IReadOnlyList{string})"/> nombraría: el
+    /// primero de <paramref name="campos"/> que nombra una clave con error de ModelState o, si ninguno, el de
+    /// <paramref name="campoPorDefecto"/>. Para un controlador que elige la acción según el campo (por ejemplo, el punto de
+    /// venta de la configuración, FEAT-007). Solo mira las claves, nunca los mensajes ni los valores.
+    /// </summary>
+    public static string CampoIlegible(
+        this ControllerBase controller, string campoPorDefecto, IReadOnlyList<string> campos)
     {
         var claves = controller.ModelState
             .Where(entrada => entrada.Value is { Errors.Count: > 0 })
             .Select(entrada => entrada.Key)
             .ToList();
-        var campo = claves
+        return claves
             .Select(clave => campos.FirstOrDefault(candidato => NombraElCampo(clave, candidato)))
             .FirstOrDefault(candidato => candidato is not null)
             ?? campoPorDefecto;
-        return controller.Invalido(new ErrorValidacion(campo, accion));
     }
 
     /// <summary>
@@ -170,6 +179,110 @@ public static class RespuestasValidacion
         };
 
         return controller.Conflicto409(titulo, motivo, detalle);
+    }
+
+    // El 409 de la emisión de la factura (FEAT-007, D-18, D-31): su título fijo, sus diez motivos con su detalle fijo, y
+    // el código y la descripción de ARCA solo en un rechazo. "borrador" se comparte con el PDF del presupuesto.
+
+    /// <summary>
+    /// Acción para un cuerpo de la emisión que no se pudo leer (FEAT-007): JSON roto, un cuerpo que no es un objeto o un
+    /// concepto que no es texto. No repite lo recibido.
+    /// </summary>
+    public const string AccionCuerpoIlegibleFactura = "No se pudo leer el concepto enviado. Elegilo de nuevo.";
+
+    /// <summary>El <c>title</c> fijo de los 409 de la emisión de la factura (D-18).</summary>
+    public const string TituloConflictoFactura = "No se pudo emitir la factura.";
+
+    /// <summary>Valor de <c>motivo</c>: el presupuesto ya tiene una factura (FR-03).</summary>
+    public const string MotivoFacturado = "facturado";
+
+    /// <summary>Valor de <c>motivo</c>: el presupuesto tiene una emisión pendiente de verificación (FR-24).</summary>
+    public const string MotivoPendiente = "pendiente";
+
+    /// <summary>Valor de <c>motivo</c>: el tope de identificación no tiene valor (FR-13).</summary>
+    public const string MotivoSinTope = "sin_tope";
+
+    /// <summary>Valor de <c>motivo</c>: el punto de venta no tiene valor (FR-29).</summary>
+    public const string MotivoSinPuntoVenta = "sin_punto_venta";
+
+    /// <summary>Valor de <c>motivo</c>: la alícuota guardada no es una de ARCA (FR-27).</summary>
+    public const string MotivoAlicuotaNoAdmitida = "alicuota_no_admitida";
+
+    /// <summary>Valor de <c>motivo</c>: ARCA rechazó la solicitud (FR-21); va con <c>codigo</c> y <c>descripcion</c>.</summary>
+    public const string MotivoRechazada = "rechazada";
+
+    /// <summary>Valor de <c>motivo</c>: ARCA no respondió en el plazo (FR-23).</summary>
+    public const string MotivoSinRespuesta = "sin_respuesta";
+
+    /// <summary>Valor de <c>motivo</c>: la solicitud no llegó a enviarse a ARCA (D-16).</summary>
+    public const string MotivoNoEnviada = "no_enviada";
+
+    /// <summary>Valor de <c>motivo</c>: ARCA autorizó y la factura no se pudo grabar (D-31).</summary>
+    public const string MotivoPendienteVerificacion = "pendiente_verificacion";
+
+    /// <summary>El largo máximo de la descripción de un rechazo de ARCA en la respuesta.</summary>
+    public const int DescripcionArcaMaxima = 500;
+
+    /// <summary>El <c>detail</c> fijo de cada motivo del 409 de la emisión: la pantalla muestra el suyo propio.</summary>
+    private static readonly Dictionary<string, string> DetallesFactura = new(StringComparer.Ordinal)
+    {
+        [MotivoBorrador] = "El presupuesto está en Borrador: pasalo a Final para facturarlo.",
+        [MotivoFacturado] = "El presupuesto ya tiene una factura.",
+        [MotivoPendiente] = "La emisión anterior está pendiente de verificación.",
+        [MotivoSinTope] = "Cargá el tope de identificación en la configuración para facturar.",
+        [MotivoSinPuntoVenta] = "Cargá el punto de venta en la configuración para facturar.",
+        [MotivoAlicuotaNoAdmitida] = "Elegí una alícuota de IVA válida en la configuración para facturar.",
+        [MotivoRechazada] = "ARCA rechazó la factura.",
+        [MotivoSinRespuesta] = "ARCA no respondió. La emisión quedó pendiente de verificación.",
+        [MotivoNoEnviada] = "No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.",
+        [MotivoPendienteVerificacion] = "La factura quedó pendiente de verificación.",
+    };
+
+    /// <summary>
+    /// 409 con ProblemDetails para una factura que no se emitió (D-18, D-31): <c>title</c> fijo
+    /// (<see cref="TituloConflictoFactura"/>), el <c>detail</c> fijo del motivo y <paramref name="motivo"/> en la
+    /// extensión <c>motivo</c>. Solo con <see cref="MotivoRechazada"/>, y siempre con él, van <paramref name="codigo"/> y
+    /// <paramref name="descripcion"/> como extensiones <c>codigo</c> y <c>descripcion</c> (AC-20); la descripción se
+    /// recorta a <see cref="DescripcionArcaMaxima"/> caracteres sin cortar un par sustituto. Sin <c>errors</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// El motivo no es uno de los diez, o el código y la descripción no corresponden al motivo.
+    /// </exception>
+    public static ActionResult ConflictoFactura(
+        this ControllerBase controller, string motivo, int? codigo = null, string? descripcion = null)
+    {
+        if (!DetallesFactura.TryGetValue(motivo, out var detalle))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        var esRechazo = motivo == MotivoRechazada;
+        if (esRechazo != (codigo is not null) || esRechazo != (descripcion is not null))
+        {
+            throw new ArgumentException(
+                "El código y la descripción de ARCA van solo, y siempre, en un rechazo.", nameof(codigo));
+        }
+
+        var resultado = controller.Conflicto409(TituloConflictoFactura, motivo, detalle);
+        if (esRechazo && resultado.Value is ProblemDetails problema)
+        {
+            problema.Extensions["codigo"] = codigo!.Value;
+            problema.Extensions["descripcion"] = Recortar(descripcion!, DescripcionArcaMaxima);
+        }
+
+        return resultado;
+    }
+
+    /// <summary>Los primeros <paramref name="maximo"/> caracteres, sin dejar un sustituto alto suelto al final.</summary>
+    private static string Recortar(string texto, int maximo)
+    {
+        if (texto.Length <= maximo)
+        {
+            return texto;
+        }
+
+        var largo = char.IsHighSurrogate(texto[maximo - 1]) ? maximo - 1 : maximo;
+        return texto[..largo];
     }
 
     /// <summary>

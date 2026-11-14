@@ -40,9 +40,30 @@ import {
   descargarPdfPresupuesto,
   MENSAJE_PRESUPUESTO_BORRADOR_PDF,
 } from './cliente';
+import {
+  emitirFactura,
+  mensajeFacturaEmitida,
+  MENSAJE_FACTURA_ALICUOTA_NO_ADMITIDA,
+  MENSAJE_FACTURA_BORRADOR,
+  MENSAJE_FACTURA_FACTURADO,
+  MENSAJE_FACTURA_NO_ENVIADA,
+  MENSAJE_FACTURA_PENDIENTE,
+  MENSAJE_FACTURA_PENDIENTE_VERIFICACION,
+  MENSAJE_FACTURA_RECHAZADA_SIN_MOTIVO,
+  MENSAJE_FACTURA_SIN_PUNTO_VENTA,
+  MENSAJE_FACTURA_SIN_RESPUESTA,
+  MENSAJE_FACTURA_SIN_TOPE,
+} from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
 afterEach(() => alPerderLaSesion(null));
+
+/**
+ * El GET de un presupuesto suma `factura` y `emisionPendiente` (FEAT-007, D-19); el alta y los PUT no los llevan. Un
+ * cuerpo que no es objeto queda igual.
+ */
+const conFacturacion = <T,>(cuerpo: T): T =>
+  typeof cuerpo === 'object' && cuerpo !== null ? { ...cuerpo, factura: null, emisionPendiente: false } : cuerpo;
 
 describe('cliente de la Api', () => {
   it('Cliente_401Vacio_AvisaSinSesion', async () => {
@@ -215,18 +236,22 @@ describe('cliente de la Api', () => {
 });
 
 describe('cliente de la Api: configuración', () => {
+  const ADMITIDAS = [0, 2.5, 5, 10.5, 21, 27];
   const GUARDADA = {
     alicuotaIva: 21,
     condicionFiscal: 'responsable_inscripto',
     multiploRedondeo: 0.01,
     topeIdentificacion: null,
     faltaTope: true,
+    puntoVenta: null,
+    alicuotasAdmitidas: ADMITIDAS,
   };
   const DATOS = {
     alicuotaIva: 21,
     condicionFiscal: 'monotributo',
     multiploRedondeo: 10,
     topeIdentificacion: 250000,
+    puntoVenta: 3,
   } as const;
   const RECHAZADO = { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO };
 
@@ -246,10 +271,38 @@ describe('cliente de la Api: configuración', () => {
     ['tope de texto', { ...GUARDADA, topeIdentificacion: '1' }],
     ['faltaTope no booleano', { ...GUARDADA, faltaTope: 'si' }],
     ['cuerpo que no es objeto', 'texto'],
+    ['punto de venta ausente', { ...GUARDADA, puntoVenta: undefined }],
+    ['punto de venta 0', { ...GUARDADA, puntoVenta: 0 }],
+    ['punto de venta 100000', { ...GUARDADA, puntoVenta: 100000 }],
+    ['punto de venta con decimales', { ...GUARDADA, puntoVenta: 2.5 }],
+    ['punto de venta de texto', { ...GUARDADA, puntoVenta: '3' }],
+    ['alícuotas admitidas vacías', { ...GUARDADA, alicuotasAdmitidas: [] }],
+    ['alícuotas admitidas que no son lista', { ...GUARDADA, alicuotasAdmitidas: '21' }],
+    ['alícuota admitida de texto', { ...GUARDADA, alicuotasAdmitidas: [0, '21'] }],
+    ['alícuotas admitidas repetidas', { ...GUARDADA, alicuotasAdmitidas: [0, 2.5, 21, 21] }],
   ])('consultarConfiguracion_%s_ErrorGeneral', async (_caso, cuerpo) => {
     servidorFalso({ 'GET /api/configuracion': json(200, cuerpo) });
 
     expect(await consultarConfiguracion()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('leerConfiguracion: respuesta sin alicuotasAdmitidas es inválida', async () => {
+    const { alicuotasAdmitidas: _sinLista, ...sinLista } = GUARDADA;
+    servidorFalso({
+      'GET /api/configuracion': json(200, sinLista),
+      'POST /api/configuracion': json(200, { ...sinLista, preciosCambiados: 0 }),
+    });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+    expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it('consultarConfiguracion_PuntoVentaYAlicuotaFueraDeLaLista_SeLeen', async () => {
+    // D-06: una alícuota guardada antes de FR-26 se lee igual; el punto de venta llega como entero.
+    const guardada = { ...GUARDADA, alicuotaIva: 19, puntoVenta: 99999 };
+    servidorFalso({ 'GET /api/configuracion': json(200, { ...guardada, otroCampo: 'x' }) });
+
+    expect(await consultarConfiguracion()).toEqual({ tipo: 'ok', datos: guardada });
   });
 
   it('consultarConfiguracion_401_SinSesion', async () => {
@@ -283,9 +336,9 @@ describe('cliente de la Api: configuración', () => {
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
   });
 
-  it('grabarConfiguracion_200_EnviaLosCuatroYDevuelveLoGuardado', async () => {
+  it('grabarConfiguracion_200_EnviaLosCincoYDevuelveLoGuardado', async () => {
     // Lo guardado y cuántos precios de venta cambiaron (D-09, D-23).
-    const guardada = { ...DATOS, faltaTope: false, preciosCambiados: 2 };
+    const guardada = { ...DATOS, faltaTope: false, alicuotasAdmitidas: ADMITIDAS, preciosCambiados: 2 };
     const servidor = servidorFalso({ 'POST /api/configuracion': json(200, guardada) });
 
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'ok', datos: guardada });
@@ -293,6 +346,16 @@ describe('cliente de la Api: configuración', () => {
     expect(JSON.parse(String(pedido?.init?.body))).toEqual(DATOS);
     expect(pedido?.init?.credentials).toBe('same-origin');
     expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('grabarConfiguracion_SinPuntoVenta_EnviaNull', async () => {
+    // D-27: null conserva el punto de venta guardado.
+    const servidor = servidorFalso({ 'POST /api/configuracion': json(200, { ...GUARDADA, preciosCambiados: 0 }) });
+
+    await grabarConfiguracion({ ...DATOS, puntoVenta: null });
+
+    const [pedido] = servidor.pedidosA('POST', '/api/configuracion');
+    expect(JSON.parse(String(pedido?.init?.body))).toHaveProperty('puntoVenta', null);
   });
 
   it('grabarConfiguracion_SinTope_EnviaNull', async () => {
@@ -310,8 +373,9 @@ describe('cliente de la Api: configuración', () => {
         status: 400,
         title: 'One or more validation errors occurred.',
         errors: {
-          alicuotaIva: ['La alícuota de IVA debe estar entre 0 y 100.'],
+          alicuotaIva: ['La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.'],
           topeIdentificacion: ['El tope debe ser mayor a 0.'],
+          puntoVenta: ['El punto de venta debe ser un número entero de 1 a 99999.'],
           otro: 'no es una lista',
           vacio: [],
         },
@@ -321,8 +385,9 @@ describe('cliente de la Api: configuración', () => {
     expect(await grabarConfiguracion(DATOS)).toEqual({
       tipo: 'campos',
       errores: [
-        { campo: 'alicuotaIva', mensaje: 'La alícuota de IVA debe estar entre 0 y 100.' },
+        { campo: 'alicuotaIva', mensaje: 'La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.' },
         { campo: 'topeIdentificacion', mensaje: 'El tope debe ser mayor a 0.' },
+        { campo: 'puntoVenta', mensaje: 'El punto de venta debe ser un número entero de 1 a 99999.' },
       ],
     });
   });
@@ -882,7 +947,7 @@ describe('cliente de la Api: presupuestos', () => {
     // D-14b: la Api devuelve 900 y 10.5, no 900.00 y 10.50; la lectura no depende del formato del número.
     const linea = { ...LINEA, precioUnitario: 1000, cantidad: 3, porcentajeDescuento: 10, precioConDescuento: 900 };
     const texto = (decimales: boolean) =>
-      JSON.stringify({ ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 }).replace(
+      JSON.stringify(conFacturacion({ ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 })).replace(
         /"precioFinal":2700|"total":2700|"precioConDescuento":900/g,
         (parte) => (decimales ? `${parte}.00` : parte),
       );
@@ -891,7 +956,10 @@ describe('cliente de la Api: presupuestos', () => {
     expect(texto(true)).toContain('"total":2700.00');
     servidorFalso({ 'GET /api/presupuestos/155': [crudo(texto(false)), crudo(texto(true))] });
 
-    const esperado = { tipo: 'ok', datos: { ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 } };
+    const esperado = {
+      tipo: 'ok',
+      datos: conFacturacion({ ...GRABADO, lineas: [{ ...linea, precioFinal: 2700 }], total: 2700 }),
+    };
     expect(await consultarPresupuesto(155)).toEqual(esperado);
     expect(await consultarPresupuesto(155)).toEqual(esperado);
   });
@@ -906,9 +974,9 @@ describe('cliente de la Api: presupuestos', () => {
       ],
       total: 0.3,
     };
-    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)) });
 
-    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: cuerpo });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: conFacturacion(cuerpo) });
   });
 
   it('leerPresupuesto_AC07_TotalDeDosLineas', async () => {
@@ -935,7 +1003,7 @@ describe('cliente de la Api: presupuestos', () => {
     ['total distinto de cero sin líneas', { ...GRABADO, lineas: [], total: 1 }],
   ])('leerPresupuesto_total faltante o distinto: error de lectura — %s', async (_caso, cuerpo) => {
     servidorFalso({
-      'GET /api/presupuestos/155': json(200, cuerpo),
+      'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)),
       'POST /api/presupuestos': json(201, cuerpo),
     });
 
@@ -994,14 +1062,14 @@ describe('cliente de la Api: presupuestos', () => {
   it('consultarPresupuesto_200_DevuelveElPresupuestoSinCamposAjenos', async () => {
     const servidor = servidorFalso({
       'GET /api/presupuestos/155': json(200, {
-        ...GRABADO,
+        ...conFacturacion(GRABADO),
         otro: 1,
         cliente: { ...GRABADO.cliente, otro: 2 },
         lineas: [{ ...LINEA, otro: 3 }],
       }),
     });
 
-    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: GRABADO });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: conFacturacion(GRABADO) });
     const [pedido] = servidor.pedidosA('GET', '/api/presupuestos/155');
     expect(pedido?.init?.cache).toBe('no-store');
   });
@@ -1025,7 +1093,7 @@ describe('cliente de la Api: presupuestos', () => {
 
   it('leerPresupuesto_EstadoDesconocido_RespuestaIlegible', async () => {
     servidorFalso({
-      'GET /api/presupuestos/155': json(200, { ...GRABADO, estado: 'anulado' }),
+      'GET /api/presupuestos/155': json(200, conFacturacion({ ...GRABADO, estado: 'anulado' })),
       'POST /api/presupuestos': json(201, { ...GRABADO, estado: 'Borrador' }),
     });
 
@@ -1062,7 +1130,7 @@ describe('cliente de la Api: presupuestos', () => {
     ['precio con descuento bajo el mínimo seguro', { ...GRABADO, lineas: [{ ...LINEA, precioConDescuento: -90071992547410 }] }],
     ['precio final nulo', { ...GRABADO, lineas: [{ ...LINEA, precioFinal: null }] }],
   ])('leerPresupuesto_%s_RespuestaIlegible', async (_caso, cuerpo) => {
-    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)) });
 
     expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
   });
@@ -1074,9 +1142,9 @@ describe('cliente de la Api: presupuestos', () => {
       lineas: [{ ...LINEA, precioUnitario: IMPORTE_MAXIMO_SEGURO, precioFinal: -IMPORTE_MAXIMO_SEGURO }],
       total: -IMPORTE_MAXIMO_SEGURO,
     };
-    servidorFalso({ 'GET /api/presupuestos/155': json(200, enElLimite) });
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, conFacturacion(enElLimite)) });
 
-    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: enElLimite });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: conFacturacion(enElLimite) });
   });
 });
 
@@ -1124,7 +1192,7 @@ describe('cliente de la Api: modificación y paso a Final del presupuesto (FEAT-
     ['versión sobre el máximo seguro', { ...GRABADO, version: Number.MAX_SAFE_INTEGER + 1 }],
   ])('leerPresupuesto_SinVersion_ErrorDeLectura (%s)', async (_caso, cuerpo) => {
     servidorFalso({
-      'GET /api/presupuestos/155': json(200, cuerpo),
+      'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)),
       'POST /api/presupuestos': json(201, cuerpo),
       'PUT /api/presupuestos/155': json(200, cuerpo),
       'PUT /api/presupuestos/155/estado': json(200, cuerpo),
@@ -1145,7 +1213,7 @@ describe('cliente de la Api: modificación y paso a Final del presupuesto (FEAT-
   ])('leerPresupuesto_LineaSinOrden_ErrorDeLectura (%s)', async (_caso, linea) => {
     const cuerpo = { ...GRABADO, lineas: [LINEA, { ...linea }], total: 3700 };
     servidorFalso({
-      'GET /api/presupuestos/155': json(200, cuerpo),
+      'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)),
       'PUT /api/presupuestos/155': json(200, cuerpo),
     });
 
@@ -1160,9 +1228,9 @@ describe('cliente de la Api: modificación y paso a Final del presupuesto (FEAT-
       total: 3700,
       version: Number.MAX_SAFE_INTEGER,
     };
-    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, conFacturacion(cuerpo)) });
 
-    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: cuerpo });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: conFacturacion(cuerpo) });
   });
 
   it('modificarPresupuesto_EnviaVersionClienteYOrdenSoloEnLasGrabadas', async () => {
@@ -1555,4 +1623,267 @@ describe('cliente de la Api: PDF del presupuesto (FEAT-006)', () => {
       expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
     },
   );
+});
+
+describe('cliente de la Api: factura del presupuesto (FEAT-007)', () => {
+  const RUTA = '/api/presupuestos/155/factura';
+  const CLAVE = `POST ${RUTA}`;
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const NO_ENCONTRADO = { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+  /** Datos ficticios (D-50): un DNI que empieza con 00 no se emite. */
+  const CLIENTE = {
+    apellido: 'Ficticio',
+    nombre: 'Cliente',
+    dni: '00718294',
+    domicilio: null,
+    email: 'cliente@example.com',
+    telefono: null,
+  };
+  const LINEA = {
+    codigoArticulo: 7,
+    descripcion: 'Armazón metálico',
+    precioUnitario: 1000,
+    cantidad: 1,
+    porcentajeDescuento: 0,
+    precioConDescuento: 1000,
+    precioFinal: 1000,
+    orden: 1,
+  };
+  /** El GET de un presupuesto en Final (D-19): con `factura` y `emisionPendiente`. */
+  const CONSULTADO = {
+    numero: 155,
+    fecha: '2026-10-30',
+    estado: 'final',
+    cliente: CLIENTE,
+    lineas: [LINEA, { ...LINEA, orden: 2 }, { ...LINEA, orden: 3 }],
+    total: 3000,
+    version: 4,
+    factura: null,
+    emisionPendiente: false,
+  };
+  /** La respuesta 201 de la emisión (D-18). */
+  const EMITIDA = {
+    comprobante: 'Factura B 0003-00000125',
+    tipo: 'b',
+    numero: 125,
+    cae: '12345678901234',
+    vencimientoCae: '2026-11-09',
+    fecha: '2026-10-30',
+    total: 3000,
+    neto: 2479.34,
+    iva: 520.66,
+  };
+  /** El 409 de la emisión: título fijo y un `detail` que la pantalla nunca muestra (D-18, D-61). */
+  const conflicto = (motivo: unknown, extra: Record<string, unknown> = {}) =>
+    json(409, { status: 409, title: 'No se pudo emitir la factura.', detail: 'Texto del servidor.', motivo, ...extra });
+
+  it('consultarPresupuesto_LeeFacturaYEmisionPendiente', async () => {
+    const conFactura = { ...CONSULTADO, factura: { comprobante: 'Factura B 0003-00000125' } };
+    const pendiente = { ...CONSULTADO, emisionPendiente: true };
+    servidorFalso({
+      'GET /api/presupuestos/155': [json(200, CONSULTADO), json(200, conFactura), json(200, pendiente)],
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: CONSULTADO });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: conFactura });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: pendiente });
+  });
+
+  it('consultarPresupuesto_FacturaConCamposAjenos_SoloElComprobante', async () => {
+    servidorFalso({
+      'GET /api/presupuestos/155': json(200, {
+        ...CONSULTADO,
+        factura: { comprobante: 'Factura C 12345-99999999', cae: '12345678901234' },
+      }),
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual({
+      tipo: 'ok',
+      datos: { ...CONSULTADO, factura: { comprobante: 'Factura C 12345-99999999' } },
+    });
+  });
+
+  it.each([
+    ['sin factura', { ...CONSULTADO, factura: undefined }],
+    ['sin emisión pendiente', { ...CONSULTADO, emisionPendiente: undefined }],
+    ['emisión pendiente de texto', { ...CONSULTADO, emisionPendiente: 'false' }],
+    ['emisión pendiente nula', { ...CONSULTADO, emisionPendiente: null }],
+    ['factura que no es objeto', { ...CONSULTADO, factura: 'Factura B 0003-00000125' }],
+    ['factura sin comprobante', { ...CONSULTADO, factura: {} }],
+    ['comprobante de otro tipo', { ...CONSULTADO, factura: { comprobante: 'Factura A 0003-00000125' } }],
+    ['comprobante sin ceros', { ...CONSULTADO, factura: { comprobante: 'Factura B 3-125' } }],
+    ['comprobante con texto de más', { ...CONSULTADO, factura: { comprobante: 'Factura B 0003-00000125 <b>' } }],
+    // El punto de venta va de 1 a 99999 y el número de 1 a 99999999: ninguno es todo ceros.
+    ['punto de venta 0000', { ...CONSULTADO, factura: { comprobante: 'Factura B 0000-00000125' } }],
+    ['punto de venta 00000', { ...CONSULTADO, factura: { comprobante: 'Factura B 00000-00000125' } }],
+    ['número 00000000', { ...CONSULTADO, factura: { comprobante: 'Factura B 0003-00000000' } }],
+  ])('leerPresupuesto: forma inesperada de la facturación, respuesta ilegible — %s', async (_caso, cuerpo) => {
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('emitirFactura_201_EnviaSoloElConceptoYDevuelveLaFactura', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(201, EMITIDA) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual({ tipo: 'ok', datos: EMITIDA });
+    const [pedido] = servidor.pedidosA('POST', RUTA);
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ concepto: 'productos' });
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('emitirFactura_ProductosYServicios_EnviaEseConcepto', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(201, { ...EMITIDA, tipo: 'c', comprobante: 'Factura C 0003-00000125', neto: 3000, iva: 0 }) });
+
+    expect((await emitirFactura(155, 'productos_y_servicios')) as { tipo: string }).toMatchObject({ tipo: 'ok' });
+    const [pedido] = servidor.pedidosA('POST', RUTA);
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ concepto: 'productos_y_servicios' });
+  });
+
+  it.each([
+    ['cuerpo que no es objeto', 'texto'],
+    ['sin comprobante', { ...EMITIDA, comprobante: undefined }],
+    ['comprobante mal formado', { ...EMITIDA, comprobante: 'Factura B 3-125' }],
+    ['tipo desconocido', { ...EMITIDA, tipo: 'a' }],
+    ['tipo que no coincide con el comprobante', { ...EMITIDA, tipo: 'c' }],
+    ['número que no coincide con el comprobante', { ...EMITIDA, numero: 126 }],
+    ['número cero', { ...EMITIDA, numero: 0 }],
+    ['CAE de 13 dígitos', { ...EMITIDA, cae: '1234567890123' }],
+    ['CAE con letras', { ...EMITIDA, cae: '1234567890123A' }],
+    ['vencimiento inexistente', { ...EMITIDA, vencimientoCae: '2026-02-30' }],
+    ['fecha ausente', { ...EMITIDA, fecha: undefined }],
+    ['total de texto', { ...EMITIDA, total: '3000' }],
+    ['neto ausente', { ...EMITIDA, neto: undefined }],
+    ['IVA nulo', { ...EMITIDA, iva: null }],
+  ])('emitirFactura_201Ilegible_%s_SinConexion', async (_caso, cuerpo) => {
+    servidorFalso({ [CLAVE]: json(201, cuerpo) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual(ILEGIBLE);
+  });
+
+  it.each([
+    ['borrador', MENSAJE_FACTURA_BORRADOR, 'El presupuesto está en Borrador: pasalo a Final para facturarlo.'],
+    ['facturado', MENSAJE_FACTURA_FACTURADO, 'El presupuesto ya tiene una factura.'],
+    ['pendiente', MENSAJE_FACTURA_PENDIENTE, 'La emisión anterior está pendiente de verificación.'],
+    ['sin_tope', MENSAJE_FACTURA_SIN_TOPE, 'Cargá el tope de identificación en la configuración para facturar.'],
+    ['sin_punto_venta', MENSAJE_FACTURA_SIN_PUNTO_VENTA, 'Cargá el punto de venta en la configuración para facturar.'],
+    [
+      'alicuota_no_admitida',
+      MENSAJE_FACTURA_ALICUOTA_NO_ADMITIDA,
+      'Elegí una alícuota de IVA válida en la configuración para facturar.',
+    ],
+    ['sin_respuesta', MENSAJE_FACTURA_SIN_RESPUESTA, 'ARCA no respondió. La emisión quedó pendiente de verificación.'],
+    ['no_enviada', MENSAJE_FACTURA_NO_ENVIADA, 'No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.'],
+    ['pendiente_verificacion', MENSAJE_FACTURA_PENDIENTE_VERIFICACION, 'La factura quedó pendiente de verificación.'],
+  ])('emitirFactura_409 %s: texto propio, nunca el detail', async (motivo, constante, mensaje) => {
+    servidorFalso({ [CLAVE]: conflicto(motivo) });
+
+    expect(constante).toBe(mensaje);
+    expect(await emitirFactura(155, 'productos')).toEqual({ tipo: 'conflicto', motivo, mensaje });
+  });
+
+  it('emitirFactura_409rechazada_CodigoYDescripcionDeArca', async () => {
+    const descripcion = 'Rechazo simulado: el número o la fecha del comprobante no se corresponde con el próximo a autorizar.';
+    servidorFalso({ [CLAVE]: conflicto('rechazada', { codigo: 10016, descripcion }) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual({
+      tipo: 'conflicto',
+      motivo: 'rechazada',
+      mensaje: `ARCA rechazó la factura: 10016 – ${descripcion}`,
+    });
+  });
+
+  it('emitirFactura_409rechazadaConCodigo0_SoloQueNoInformoElMotivo', async () => {
+    // D-57: un rechazo sin código ni descripción de ARCA llega con el código 0 y un texto fijo de la Api; "código 0"
+    // confundiría y repetir ese texto también: la pantalla dice solo que ARCA no informó el motivo.
+    servidorFalso({
+      [CLAVE]: conflicto('rechazada', { codigo: 0, descripcion: 'ARCA rechazó el comprobante sin informar el motivo.' }),
+    });
+
+    expect(MENSAJE_FACTURA_RECHAZADA_SIN_MOTIVO).toBe('ARCA rechazó la factura sin informar el motivo.');
+    expect(await emitirFactura(155, 'productos')).toEqual({
+      tipo: 'conflicto',
+      motivo: 'rechazada',
+      mensaje: 'ARCA rechazó la factura sin informar el motivo.',
+    });
+  });
+
+  it.each([
+    ['sin código', { descripcion: 'Texto' }],
+    ['código de texto', { codigo: '10016', descripcion: 'Texto' }],
+    ['código negativo', { codigo: -1, descripcion: 'Texto' }],
+    ['código no entero', { codigo: 1.5, descripcion: 'Texto' }],
+    ['sin descripción', { codigo: 10016 }],
+    ['descripción vacía', { codigo: 10016, descripcion: '' }],
+    ['descripción que no es texto', { codigo: 10016, descripcion: 1 }],
+    ['descripción de más de 500 caracteres', { codigo: 10016, descripcion: 'x'.repeat(501) }],
+  ])('emitirFactura_409rechazadaIlegible_%s_SinConexion', async (_caso, extra) => {
+    servidorFalso({ [CLAVE]: conflicto('rechazada', extra) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual(ILEGIBLE);
+  });
+
+  it('emitirFactura_409rechazadaDe500Caracteres_LaMuestra', async () => {
+    const descripcion = 'x'.repeat(500);
+    servidorFalso({ [CLAVE]: conflicto('rechazada', { codigo: 10016, descripcion }) });
+
+    expect(await emitirFactura(155, 'productos')).toMatchObject({ mensaje: `ARCA rechazó la factura: 10016 – ${descripcion}` });
+  });
+
+  it.each(['cambiado', 'final', 'inactivo', 'otro', undefined])('emitirFactura_409MotivoAjeno_%s_Ilegible', async (m) => {
+    servidorFalso({ [CLAVE]: conflicto(m) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual(ILEGIBLE);
+  });
+
+  it('emitirFactura_401_SinSesionYAvisa', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [CLAVE]: vacia(401) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('emitirFactura_404_NoEncontrado', async () => {
+    servidorFalso({ [CLAVE]: vacia(404) });
+
+    expect(await emitirFactura(155, 'productos')).toEqual(NO_ENCONTRADO);
+  });
+
+  it.each([
+    ['400 con errors', problema(400, 'concepto', 'Elegí el concepto.')],
+    ['400 sin errors', vacia(400)],
+    ['413', vacia(413)],
+    ['415', vacia(415)],
+  ])('emitirFactura_%s_PedidoRechazado', async (_caso, respuesta) => {
+    servidorFalso({ [CLAVE]: respuesta });
+
+    expect(await emitirFactura(155, 'productos')).toEqual({ tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO });
+  });
+
+  it.each([
+    ['falla de red', sinRed],
+    ['500', vacia(500)],
+    ['201 sin cuerpo', vacia(201)],
+  ])('emitirFactura_%s_SinConexion', async (_caso, respuesta) => {
+    servidorFalso({ [CLAVE]: respuesta });
+
+    expect(await emitirFactura(155, 'productos')).toEqual(ILEGIBLE);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    'emitirFactura_NumeroInvalido_%s_NoSeEnvia',
+    async (numero) => {
+      const servidor = servidorFalso({});
+
+      expect(await emitirFactura(numero, 'productos')).toEqual(NO_ENCONTRADO);
+      expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+    },
+  );
+
+  it('mensajeFacturaEmitida_ConElComprobante', () => {
+    expect(mensajeFacturaEmitida('Factura B 0003-00000125')).toBe('Se emitió la Factura B 0003-00000125.');
+  });
 });

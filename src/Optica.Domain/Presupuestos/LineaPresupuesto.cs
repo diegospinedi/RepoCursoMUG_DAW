@@ -23,25 +23,9 @@ public sealed class LineaPresupuesto
         long codigoArticulo, string descripcion, decimal precioUnitario, int cantidad, decimal porcentajeDescuento,
         decimal precioConDescuento, decimal precioFinal)
     {
-        if (codigoArticulo <= 0)
-        {
-            throw new ArgumentException("El código de artículo no es válido.", nameof(codigoArticulo));
-        }
-
-        if (!EsDescripcionValida(descripcion))
-        {
-            throw new ArgumentException("La descripción no es válida.", nameof(descripcion));
-        }
-
-        CalculoLinea.ValidarImporte(
-            precioUnitario, nameof(precioUnitario), CalculoLinea.MensajePrecioUnitarioInvalido);
-
-        CalculoLinea.ValidarCantidad(cantidad);
-        CalculoLinea.ValidarDescuento(porcentajeDescuento);
-
-        CalculoLinea.ValidarImporte(
-            precioConDescuento, nameof(precioConDescuento), CalculoLinea.MensajePrecioConDescuentoInvalido);
-        CalculoLinea.ValidarImporte(precioFinal, nameof(precioFinal), CalculoLinea.MensajePrecioFinalInvalido);
+        // Las mismas reglas que la línea de la factura (D-34 de FEAT-007).
+        ReglasLinea.Validar(
+            codigoArticulo, descripcion, precioUnitario, cantidad, porcentajeDescuento, precioConDescuento, precioFinal);
 
         CodigoArticulo = codigoArticulo;
         Descripcion = descripcion;
@@ -147,14 +131,6 @@ public sealed class LineaPresupuesto
             codigoArticulo, descripcion, precioUnitario, cantidad, porcentajeDescuento, precioConDescuento,
             precioFinal));
     }
-
-    // Ya recortada, así el largo se mide sobre el texto guardado.
-    private static bool EsDescripcionValida(string? descripcion) =>
-        descripcion is not null
-        && descripcion.Length > 0
-        && NormalizacionCodigo.Recortar(descripcion) == descripcion
-        && descripcion.Length <= PoliticaArticulo.LargoMaximoDescripcion
-        && NormalizacionCodigo.EsUtf16Valido(descripcion);
 }
 
 /// <summary>

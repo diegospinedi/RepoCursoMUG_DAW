@@ -357,8 +357,8 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
         var cadena = CadenaDe(baseTemporal);
         var contexto = baseTemporal.CrearContexto();
         var migrador = contexto.GetService<IMigrator>();
+        // Por nombre, no por posición (D-29 de FEAT-007).
         var migraciones = contexto.Database.GetMigrations().ToList();
-        Assert.EndsWith("_CierrePresupuestos", migraciones[^1], StringComparison.Ordinal);
         var catalogo = Assert.Single(migraciones, m => m.EndsWith("_Catalogo", StringComparison.Ordinal));
 
         // Una base de FEAT-002a con artículos cargados.
@@ -710,7 +710,7 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
 
         // AC-03: el inactivo de 1.815,00 se recalcula con múltiplo 50 y queda en 1.850,00, inactivo.
         var leido = Assert.Single(await repositorio.ListarParaRecalculoAsync());
-        var recalculo = leido.ConPrecioRecalculado(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 50m, null));
+        var recalculo = leido.ConPrecioRecalculado(new ConfiguracionNegocio(21m, CondicionFiscal.ResponsableInscripto, 50m, null, puntoVenta: null));
         Assert.True(recalculo.EsCambiado);
         repositorio.RegistrarPrecioRecalculado(recalculo.Articulo);
         await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
@@ -832,7 +832,7 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
             string.Create(CultureInfo.InvariantCulture, $"El recálculo tardó {reloj.Elapsed.TotalMilliseconds:F0} ms."));
 
         var nueva = new ConfiguracionNegocio(
-            vigente.AlicuotaIva, vigente.CondicionFiscal, 50m, vigente.TopeIdentificacion);
+            vigente.AlicuotaIva, vigente.CondicionFiscal, 50m, vigente.TopeIdentificacion, puntoVenta: null);
         var despues = Filas(cadena, SelectFila);
         Assert.Equal(antes.Count, despues.Count);
         for (var i = 0; i < despues.Count; i++)

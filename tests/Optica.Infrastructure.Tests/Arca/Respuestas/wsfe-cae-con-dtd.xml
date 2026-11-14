@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE soap:Envelope [
+  <!ENTITY cae "12345678901234">
+  <!ENTITY a "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">
+  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+]>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <FeCabResp>
+          <PtoVta>3</PtoVta>
+          <CbteTipo>6</CbteTipo>
+          <CantReg>1</CantReg>
+          <Resultado>A</Resultado>
+        </FeCabResp>
+        <FeDetResp>
+          <FECAEDetResponse>
+            <CbteDesde>125</CbteDesde>
+            <CbteHasta>125</CbteHasta>
+            <Resultado>A</Resultado>
+            <Observaciones><Obs><Code>1</Code><Msg>&c;</Msg></Obs></Observaciones>
+            <CAE>&cae;</CAE>
+            <CAEFchVto>20261109</CAEFchVto>
+          </FECAEDetResponse>
+        </FeDetResp>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>

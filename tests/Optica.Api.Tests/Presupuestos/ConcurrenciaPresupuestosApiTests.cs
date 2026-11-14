@@ -284,7 +284,8 @@ internal sealed class SesionesConEncuentro : IDisposable
     {
         using var respuesta = await Http.GetAsync(ClienteA, $"{Ruta}/{numero}", cookie);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        return (await Http.JsonAsync(respuesta)).Clone();
+        // FEAT-007 (D-28): el GET suma factura y emisionPendiente; sin ellas es la respuesta del alta tal cual.
+        return Http.SinFacturacion(await Http.JsonAsync(respuesta));
     }
 
     public async Task AfirmarSinPresupuestoAsync(long numero)

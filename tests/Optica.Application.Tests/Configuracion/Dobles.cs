@@ -11,7 +11,7 @@ internal sealed class ConfiguracionEnMemoria : IConfiguracionNegocioRepository
 {
     /// <summary>Los valores iniciales de la migración (FR-07, FR-08).</summary>
     public static ConfiguracionNegocio Inicial() =>
-        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null);
+        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
 
     public ConfiguracionNegocio? Guardada { get; set; } = Inicial();
 
