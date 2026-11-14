@@ -115,6 +115,7 @@ public static class ConfiguracionInfraestructura
             return new SimuladorArca(
                 proveedor.GetRequiredService<FabricaConexion>().Directorio,
                 opciones.RespuestaSimulado,
+                opciones.ConsultaSimulado,
                 opciones.TiempoMaximo,
                 proveedor.GetRequiredService<ILogger<SimuladorArca>>());
         }

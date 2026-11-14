@@ -102,7 +102,7 @@ public sealed class AislamientoArcaTests
     {
         public static bool Crear() =>
             new SimuladorArca(
-                "x", RespuestaSimulador.Autorizar, TimeSpan.Zero,
+                "x", RespuestaSimulador.Autorizar, ConsultaSimulador.Responder, TimeSpan.Zero,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<SimuladorArca>.Instance).Entorno == default;
 
         public static Delegate Referencia() => new Func<string, bool>(OpcionesArca.EsCuitValido);

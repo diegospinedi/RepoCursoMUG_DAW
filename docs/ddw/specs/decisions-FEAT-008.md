@@ -89,3 +89,12 @@ dentro de lo que el PRD y las convenciones permiten, y se puede revisar.
   cancelación existente; hasta el Block 3 el simulador numera con su contador e ignora el número recibido;
   `ResultadoConsulta.Autorizado` exige total ≥ 0, CAE de 14 dígitos y fechas válidas. El implementador escribió algunos
   archivos del bloque con la shell en lugar de Write/Edit (fase CODE, archivos del bloque); queda registrado.
+- **D-27 (del agente, Block 3, supuestos del implementador, aprobados por D-21).** El simulador responde "sin
+  respuesta" (no "no autorizado") a la consulta de un número ≤ contador que ya no está en el archivo (descartado por
+  el tope de 50 o de un archivo de FEAT-007), para no habilitar una reemisión; número > contador → "no autorizado".
+  Validación estricta del archivo (rechaza propiedades desconocidas o repetidas, claves duplicadas o con ceros a la
+  izquierda y comprobantes con número mayor que su contador). Si grabar superaría 256 KB, no graba y la autorización es
+  "no enviada". Los valores de las opciones se comparan sin distinguir mayúsculas (como FEAT-007). "Primera solicitud
+  del proceso" = primera `AutorizarAsync` de la instancia singleton. Con `rechazar`, `no_responder` y la primera de
+  `no_responder_una_vez` no se compara el número. Veinte pedidos concurrentes del mismo número dan 1 autorizado y 19
+  rechazos 10016.

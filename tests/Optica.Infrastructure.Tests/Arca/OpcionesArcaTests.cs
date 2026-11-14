@@ -140,6 +140,113 @@ public sealed class OpcionesArcaTests : IDisposable
         Assert.Equal(esperada, opciones.RespuestaSimulado);
     }
 
+    // ---- Spec FEAT-008, Block 3 (D-19, D-20) ----
+
+    [Theory]
+    [InlineData("autorizar_sin_responder", RespuestaSimulador.AutorizarSinResponder)]
+    [InlineData("no_responder_una_vez", RespuestaSimulador.NoResponderUnaVez)]
+    public void Opciones_RespuestasNuevas_Aceptadas(string valor, RespuestaSimulador esperada)
+    {
+        var opciones = OpcionesArca.Leer(Configuracion((OpcionesArca.ClaveRespuestaSimulado, valor)));
+
+        Assert.Equal(esperada, opciones.RespuestaSimulado);
+    }
+
+    [Fact]
+    public void Opciones_SinClavesNuevas_ConsultaResponderYEspera60Segundos()
+    {
+        var opciones = OpcionesArca.Leer(Configuracion());
+
+        Assert.Equal("Arca:Simulado:Consulta", OpcionesArca.ClaveConsultaSimulado);
+        Assert.Equal("Arca:EsperaVerificacionSegundos", OpcionesArca.ClaveEsperaVerificacion);
+        Assert.Equal(ConsultaSimulador.Responder, opciones.ConsultaSimulado);
+        Assert.Equal(TimeSpan.FromSeconds(60), opciones.EsperaVerificacion);
+    }
+
+    [Theory]
+    [InlineData("responder", ConsultaSimulador.Responder)]
+    [InlineData("no_responder", ConsultaSimulador.NoResponder)]
+    public void Opciones_ConsultaSimulador_Aceptada(string valor, ConsultaSimulador esperada)
+    {
+        var opciones = OpcionesArca.Leer(Configuracion((OpcionesArca.ClaveConsultaSimulado, valor)));
+
+        Assert.Equal(esperada, opciones.ConsultaSimulado);
+    }
+
+    [Theory]
+    [InlineData("1", 1)]
+    [InlineData("3", 3)]
+    [InlineData("3600", 3600)]
+    public void Opciones_EsperaVerificacionEnRango_Aceptada(string valor, int segundos)
+    {
+        var opciones = OpcionesArca.Leer(Configuracion((OpcionesArca.ClaveEsperaVerificacion, valor)));
+
+        Assert.Equal(TimeSpan.FromSeconds(segundos), opciones.EsperaVerificacion);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("3601")]
+    [InlineData("-1")]
+    [InlineData("60.5")]
+    [InlineData("sesenta")]
+    public void Opciones_EsperaVerificacionInvalida_Rechazada(string valor)
+    {
+        var error = Assert.Throws<OpcionesArcaInvalidasException>(
+            () => OpcionesArca.Leer(Configuracion((OpcionesArca.ClaveEsperaVerificacion, valor))));
+
+        Assert.Equal(OpcionesArca.ClaveEsperaVerificacion, error.Clave);
+        Assert.Contains("3600", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(valor, error.Message.Replace("3600", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Un valor desconocido en las opciones del simulador es error de configuración al arrancar, con la lista de valores
+    /// admitidos y sin el valor recibido.
+    /// </summary>
+    [Theory]
+    [InlineData(OpcionesArca.ClaveRespuestaSimulado, "autorizar_sin_respuesta",
+        "autorizar, rechazar, no_responder, autorizar_sin_responder o no_responder_una_vez")]
+    [InlineData(OpcionesArca.ClaveRespuestaSimulado, "no_responder_dos_veces",
+        "autorizar, rechazar, no_responder, autorizar_sin_responder o no_responder_una_vez")]
+    [InlineData(OpcionesArca.ClaveConsultaSimulado, "autorizar", "responder o no_responder")]
+    [InlineData(OpcionesArca.ClaveConsultaSimulado, "rechazar", "responder o no_responder")]
+    public void Opciones_ValorDesconocido_ErrorDeConfiguracion(string clave, string valor, string admitidos)
+    {
+        var error = Assert.Throws<OpcionesArcaInvalidasException>(() => OpcionesArca.Leer(Configuracion((clave, valor))));
+
+        Assert.Equal(clave, error.Clave);
+        Assert.Contains(admitidos, error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(valor, error.Message, StringComparison.Ordinal);
+
+        // Al arrancar: crítico con la clave, y la Api no arranca.
+        var registro = new RegistroCapturadoArca();
+        using var servicios = new ServiceCollection()
+            .AddLogging(log => log.AddProvider(registro).SetMinimumLevel(LogLevel.Trace))
+            .AgregarInfraestructura(Configuracion((clave, valor)))
+            .BuildServiceProvider();
+        Assert.Throws<OpcionesArcaInvalidasException>(servicios.ValidarArca);
+        Assert.Contains(registro.Entradas, e => e.Nivel == LogLevel.Critical && e.Texto.Contains(clave, StringComparison.Ordinal));
+    }
+
+    /// <summary>La raíz de composición pasa <c>Arca:Simulado:Consulta</c> al simulador.</summary>
+    [Fact]
+    public async Task Arranque_ConsultaNoResponder_ElSimuladorEsperaLaCancelacion()
+    {
+        using var servicios = Servicios(Configuracion((OpcionesArca.ClaveConsultaSimulado, "no_responder")));
+        servicios.ValidarArca();
+        var autorizador = servicios.GetRequiredService<IAutorizadorComprobantes>();
+        using var plazo = new CancellationTokenSource();
+
+        var tarea = autorizador.ConsultarAsync(TipoComprobante.FacturaB, 3, 1, plazo.Token);
+        await Task.Yield();
+        Assert.False(tarea.IsCompleted);
+        await plazo.CancelAsync();
+
+        Assert.IsType<ResultadoConsulta.SinRespuesta>(await tarea.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(TimeSpan.FromSeconds(60), servicios.GetRequiredService<OpcionesArca>().EsperaVerificacion);
+    }
+
     [Theory]
     [InlineData("20000000002")] // dígito verificador incorrecto
     [InlineData("2000000000")] // 10 dígitos

@@ -13,14 +13,37 @@ public enum RespuestaSimulador
     /// <summary><c>rechazar</c>: rechazo con el código 10016 y una descripción fija.</summary>
     Rechazar,
 
-    /// <summary><c>no_responder</c>: espera hasta la cancelación que recibe y devuelve "sin respuesta".</summary>
+    /// <summary><c>no_responder</c>: espera hasta la cancelación que recibe y devuelve "sin respuesta", sin registrar.</summary>
+    NoResponder,
+
+    /// <summary>
+    /// <c>autorizar_sin_responder</c> (FEAT-008, D-19): registra el comprobante como autorizado, espera la cancelación y
+    /// devuelve "sin respuesta" (AC-05).
+    /// </summary>
+    AutorizarSinResponder,
+
+    /// <summary>
+    /// <c>no_responder_una_vez</c> (FEAT-008, D-19): la primera solicitud de autorización del proceso se comporta como
+    /// <see cref="NoResponder"/>; las siguientes, como <see cref="Autorizar"/> (AC-06).
+    /// </summary>
+    NoResponderUnaVez,
+}
+
+/// <summary>Qué responde la consulta por número del simulador de ARCA (<c>Arca:Simulado:Consulta</c>, FEAT-008, D-19).</summary>
+public enum ConsultaSimulador
+{
+    /// <summary><c>responder</c> (por defecto): autorizado con sus datos o no autorizado.</summary>
+    Responder,
+
+    /// <summary><c>no_responder</c>: espera hasta la cancelación que recibe y devuelve "sin respuesta" (AC-11).</summary>
     NoResponder,
 }
 
 /// <summary>
-/// Las claves <c>Arca:*</c> leídas y validadas (D-11, D-13, D-15, D-17). Sin <c>Arca:Entorno</c> el entorno es el
-/// simulado: una configuración faltante nunca apunta a producción (R-14, ADR-022). Un entorno, tiempo máximo, respuesta
-/// del simulador o CUIT inválidos lanzan <see cref="OpcionesArcaInvalidasException"/> (la Api no arranca); la falta del
+/// Las claves <c>Arca:*</c> leídas y validadas (D-11, D-13, D-15, D-17; FEAT-008 D-19, D-20). Sin <c>Arca:Entorno</c> el
+/// entorno es el simulado: una configuración faltante nunca apunta a producción (R-14, ADR-022). Un entorno, tiempo
+/// máximo, espera de verificación, respuesta o consulta del simulador o CUIT inválidos lanzan
+/// <see cref="OpcionesArcaInvalidasException"/> (la Api no arranca); la falta del
 /// CUIT, del certificado o de su clave fuera del simulado no lanza: <see cref="CredencialesCompletas"/> es falso y cada
 /// emisión termina "no enviada". El CUIT, la ruta y la clave del certificado nunca se registran ni se muestran (D-13):
 /// esta clase no sobrescribe <see cref="object.ToString"/>.
@@ -33,12 +56,25 @@ public sealed class OpcionesArca
     public const string ClaveCertificadoClave = "Arca:Certificado:Clave";
     public const string ClaveTiempoMaximo = "Arca:TiempoMaximoSegundos";
     public const string ClaveRespuestaSimulado = "Arca:Simulado:Respuesta";
+    public const string ClaveConsultaSimulado = "Arca:Simulado:Consulta";
+    public const string ClaveEsperaVerificacion = "Arca:EsperaVerificacionSegundos";
 
     /// <summary>El tiempo máximo sin la clave (NFR-01).</summary>
     public const int TiempoMaximoPorDefectoSegundos = 30;
 
     public const int TiempoMaximoMinimoSegundos = 1;
     public const int TiempoMaximoMaximoSegundos = 120;
+
+    /// <summary>La espera antes de verificar una emisión pendiente sin la clave (FR-16, D-20): 1 minuto.</summary>
+    public const int EsperaVerificacionPorDefectoSegundos = 60;
+
+    public const int EsperaVerificacionMinimaSegundos = 1;
+    public const int EsperaVerificacionMaximaSegundos = 3600;
+
+    private const string RespuestasAdmitidas =
+        "autorizar, rechazar, no_responder, autorizar_sin_responder o no_responder_una_vez";
+
+    private const string ConsultasAdmitidas = "responder o no_responder";
 
     private static readonly (string Texto, EntornoArca Entorno)[] Entornos =
     [
@@ -52,6 +88,14 @@ public sealed class OpcionesArca
         ("autorizar", RespuestaSimulador.Autorizar),
         ("rechazar", RespuestaSimulador.Rechazar),
         ("no_responder", RespuestaSimulador.NoResponder),
+        ("autorizar_sin_responder", RespuestaSimulador.AutorizarSinResponder),
+        ("no_responder_una_vez", RespuestaSimulador.NoResponderUnaVez),
+    ];
+
+    private static readonly (string Texto, ConsultaSimulador Consulta)[] Consultas =
+    [
+        ("responder", ConsultaSimulador.Responder),
+        ("no_responder", ConsultaSimulador.NoResponder),
     ];
 
     // Pesos del dígito verificador del CUIT (módulo 11).
@@ -66,7 +110,16 @@ public sealed class OpcionesArca
     /// <summary>El plazo de toda la emisión, que aplica <c>EmitirFactura</c> (D-15, D-32).</summary>
     public TimeSpan TiempoMaximo { get; private init; }
 
+    /// <summary>
+    /// Cuánto tiene que pasar desde que una emisión quedó pendiente para poder verificarla (FR-16, D-20): 60 s por
+    /// defecto; el harness e2e usa menos. La aplica la verificación (Block 5 de FEAT-008).
+    /// </summary>
+    public TimeSpan EsperaVerificacion { get; private init; }
+
     public RespuestaSimulador RespuestaSimulado { get; private init; }
+
+    /// <summary>Qué responde la consulta por número del simulador (D-19).</summary>
+    public ConsultaSimulador ConsultaSimulado { get; private init; }
 
     /// <summary>11 dígitos con dígito verificador válido, o null si falta. Fuera del simulado únicamente.</summary>
     public string? Cuit { get; private init; }
@@ -98,9 +151,11 @@ public sealed class OpcionesArca
     /// <summary>Lee y valida las claves <c>Arca:*</c>. Una clave vacía o solo con espacios cuenta como ausente.</summary>
     /// <exception cref="OpcionesArcaInvalidasException">
     /// El entorno no es <c>Simulado</c>, <c>Homologacion</c> ni <c>Produccion</c> (sin distinguir mayúsculas); el tiempo
-    /// máximo no es un entero de 1 a 120; la respuesta del simulador no es <c>autorizar</c>, <c>rechazar</c> ni
-    /// <c>no_responder</c>; o, fuera del simulado, el CUIT no son 11 dígitos con dígito verificador válido. El mensaje
-    /// nombra la clave y nunca el valor.
+    /// máximo no es un entero de 1 a 120; la espera de verificación no es un entero de 1 a 3600; la respuesta del
+    /// simulador no es <c>autorizar</c>, <c>rechazar</c>, <c>no_responder</c>, <c>autorizar_sin_responder</c> ni
+    /// <c>no_responder_una_vez</c>; la consulta del simulador no es <c>responder</c> ni <c>no_responder</c>; o, fuera del
+    /// simulado, el CUIT no son 11 dígitos con dígito verificador válido. El mensaje nombra la clave y los valores
+    /// admitidos, nunca el valor recibido.
     /// </exception>
     public static OpcionesArca Leer(IConfiguration configuracion)
     {
@@ -111,12 +166,21 @@ public sealed class OpcionesArca
             : EntornoArca.Simulado;
 
         var tiempoMaximo = TimeSpan.FromSeconds(Valor(configuracion, ClaveTiempoMaximo) is { } textoTiempo
-            ? LeerSegundos(textoTiempo)
+            ? LeerSegundos(textoTiempo, ClaveTiempoMaximo, TiempoMaximoMinimoSegundos, TiempoMaximoMaximoSegundos)
             : TiempoMaximoPorDefectoSegundos);
 
+        var esperaVerificacion = TimeSpan.FromSeconds(Valor(configuracion, ClaveEsperaVerificacion) is { } textoEspera
+            ? LeerSegundos(
+                textoEspera, ClaveEsperaVerificacion, EsperaVerificacionMinimaSegundos, EsperaVerificacionMaximaSegundos)
+            : EsperaVerificacionPorDefectoSegundos);
+
         var respuesta = Valor(configuracion, ClaveRespuestaSimulado) is { } textoRespuesta
-            ? Buscar(Respuestas, textoRespuesta, ClaveRespuestaSimulado, "autorizar, rechazar o no_responder")
+            ? Buscar(Respuestas, textoRespuesta, ClaveRespuestaSimulado, RespuestasAdmitidas)
             : RespuestaSimulador.Autorizar;
+
+        var consulta = Valor(configuracion, ClaveConsultaSimulado) is { } textoConsulta
+            ? Buscar(Consultas, textoConsulta, ClaveConsultaSimulado, ConsultasAdmitidas)
+            : ConsultaSimulador.Responder;
 
         var credencialesPresentes = Valor(configuracion, ClaveCuit) is not null
             || Valor(configuracion, ClaveCertificadoRuta) is not null
@@ -129,7 +193,9 @@ public sealed class OpcionesArca
             {
                 Entorno = entorno,
                 TiempoMaximo = tiempoMaximo,
+                EsperaVerificacion = esperaVerificacion,
                 RespuestaSimulado = respuesta,
+                ConsultaSimulado = consulta,
                 CredencialesPresentes = credencialesPresentes,
             };
         }
@@ -145,7 +211,9 @@ public sealed class OpcionesArca
         {
             Entorno = entorno,
             TiempoMaximo = tiempoMaximo,
+            EsperaVerificacion = esperaVerificacion,
             RespuestaSimulado = respuesta,
+            ConsultaSimulado = consulta,
             CredencialesPresentes = credencialesPresentes,
             Cuit = cuit,
             RutaCertificado = Valor(configuracion, ClaveCertificadoRuta),
@@ -193,14 +261,14 @@ public sealed class OpcionesArca
         throw new OpcionesArcaInvalidasException(clave, $"debe ser {admitidos}");
     }
 
-    private static int LeerSegundos(string texto)
+    private static int LeerSegundos(string texto, string clave, int minimo, int maximo)
     {
         if (!int.TryParse(texto, NumberStyles.None, CultureInfo.InvariantCulture, out var segundos)
-            || segundos is < TiempoMaximoMinimoSegundos or > TiempoMaximoMaximoSegundos)
+            || segundos < minimo
+            || segundos > maximo)
         {
             throw new OpcionesArcaInvalidasException(
-                ClaveTiempoMaximo,
-                $"debe ser un número entero de segundos entre {TiempoMaximoMinimoSegundos} y {TiempoMaximoMaximoSegundos}");
+                clave, $"debe ser un número entero de segundos entre {minimo} y {maximo}");
         }
 
         return segundos;
