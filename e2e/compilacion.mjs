@@ -175,6 +175,26 @@ const ESPERA_MINIMA_SEGUNDOS = Math.ceil(TIEMPO_MAXIMO_SEGUNDOS + Math.min(10, T
 const PROPIEDADES_DEL_ARCHIVO_SIMULADO = ['contadores', 'comprobantes'];
 
 /**
+ * La clave de un contador del simulador, como la lee `SimuladorArca.EsClaveValida`: `B-<pv>` o `C-<pv>`, con el punto
+ * de venta de 1 a 99999 sin ceros a la izquierda.
+ */
+const CLAVE_DE_CONTADOR = /^[BC]-[1-9]\d{0,4}$/;
+
+/** El último número autorizado que admite un contador: de 0 a `NumeroComprobante.NumeroMaximo`. */
+const NUMERO_MAXIMO_DE_COMPROBANTE = 99_999_999;
+
+/**
+ * Si `contadores` es lo que el simulador acepta: un objeto con claves de {@link CLAVE_DE_CONTADOR} y números enteros de
+ * 0 a {@link NUMERO_MAXIMO_DE_COMPROBANTE}. Con otro valor la Api rechazaría el archivo recién en la primera emisión.
+ */
+const sonContadoresValidos = (contadores) =>
+  esObjetoPlano(contadores) &&
+  Object.entries(contadores).every(
+    ([clave, valor]) =>
+      CLAVE_DE_CONTADOR.test(clave) && Number.isInteger(valor) && valor >= 0 && valor <= NUMERO_MAXIMO_DE_COMPROBANTE,
+  );
+
+/**
  * ARCA simulada según el archivo de pruebas (FEAT-007 D-17; FEAT-008 D-19), por el nombre sin `.spec.ts`. Cada archivo
  * que no responde como los demás tiene su entrada, y por lo tanto su Api; los que no figuran autorizan y responden la
  * consulta. Propiedades de cada entrada:
@@ -183,14 +203,21 @@ const PROPIEDADES_DEL_ARCHIVO_SIMULADO = ['contadores', 'comprobantes'];
  * - `espera`: `Arca__EsperaVerificacionSegundos`, entero (por defecto 3). Tiene que cumplir D-31: al menos el tiempo
  *   máximo más el margen del envío (3 con 2 s de tiempo máximo) y como mucho 3600.
  * - `simulado`: el contenido inicial de `arca-simulado.json` en el directorio de datos de la Api (por defecto, sin
- *   archivo: el simulador numera desde 1). Solo `facturacion` lo usa, con la Factura B del punto de venta 3 en 124: su
- *   primera factura autorizada es la 0003-00000125 de AC-19 y AC-30 de FEAT-007.
+ *   archivo: el simulador numera desde 1). `facturacion` lo usa con la Factura B del punto de venta 3 en 124: su
+ *   primera factura autorizada es la 0003-00000125 de AC-19 y AC-30 de FEAT-007. FEAT-009: `facturas-pdf` también
+ *   (la Factura B 0003-00000125 de AC-08), y `facturas-busqueda` además arranca la Factura C del punto de venta 3 en
+ *   34560 (la 0003-00034561 de AC-19). `contadores` se revisa como lo lee el simulador: claves `B-<pv>` o `C-<pv>` y
+ *   enteros de 0 a 99999999.
  * Un valor que no esté en estas listas detiene el harness ({@link revisarArcaPorArchivo}).
  */
 export const ARCA_POR_ARCHIVO = Object.freeze({
   facturacion: { simulado: { contadores: { 'B-3': 124 } } },
   'facturacion-rechazo': { respuesta: 'rechazar' },
   'facturacion-sin-respuesta': { respuesta: 'no_responder' },
+  // FEAT-009, AC-08: la primera Factura B de esta base es la 0003-00000125.
+  'facturas-pdf': { simulado: { contadores: { 'B-3': 124 } } },
+  // FEAT-009, AC-19 y AC-23: la primera Factura B es la 0003-00000125 y la primera Factura C, la 0003-00034561.
+  'facturas-busqueda': { simulado: { contadores: { 'B-3': 124, 'C-3': 34560 } } },
   // FEAT-008, AC-02 a AC-05: ARCA autoriza y la respuesta no llega; la verificación recupera el CAE.
   'verificacion-recupera': { respuesta: 'autorizar_sin_responder' },
   // FEAT-008, AC-06 y AC-17: la primera emisión no llega a ARCA; la verificación emite.
@@ -241,6 +268,12 @@ function revisarEntrada(archivo, entrada) {
       case 'simulado':
         if (!esObjetoPlano(valor) || !Object.keys(valor).every((clave) => PROPIEDADES_DEL_ARCHIVO_SIMULADO.includes(clave))) {
           throw falla(`simulado tiene que ser un objeto con ${PROPIEDADES_DEL_ARCHIVO_SIMULADO.join(' o ')}`);
+        }
+        if (Object.hasOwn(valor, 'contadores') && !sonContadoresValidos(valor.contadores)) {
+          throw falla(
+            'simulado.contadores tiene que ser un objeto con claves B-<punto de venta> o C-<punto de venta> (de 1 a ' +
+              `99999) y números enteros de 0 a ${NUMERO_MAXIMO_DE_COMPROBANTE}`,
+          );
         }
         break;
       default:
@@ -312,8 +345,8 @@ export function entornoDeLaApi(entorno, nombre) {
 /**
  * El contenido inicial del archivo del simulador (`arca-simulado.json` del directorio de datos, D-53 de FEAT-007) de una
  * instancia, según su archivo de pruebas ({@link ARCA_POR_ARCHIVO}), o `null` para empezar sin archivo (numera desde 1).
- * Solo `facturacion.spec.ts` arranca la Factura B del punto de venta 3 en 124: su primera factura autorizada es la
- * 0003-00000125 de AC-19 y AC-30.
+ * `facturacion.spec.ts` arranca la Factura B del punto de venta 3 en 124: su primera factura autorizada es la
+ * 0003-00000125 de AC-19 y AC-30. Los de FEAT-009 (`facturas-pdf`, `facturas-busqueda`) tienen el suyo en el mapa.
  */
 export function contadorSimulado(nombre, mapa = ARCA_POR_ARCHIVO) {
   return arcaDeLaInstancia(nombre, mapa).simulado ?? null;

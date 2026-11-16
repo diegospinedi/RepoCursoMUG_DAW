@@ -1,8 +1,9 @@
 // Pruebas unitarias de compilacion.mjs (sin navegador ni Api): `npm run test:unidad` en e2e/.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, describe, test } from 'node:test';
 
 import {
@@ -394,6 +395,8 @@ describe('ARCA de cada instancia (FEAT-007 D-17; FEAT-008 D-19, D-20, D-31)', ()
       'facturacion',
       'facturacion-rechazo',
       'facturacion-sin-respuesta',
+      'facturas-busqueda',
+      'facturas-pdf',
       'verificacion-consulta-sin-respuesta',
       'verificacion-emite',
       'verificacion-importe-distinto',
@@ -416,6 +419,16 @@ describe('ARCA de cada instancia (FEAT-007 D-17; FEAT-008 D-19, D-20, D-31)', ()
     ['espera mayor que 3600', { espera: 3601 }, /espera tiene que ser.*D-31/],
     ['archivo del simulador con una propiedad que no es del archivo', { simulado: { dni: '00718294' } }, /simulado/],
     ['archivo del simulador que no es un objeto', { simulado: 'contadores' }, /simulado/],
+    // FEAT-009: un contador que el simulador no acepta haría que la Api rechace el archivo en la primera emisión, con un
+    // error que no nombra el archivo de pruebas; el harness se detiene antes.
+    ['contador como texto', { simulado: { contadores: { 'B-3': '124' } } }, /contadores/],
+    ['contador que no es un entero', { simulado: { contadores: { 'B-3': 124.5 } } }, /contadores/],
+    ['contador negativo', { simulado: { contadores: { 'B-3': -1 } } }, /contadores/],
+    ['contador mayor que el número máximo de comprobante', { simulado: { contadores: { 'B-3': 100_000_000 } } }, /contadores/],
+    ['contador de una Factura A', { simulado: { contadores: { 'A-3': 124 } } }, /contadores/],
+    ['contador con un punto de venta con cero a la izquierda', { simulado: { contadores: { 'B-03': 124 } } }, /contadores/],
+    ['contador de un punto de venta mayor que 99999', { simulado: { contadores: { 'B-100000': 1 } } }, /contadores/],
+    ['contadores que no son un objeto', { simulado: { contadores: [124] } }, /contadores/],
   ]) {
     test(`archivo con ${caso}: detiene el harness nombrando el archivo`, () => {
       const mapa = { 'verificacion-rota': entrada };
@@ -447,15 +460,41 @@ describe('ARCA de cada instancia (FEAT-007 D-17; FEAT-008 D-19, D-20, D-31)', ()
     );
   });
 
-  test('contador del simulador: solo facturacion arranca en 124 para la Factura B del punto de venta 3 (AC-30)', () => {
+  test('contador del simulador: facturacion y los de facturas arrancan la Factura B del punto de venta 3 en 124', () => {
     assert.deepEqual(contadorSimulado('chrome-facturacion'), { contadores: { 'B-3': 124 } });
     assert.deepEqual(contadorSimulado('msedge-facturacion'), { contadores: { 'B-3': 124 } });
+    // FEAT-009, AC-08 y AC-23: la primera Factura B de esas bases es la 0003-00000125; en la búsqueda, la primera
+    // Factura C es la 0003-00034561 de AC-19.
+    for (const navegador of ['chrome', 'msedge']) {
+      assert.deepEqual(contadorSimulado(`${navegador}-facturas-pdf`), { contadores: { 'B-3': 124 } });
+      assert.deepEqual(contadorSimulado(`${navegador}-facturas-busqueda`), {
+        contadores: { 'B-3': 124, 'C-3': 34560 },
+      });
+    }
+    // Los demás archivos de FEAT-009 numeran desde 1.
+    assert.equal(contadorSimulado('chrome-configuracion-emisor'), null);
     assert.equal(contadorSimulado('chrome-facturacion-rechazo'), null);
     assert.equal(contadorSimulado('msedge-facturacion-sin-respuesta'), null);
     assert.equal(contadorSimulado('chrome-acceso'), null);
     for (const archivo of ['recupera', 'emite', 'sin-respuesta', 'consulta-sin-respuesta', 'importe-distinto']) {
       assert.equal(contadorSimulado(`msedge-verificacion-${archivo}`), null);
     }
+  });
+
+  test('cada archivo del mapa es un archivo de tests/: una clave mal escrita no queda sin efecto', () => {
+    const directorio = join(dirname(fileURLToPath(import.meta.url)), 'tests');
+    const archivos = archivosDePrueba(readdirSync(directorio));
+
+    assert.deepEqual(
+      Object.keys(ARCA_POR_ARCHIVO).filter((archivo) => !archivos.includes(archivo)),
+      [],
+    );
+  });
+
+  test('contadores válidos de Factura B y C: el harness los acepta', () => {
+    const mapa = { 'facturas-rota': { simulado: { contadores: { 'B-3': 0, 'C-99999': 99_999_999 } } } };
+
+    assert.doesNotThrow(() => revisarArcaPorArchivo(mapa));
   });
 
   test('contador del simulador: el contenido sembrado sale del mapa de archivos', () => {

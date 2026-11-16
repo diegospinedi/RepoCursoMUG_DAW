@@ -147,3 +147,23 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   por shell en lugar de Edit, lo que saltea el control previo de escritura. Lo autoinformó; el verificador y el auditor
   revisaron el diff (85 líneas agregadas, 0 borradas, solo lo del bloque) y confirmaron que no debilita
   `Pantallas_NingunaMuestraDatosArca`. En la ronda 2 se pidió no repetirlo. — agente — 2026-11-16 — Block 7.
+
+- **D-45 (del agente, Block 8).** Cobertura fuera del e2e: AC-16 (producción sin leyenda) queda en .NET
+  (`Pdf_Produccion_SinLeyenda`, `ReglasComprobanteImpreso_CondicionYValidezFiscal`) porque el harness fuerza
+  `Arca:Entorno = Simulado` y AGENTS.md prohíbe emitir contra producción; la fecha fija 30/10/2026 de AC-08 y los
+  rangos de marzo de 2026 de AC-18 y AC-22 se prueban en e2e con la fecha del día (una factura con CAE no se modifica) y
+  con fechas fijas en .NET (`Pdf_ComprobanteYFecha_B000300000125`, `Repositorio_ApellidoYDesde_SoloGonzalez20`,
+  `Filtro_DesdePosteriorAHasta_Rechazado`); el logo de AC-06 queda en `Pdf_LogoYColores` y el escaneo del QR de AC-12
+  sigue manual (D-16). `ARCA_POR_ARCHIVO` suma `facturas-busqueda` (B-3 en 124 y C-3 en 34560, para tener en la misma
+  base la Factura B 0003-00000125 y la C 0003-00034561) además de `facturas-pdf`; la validación de contadores se agregó
+  al harness y la de claves inexistentes es una prueba de `npm run test:unidad`. `e2e/tests/articulos.spec.ts:220` también pasa a
+  `exact: true` (faltaba en la lista de D-35 y rompía el harness). — agente (D-06) — 2026-11-16 —
+  Block 8.
+
+## Pendientes pedidos por el usuario
+- **P-01 (del usuario, 2026-11-16).** Aplicar la marca real de la óptica: la carpeta `Marca/` en la raíz del
+  repositorio (ignorada por git, no se versiona) trae `branding.json` con el color primario #0903A0 sobre fondo #FFFFFF,
+  `logo.png` (recorte del logo) y `Marca.jpg` (original). Se aplica en la instalación configurando
+  `Optica:Marca:Directorio` con la ruta de esa carpeta (FEAT-001a; `docs/instalacion.md` §1); el formato ya es el que
+  lee `ProveedorMarcaArchivo` (el campo `logo` usa el último segmento, `logo.png`). Sin la clave, la app y el PDF usan
+  la marca de ejemplo. Es dato de la empresa: no se sube al repositorio.

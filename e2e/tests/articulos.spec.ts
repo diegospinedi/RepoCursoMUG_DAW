@@ -217,7 +217,8 @@ async function grabarConfiguracion(page: Page, cambiar: () => Promise<void>) {
     page.waitForResponse(
       (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/configuracion',
     ),
-    page.getByRole('button', { name: 'Grabar' }).click(),
+    // Exacto: la configuración también tiene "Grabar datos del emisor" (D-35 de FEAT-009).
+    page.getByRole('button', { name: 'Grabar', exact: true }).click(),
   ]);
   expect(respuesta.status()).toBe(200);
   await expect(page.getByRole('status').filter({ hasText: MENSAJE_CONFIGURACION_GRABADA })).toBeVisible();

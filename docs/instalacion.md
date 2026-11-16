@@ -391,8 +391,8 @@ identificación y la alícuota de IVA se cargan en la pantalla de configuración
 > **Entorno simulado: sin validez fiscal (R-10).** Sin `Arca:Entorno`, o con `Arca:Entorno = Simulado`, la aplicación
 > **no se comunica con ARCA**: un simulador local numera los comprobantes y les da un CAE inventado. Esas facturas
 > **no existen en ARCA, no tienen validez fiscal y no se pueden entregar a un cliente como comprobante**. La factura
-> guarda el entorno en que se emitió, y el PDF de la factura (PRD 08) llevará la leyenda "COMPROBANTE SIMULADO — SIN
-> VALIDEZ FISCAL". Al arrancar en simulado, la Api lo advierte en el registro. Antes de facturar de verdad, comprobá en la configuración de la Api
+> guarda el entorno en que se emitió, y el PDF de la factura (FEAT-009) lleva en cada página la leyenda "COMPROBANTE
+> SIMULADO — SIN VALIDEZ FISCAL" (también las de `Homologacion`). Al arrancar en simulado, la Api lo advierte en el registro. Antes de facturar de verdad, comprobá en la configuración de la Api
 > que el entorno es el que corresponde.
 
 | Clave | Valores | Qué hace |
@@ -444,6 +444,22 @@ cuenta de la Api se usa solo para la Api (sección 1) y nadie navega ni abre cor
 Después de cambiar cualquiera de estas claves, reiniciá la Api. Si faltan el CUIT, la ruta o la clave en
 `Homologacion` o `Produccion`, la Api arranca, lo advierte en el registro nombrando las claves (nunca los valores) y
 cada emisión termina con "No se pudo enviar la factura a ARCA. Intentá de nuevo en unos minutos.".
+
+**Datos del emisor (FEAT-009).** El PDF de la factura lleva la razón social, el domicilio comercial, el CUIT, el
+número de Ingresos Brutos y la fecha de inicio de actividades de la óptica. Se cargan en la pantalla de configuración,
+en la sección **Datos del emisor**, con su propio botón **Grabar datos del emisor**: los cinco son obligatorios y el
+CUIT se puede escribir con o sin guiones (se guarda sin ellos). Mientras falte alguno, **Descargar PDF** en una factura
+no genera el PDF y pide completarlos en la configuración. El PDF muestra siempre los datos vigentes al descargarlo: si
+cambia el domicilio, el PDF de una factura vieja descargado después muestra el nuevo. La condición frente al IVA no se
+carga: sale del tipo de comprobante (Factura B, "Responsable Inscripto"; Factura C, "Responsable Monotributo").
+
+> **El CUIT de los datos del emisor tiene que ser el mismo que `Arca:Cuit` (R-10).** El sistema no los compara: ARCA
+> autoriza la factura con el CUIT de `Arca:Cuit`, pero el PDF y el código QR del comprobante llevan el CUIT de los datos
+> del emisor. Si no coinciden, el PDF muestra un emisor distinto del que autorizó ARCA y el QR abre en ARCA la consulta
+> de un comprobante que no existe con ese CUIT. Antes de pasar a `Produccion`, revisá en la configuración que el CUIT
+> del emisor sea el de `Arca:Cuit` y descargá el PDF de una factura de homologación para comprobarlo (su QR no se
+> puede consultar en ARCA: ese comprobante no existe fuera de homologación). La leyenda del Régimen de Transparencia Fiscal al Consumidor (Ley 27.743) de la
+> Factura B la tiene que confirmar el contador antes de facturar en producción.
 
 **El certificado de ARCA** (`.pfx`) identifica a la óptica ante ARCA: guardalo fuera del repositorio y de las carpetas
 de la aplicación, de la marca y de datos (por ejemplo, `C:\OpticaSistema\Certificados`), con permisos solo para la cuenta
