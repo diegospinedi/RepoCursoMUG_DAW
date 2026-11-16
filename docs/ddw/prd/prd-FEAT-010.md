@@ -6,7 +6,7 @@
 | Tracker | ninguno |
 | Fecha | 2026-11-16 |
 | PRD de origen | `docs/ddw/prd/prd-DISC-001-09.md` (PRD 09 de DISC-001) |
-| PRD loops | 0 |
+| PRD loops | 1 |
 | Loops since last human decision | 0 |
 
 > **Trazabilidad.** Cada FR, NFR y AC indica entre corchetes el requisito o criterio de PRD-001 del que proviene. Los
@@ -21,6 +21,13 @@
 > **Navegadores.** El usuario decidió el 2026-11-16, como en FEAT-007 a FEAT-009, que NFR-03 y AC-16 se cumplan en la
 > versión estable vigente de Chrome y de Edge. La versión inmediata anterior queda como verificación manual y no se da
 > por cumplida en este ticket.
+>
+> **Destino del backup (vuelta de PLAN, decisiones del usuario del 2026-11-16).** El análisis de impacto mostró que
+> una carpeta sincronizada con la nube suele estar en el mismo disco que la base y chocaba con FR-02. El usuario
+> decidió: (1) aceptar en el mismo disco una carpeta que esté dentro de la carpeta local de OneDrive, Google Drive o
+> Dropbox (FR-02, AC-17); (2) que "disco" significa la unidad (letra), así que una partición distinta del mismo disco
+> físico se acepta y la documentación recomienda un pendrive o disco externo; (3) guardar el historial de los backups
+> verificados para que el aviso muestre la fecha del último aunque la ubicación no esté accesible (FR-09, AC-18).
 >
 > **Copias sin cifrar (decisión de las dueñas en DISC-001, reiterada como alerta de datos personales).** Las copias
 > guardan sin cifrar todos los datos personales de los clientes (DNI, domicilio, teléfono, email; Ley 25.326). Se
@@ -47,8 +54,10 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
 ### Ubicación
 - FR-01: El sistema debe permitir elegir y modificar la ubicación del backup desde la pantalla de
   configuración protegida por el acceso del PRD 01. [PRD-001 RNF-02; decisión de las dueñas]
-- FR-02: El sistema no debe admitir como ubicación del backup una carpeta del mismo disco en que
-  está la base de datos. [PRD-001 RNF-02]
+- FR-02: El sistema no debe admitir como ubicación del backup una carpeta de la misma unidad en que
+  está la base de datos, salvo que esté dentro de la carpeta local de OneDrive, Google Drive o
+  Dropbox. [PRD-001 RNF-02; decisión del usuario del 2026-11-16: se acepta la nube conocida y "disco"
+  es la unidad]
 - FR-03: El sistema no debe admitir como ubicación del backup una carpeta inexistente o en la que
   no pueda escribir, comprobándolo al grabarla. [Derivado de PRD-001 RNF-02]
 
@@ -66,8 +75,9 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
 - FR-08: El sistema debe intentar el backup al iniciar cuando falte el backup del día anterior.
   [Decisión de las dueñas: la PC puede estar apagada a las 20:00]
 - FR-09: El sistema debe avisar a la operadora, al ingresar, cuando el backup del día anterior no
-  se haya hecho, indicando la fecha del último backup disponible o que no hay ninguno.
-  [PRD-001 RF-77]
+  se haya hecho, indicando la fecha del último backup verificado o que no hay ninguno, aunque la
+  ubicación del backup no esté accesible. [PRD-001 RF-77; decisión del usuario del 2026-11-16:
+  historial de backups]
 
 ### Retención
 - FR-10: El sistema debe conservar las 7 copias diarias más recientes. [PRD-001 RNF-05]
@@ -97,8 +107,9 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
 ## Acceptance Criteria
 - AC-01 (FR-01): WHEN la operadora elige en la configuración la carpeta "Backups" de un pendrive y
   graba, THE sistema SHALL guardar esa ubicación y mostrarla al volver a abrir la configuración.
-- AC-02 (FR-02): IF la operadora elige una carpeta del mismo disco en que está la base, THEN THE
-  sistema SHALL no grabarla e indicar junto al campo que debe estar en otro disco.
+- AC-02 (FR-02): IF la operadora elige una carpeta de la misma unidad en que está la base y fuera
+  de la carpeta local de OneDrive, Google Drive o Dropbox, THEN THE sistema SHALL no grabarla e
+  indicar junto al campo que debe estar en otra unidad o en una carpeta sincronizada con la nube.
 - AC-03 (FR-03): IF la operadora elige una carpeta inexistente o sin permiso de escritura, THEN THE
   sistema SHALL no grabarla e indicar junto al campo que no se puede escribir en ella.
 - AC-04 (FR-04, FR-06): WHEN se cumplen las 20:00 del 30/10/2026 con el sistema en operación y la PC
@@ -133,6 +144,11 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
 - AC-16 (NFR-03): WHEN se ejecutan en Chrome y en Edge, en su versión estable vigente, los criterios
   de este documento que usan la interfaz, THE sistema SHALL cumplirlos en las 2 combinaciones.
   [PRD-001 AC-56]
+- AC-17 (FR-02): WHEN la operadora elige una carpeta "Backups" dentro de la carpeta local de
+  OneDrive que está en la misma unidad que la base y graba, THE sistema SHALL guardar esa ubicación.
+- AC-18 (FR-09): IF falta el backup del día anterior, el último backup verificado es del 29/10/2026 y
+  la ubicación del backup no está accesible (pendrive desconectado), THEN THE sistema SHALL mostrar
+  al ingresar el aviso con la fecha 29/10/2026 e indicar que la ubicación no está accesible.
 
 ## Out of Scope
 - Cifrado de las copias de backup (decisión de las dueñas: las copias se guardan sin cifrar; ver
@@ -143,6 +159,8 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
 - Copias a más de una ubicación a la vez.
 - Envío de avisos por email cuando un backup falla.
 - La versión inmediata anterior de Chrome y Edge (verificación manual, decisión del usuario).
+- Comprobar que el servicio de nube realmente sincroniza la carpeta: el sistema solo reconoce la carpeta local.
+- Distinguir discos físicos: una partición distinta del mismo disco se acepta (decisión del usuario).
 
 ## Risks and Mitigations
 - Riesgo: las copias guardan sin cifrar todos los datos personales de clientes (DNI, domicilio,
@@ -151,6 +169,10 @@ tarde, la copia también está corrupta; por eso se conservan copias diarias y m
   procedimiento documentado debe indicar guardar el pendrive en un lugar bajo llave y usar una
   cuenta de nube con contraseña propia y verificación en dos pasos. Si cambia la decisión, se agrega
   el cifrado en este PRD.
+- Riesgo: una carpeta de nube en la misma unidad deja de sincronizarse (sesión cerrada, cuota llena) y las copias
+  quedan solo en el disco principal. Mitigación: la documentación pide revisar periódicamente en la nube que las
+  copias lleguen; la falla del disco principal sin sincronización pierde también las copias (riesgo aceptado por el
+  usuario al aceptar la nube en la misma unidad).
 - Riesgo: el pendrive queda desconectado y los backups dejan de hacerse sin que nadie lo note.
   Mitigación: intento al iniciar (FR-08) y aviso al ingresar (FR-09).
 - Riesgo: un backup copia la base a mitad de una escritura y sale inservible. Mitigación: copia
