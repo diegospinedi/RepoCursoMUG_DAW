@@ -102,3 +102,12 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   `configuracion/reglas.ts`; el POST tiene guarda de desmontaje; el mensaje de éxito se borra al editar. AC-17 en la web
   es equivalente a AC-01 (la nube la decide el servidor) y se cuenta en .NET (Block 2). — agente (D-05) — 2026-11-16 —
   Block 3.
+- **D-33 (del agente, Block 4).** El caso de uso se llama `HacerBackup` y vive en `src/Optica.Application/Backup/` (lista
+  de archivos del Block 4); el Summary de la spec, el modelo de amenazas y ADR-030 lo nombran `HacerBackupDelDia`. Si
+  falla anotar en el historial después del renombre verificado, la copia queda en la carpeta (ADR-029) y no se aplica la
+  retención; una vez renombrada, la anotación no se cancela. Una retención fallida deja el resultado Hecho con un
+  Warning. El registro de inicio va en Debug (el modelo de amenazas habla de "log de inicio"; el Registro de eventos
+  recibe resultados, fallas y temporales sin borrar en Warning). Un `.parcial` verificado sin su copia (corte de luz
+  durante el reemplazo en FAT/exFAT) se recupera en lugar de borrarse. La prueba de AC-06 y las de concurrencia de
+  presupuestos corren sin paralelismo. La copia recuperada no se anota en el historial (no se sabe cuándo se hizo y falsearía la regla de las 20:00); con la carpeta inaccesible o una cancelación antes de copiar no se borran temporales; después del renombre la retención corre sin cancelación y el resultado es Hecho; un candidato con `-journal` caliente no pasa la verificación y se borra. — agente (D-05), señalado por el verificador y el auditor — 2026-11-16 —
+  Block 4.

@@ -18,6 +18,7 @@ namespace Optica.Infrastructure.Tests.Persistencia;
 /// el número siguiente. El encuentro se fuerza con <see cref="EncuentroDeAltas"/> (D-04, D-06): la primera queda retenida
 /// dentro de su transacción hasta que la conexión de la segunda señala "base ocupada".
 /// </summary>
+[Collection(Backup.ColeccionTiemposSensibles.Nombre)]
 public class ConcurrenciaPresupuestosTests
 {
     private const int SqliteOcupada = 5; // SQLITE_BUSY

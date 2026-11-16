@@ -152,6 +152,11 @@ public partial class Program
         builder.Services.AddScoped<ObtenerUbicacionBackup>();
         builder.Services.AddScoped<GrabarUbicacionBackup>();
 
+        // Backup del día (FEAT-010, Block 4, ADR-029): copia, verificación, historial y retención, con el candado singleton
+        // de Infrastructure (D-22). Scoped: comparte el contexto (y la unidad de trabajo) del alcance con el historial; el
+        // programador del Block 5 lo pide en un alcance propio por ejecución. Log en Optica.Application.Backup, sin rutas.
+        builder.Services.AddScoped<HacerBackup>();
+
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
         // listado (sin costo ni margen, D-12), la modificación con versión (D-08, D-17) y el cambio de estado (D-09).

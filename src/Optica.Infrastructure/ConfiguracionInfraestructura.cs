@@ -87,6 +87,15 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton<IInspectorUbicaciones>(proveedor =>
             new InspectorUbicaciones(proveedor.GetRequiredService<IFuenteCarpetasNube>()));
 
+        // Copia del backup (FEAT-010, Block 4, ADR-029): la API de backup de SQLite con conexiones propias, sin pool y sin
+        // los PRAGMA de FabricaConexion.Configurar (D-23); el almacén de archivos de la carpeta configurada, solo con el
+        // patrón exacto (R-03). Singletons sin estado. El candado, singleton: un backup a la vez en toda la Api (D-22), y
+        // sin IDisposable, como el de la emisión.
+        servicios.AddSingleton<ICopiadorBackup>(proveedor =>
+            new CopiadorBackupSqlite(proveedor.GetRequiredService<FabricaConexion>()));
+        servicios.AddSingleton<IAlmacenCopias, AlmacenCopiasArchivo>();
+        servicios.AddSingleton<ICandadoBackup, CandadoBackup>();
+
         // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
         // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.
         servicios.AddSingleton<ICandadoEmision, CandadoEmision>();
