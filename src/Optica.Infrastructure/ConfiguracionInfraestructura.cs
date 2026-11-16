@@ -11,6 +11,7 @@ using Optica.Application.Facturacion;
 using Optica.Application.Marca;
 using Optica.Application.Presupuestos;
 using Optica.Domain.Acceso;
+using Optica.Domain.Backup;
 using Optica.Domain.Catalogo;
 using Optica.Domain.Configuracion;
 using Optica.Domain.Facturacion;
@@ -71,6 +72,11 @@ public static class ConfiguracionInfraestructura
         // verificación y el descarte graban y quitan pendiente, observación y descarte en una sola transacción.
         servicios.AddScoped<IObservacionEmisionRepository, ObservacionEmisionRepository>();
         servicios.AddScoped<IDescarteEmisionRepository, DescarteEmisionRepository>();
+
+        // Backup (FEAT-010): la ubicación y el historial comparten el contexto (y la unidad de trabajo) del alcance; el
+        // historial toma la zona local del TimeProvider registrado (D-08, ADR-029).
+        servicios.AddScoped<IUbicacionBackupRepository, UbicacionBackupRepository>();
+        servicios.AddScoped<IHistorialBackupRepository, HistorialBackupRepository>();
 
         // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
         // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.

@@ -46,9 +46,10 @@ public class MigracionDatosEmisorTests
             Assert.Contains(triggersAntes, t => t[1] == "LineaFactura");
             var tablasFacturacion = Tablas(cadena, "'Factura', 'LineaFactura', 'Presupuesto'");
 
-            // Up: crea la tabla, y el conjunto completo de triggers (nombre, tabla y SQL) es el mismo.
-            migrador.Migrate();
-            Assert.Empty(contexto.Database.GetPendingMigrations());
+            // Up: crea la tabla, y el conjunto completo de triggers (nombre, tabla y SQL) es el mismo. Hasta DatosEmisor y
+            // no hasta la última: las migraciones posteriores (Backup, FEAT-010) agregan sus propios triggers.
+            migrador.Migrate(datosEmisor);
+            Assert.Equal(datosEmisor, contexto.Database.GetAppliedMigrations().Last());
             Assert.False(contexto.Database.HasPendingModelChanges());
             Assert.Single(Tablas(cadena, "'DatosEmisor'"));
             Assert.Equal(triggersAntes, Triggers(cadena));

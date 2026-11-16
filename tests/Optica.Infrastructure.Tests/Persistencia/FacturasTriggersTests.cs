@@ -495,13 +495,13 @@ public partial class FacturasTriggersTests
 
     /// <summary>
     /// El esquema de todo lo que no es de facturación, para ver que la migración no lo toca. Excluye también las tablas de
-    /// RecuperacionEmisiones (FEAT-008) y la de DatosEmisor (FEAT-009), que volver a ConfiguracionPuntoVenta revierte antes
-    /// que Facturas.
+    /// RecuperacionEmisiones (FEAT-008), la de DatosEmisor (FEAT-009) y las de Backup (FEAT-010), que volver a
+    /// ConfiguracionPuntoVenta revierte antes que Facturas.
     /// </summary>
     private static List<string[]> SqlExistentes(string cadena) =>
         FacturasPrueba.Filas(cadena,
             "SELECT type, name, IFNULL(sql, '') FROM sqlite_master " +
             "WHERE tbl_name NOT IN ('Factura', 'LineaFactura', 'EmisionPendiente', 'ObservacionEmision', " +
-            "'DescarteEmision', 'DatosEmisor', '__EFMigrationsHistory') " +
+            "'DescarteEmision', 'DatosEmisor', 'ConfiguracionBackup', 'BackupRealizado', '__EFMigrationsHistory') " +
             "ORDER BY type, name");
 }

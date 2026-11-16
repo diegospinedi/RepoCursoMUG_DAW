@@ -80,3 +80,12 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   llave mientras tenga facturas con CAE que la copia no tiene, y el comando informa cuántas antes de confirmar
   (FAIL-3, FAIL-5); la guía documenta pendrives sin permisos, papelera de la nube, copias de la ubicación anterior,
   `.parcial` huérfanos y el reinicio de la numeración del simulador (WARN-10, INFO-5). — agente — 2026-11-16 — Block 7.
+
+## CODE
+- **D-30 (del agente, Block 1).** Retención mensual con ventana fija: los 4 meses calendario anteriores al mes de hoy;
+  por cada uno con copias se conserva la última y un mes vacío no se reemplaza por uno anterior (D-21). El texto del
+  Block 1 de la spec ("más recientes que tengan copias") se lee así. El historial se confirma con la unidad de trabajo
+  como los demás repositorios de solo agregar (FAIL de la auditoría del Block 1): la firma es `void Agregar(fecha,
+  momentoUtc)` y no `AgregarAsync` como dice la spec, y `HacerBackup` (Block 4) confirma después del renombre verificado; `HuboCopiaProgramadaAsync` cuenta solo
+  las filas de ese día local desde las 20:00. Rutas de prueba sobre la carpeta temporal porque `C:\…` no es absoluta en
+  Linux. — agente (D-05) — 2026-11-16 — Block 1.

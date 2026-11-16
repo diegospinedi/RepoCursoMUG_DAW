@@ -74,6 +74,49 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.BackupRealizadoFila", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Fecha")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MomentoUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Fecha");
+
+                    b.ToTable("BackupRealizado", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BackupRealizado_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+                        });
+                });
+
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.ConfiguracionBackupFila", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Ruta")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ConfiguracionBackup", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ConfiguracionBackup_Id", "\"Id\" = 1");
+
+                            t.HasCheckConstraint("CK_ConfiguracionBackup_Ruta", "length(\"Ruta\") BETWEEN 1 AND 260");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.ConfiguracionNegocioFila", b =>
                 {
                     b.Property<int>("Id")
