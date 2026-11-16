@@ -118,7 +118,7 @@ async function grabar(page: Page): Promise<number> {
     page.waitForResponse(
       (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/configuracion',
     ),
-    page.getByRole('button', { name: 'Grabar' }).click(),
+    page.getByRole('button', { name: 'Grabar', exact: true }).click(),
   ]);
   return respuesta.status();
 }
@@ -143,7 +143,7 @@ async function grabado(page: Page) {
  * iniciales y no se envió nada. `grabaciones` se mira al final, cuando la página ya tuvo tiempo de mandar un POST.
  */
 async function rechazadoSinGrabar(page: Page, campo: Locator, mensaje: string) {
-  await page.getByRole('button', { name: 'Grabar' }).click();
+  await page.getByRole('button', { name: 'Grabar', exact: true }).click();
   await rechazadoJuntoAlCampo(page, campo, mensaje);
   await expect(page.getByRole('status').filter({ hasText: MENSAJE_GRABADA })).toHaveCount(0);
   expect(await grabado(page)).toEqual(INICIALES);

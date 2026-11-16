@@ -38,17 +38,12 @@ public sealed class GeneradorPdfPresupuesto : IGeneradorPdfPresupuesto
     });
 
     /// <summary>
-    /// La configuración global de QuestPDF, una sola vez y antes del primer documento: licencia Community (D-01, D-13),
-    /// sin fuentes del sistema para que el PDF sea el mismo en Windows y en Linux (D-14), una familia que falta (el
-    /// Arial del SVG de ejemplo) se dibuja con la fuente incluida (D-14) y un carácter que la fuente no tiene se dibuja
-    /// con el símbolo de reemplazo (D-15).
+    /// La configuración global de QuestPDF, una sola vez y antes del primer documento, desde
+    /// <see cref="ConfiguracionQuestPdf"/>, que la comparte con el PDF de la factura (D-25 de FEAT-009).
     /// </summary>
     static GeneradorPdfPresupuesto()
     {
-        QuestPDF.Settings.License = LicenseType.Community;
-        QuestPDF.Settings.UseSystemFonts = false;
-        QuestPDF.Settings.ThrowOnMissingFontFamilies = false;
-        QuestPDF.Settings.ThrowOnMissingTextGlyphs = false;
+        ConfiguracionQuestPdf.Asegurar();
     }
 
     /// <inheritdoc />

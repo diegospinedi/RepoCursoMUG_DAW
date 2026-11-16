@@ -169,6 +169,11 @@
         "resolved": "13.0.4",
         "contentHash": "pdgNNMai3zv51W5aq268sujXUyx7SNdE2bj1wZcWjAQrKMFZV260lbqYop1d2GM67JI1huLRwxo9ZqnfF/lC6A=="
       },
+      "QRCoder": {
+        "type": "Transitive",
+        "resolved": "1.6.0",
+        "contentHash": "XmPA81eo+oRxBuyVdswsSkTGTE1d3thfF11Z1PdD7oB56A6HU4G4AAOdySmGRMb/cljwlFTMWUtosGEnwpS6GA=="
+      },
       "QuestPDF": {
         "type": "Transitive",
         "resolved": "2026.9.1",
@@ -274,6 +279,7 @@
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.12, )",
           "Optica.Application": "[1.0.0, )",
           "Optica.Domain": "[1.0.0, )",
+          "QRCoder": "[1.6.0, 1.6.0]",
           "QuestPDF": "[2026.9.1, )",
           "System.Security.Cryptography.Pkcs": "[10.0.13, )"
         }

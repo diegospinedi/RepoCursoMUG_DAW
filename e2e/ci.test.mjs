@@ -951,6 +951,16 @@ describe('pruebas sin servicios externos', () => {
     ]) {
       assert.deepEqual(hostsExternos(`"${url('https', resto)}"`), [host], `${resto} tiene que ser externo.`);
     }
+    // FEAT-009 (ADR-027): la URL de verificación del QR de ARCA es un dato que se dibuja en el PDF, no tráfico: vale
+    // solo su ruta exacta, con o sin el parámetro p. El resto de www.afip.gob.ar es externo.
+    for (const resto of ['www.afip.gob.ar/fe/qr/', 'www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOjF9']) {
+      assert.deepEqual(hostsExternos(`"${url('https', resto)}"`), [], `${resto} vale.`);
+    }
+    for (const resto of ['www.afip.gob.ar', 'www.afip.gob.ar/', 'www.afip.gob.ar/fe/qr', 'www.afip.gob.ar/fe/QR/',
+      'www.afip.gob.ar/fe/qr/otra']) {
+      const externos = hostsExternos(`"${url('https', resto)}"`);
+      assert.deepEqual(externos, ['www.afip.gob.ar'], `${resto} tiene que ser externo.`);
+    }
     // De los hosts de ARCA permitidos, cualquier otra ruta es externa (también con otras mayúsculas).
     for (const [resto, host] of [
       ['schemas.xmlsoap.org/', 'schemas.xmlsoap.org'],

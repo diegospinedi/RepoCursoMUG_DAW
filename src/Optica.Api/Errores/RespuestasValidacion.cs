@@ -23,8 +23,17 @@ public static class RespuestasValidacion
         "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
 
     /// <summary>
-    /// Acción para un cuerpo de la búsqueda de presupuestos que no se pudo leer (FEAT-006): JSON roto o vacío, un tipo
-    /// incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice "grabá".
+    /// Acción para un cuerpo de los datos del emisor que no se pudo leer (FEAT-009): JSON roto, un cuerpo que no es un
+    /// objeto, o un número, un arreglo o un objeto donde va un texto. No repite lo recibido. Un cuerpo vacío no es
+    /// ilegible: como en el POST de la configuración, llega al caso de uso sin datos y responde los cinco faltantes.
+    /// </summary>
+    public const string AccionCuerpoIlegibleEmisor =
+        "No se pudieron leer los datos del emisor enviados. Revisalos y grabá de nuevo.";
+
+    /// <summary>
+    /// Acción para un cuerpo de la búsqueda de presupuestos (FEAT-006) o de facturas (FEAT-009) que no se pudo leer: JSON
+    /// roto o vacío, un tipo incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice
+    /// "grabá". No repite lo recibido.
     /// </summary>
     public const string AccionCuerpoIlegibleBusqueda =
         "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";
@@ -418,6 +427,36 @@ public static class RespuestasValidacion
         }
 
         return controller.Conflicto409(TituloConflictoDescarte, motivo, detalle);
+    }
+
+    // El 409 del PDF de la factura (FEAT-009, D-26): su título fijo y un conjunto cerrado de motivos con su detalle fijo,
+    // como sin_tope y sin_punto_venta. Hoy el único es sin_datos_emisor (FR-04, AC-05).
+
+    /// <summary>El <c>title</c> fijo del 409 del PDF de una factura (FEAT-009).</summary>
+    public const string TituloConflictoPdfFactura = "No se pudo generar el PDF de la factura.";
+
+    /// <summary>Valor de la extensión <c>motivo</c>: faltan los datos del emisor y no se genera el PDF (FR-04).</summary>
+    public const string MotivoSinDatosEmisor = "sin_datos_emisor";
+
+    private static readonly Dictionary<string, string> DetallesPdfFactura = new(StringComparer.Ordinal)
+    {
+        [MotivoSinDatosEmisor] = "Completá los datos del emisor en la configuración para generar el PDF de la factura.",
+    };
+
+    /// <summary>
+    /// 409 con ProblemDetails para el PDF de una factura que no se pudo generar (FEAT-009, D-26): <c>title</c> fijo
+    /// (<see cref="TituloConflictoPdfFactura"/>), el <c>detail</c> fijo del motivo, que no repite datos del pedido, y
+    /// <paramref name="motivo"/> en la extensión <c>motivo</c>. Sin <c>errors</c>: no es un error de un campo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los previstos (<see cref="MotivoSinDatosEmisor"/>).</exception>
+    public static ActionResult ConflictoPdfFactura(this ControllerBase controller, string motivo)
+    {
+        if (!DetallesPdfFactura.TryGetValue(motivo, out var detalle))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        return controller.Conflicto409(TituloConflictoPdfFactura, motivo, detalle);
     }
 
     /// <summary>Los primeros <paramref name="maximo"/> caracteres, sin dejar un sustituto alto suelto al final.</summary>

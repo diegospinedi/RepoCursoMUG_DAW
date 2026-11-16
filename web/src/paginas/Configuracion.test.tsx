@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { alPerderLaSesion } from '../api/cliente';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -50,6 +51,23 @@ const INICIAL = {
 /** La respuesta del POST: lo guardado más la cantidad de precios de venta que cambiaron (D-23). */
 const GRABADA_INICIAL = { ...INICIAL, preciosCambiados: 0 };
 
+/** Los datos del emisor nunca cargados: el 200 con los cinco en null (D-22). */
+const EMISOR_SIN_CARGAR = {
+  razonSocial: null,
+  domicilioComercial: null,
+  cuit: null,
+  ingresosBrutos: null,
+  inicioActividades: null,
+};
+
+/**
+ * El servidor falso de esta pantalla: la sección de los datos del emisor (FEAT-009) consulta su ruta al abrir, y el
+ * servidor falso responde 404 a lo que no está en su tabla. Por defecto, los datos sin cargar; una prueba puede
+ * reemplazar la respuesta.
+ */
+const servidorConEmisor = (rutas: Parameters<typeof servidorFalso>[0]) =>
+  servidorFalso({ 'GET /api/configuracion/emisor': json(200, EMISOR_SIN_CARGAR), ...rutas });
+
 /** Abre la pantalla y espera el formulario con los valores consultados. */
 async function abrir() {
   renderizarApp(RUTA);
@@ -86,7 +104,7 @@ const hayMensajeDeGrabada = () => estados().some((texto) => texto.startsWith(GRA
 
 /** Graba con un valor inválido en un campo y comprueba que el error queda junto a ese campo sin enviar. */
 async function rechazadoJuntoAlCampo(etiqueta: string, valor: string, mensaje: string) {
-  const servidor = servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
+  const servidor = servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
   await abrir();
 
   escribir(etiqueta, valor);
@@ -101,7 +119,7 @@ async function rechazadoJuntoAlCampo(etiqueta: string, valor: string, mensaje: s
 
 describe('Configuracion', () => {
   it('Configuracion_PrimeraVez_MuestraValoresIniciales', async () => {
-    const servidor = servidorFalso({ 'GET /api/configuracion': json(200, INICIAL) });
+    const servidor = servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL) });
     await abrir();
 
     expect(campo(ETIQUETA_ALICUOTA).value).toBe('21');
@@ -124,14 +142,14 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_SinTope_MuestraAviso', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL) });
     await abrir();
 
     expect(estados()).toEqual([AVISO_SIN_TOPE]);
   });
 
   it('Configuracion_ConTope_SinAviso', async () => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, { ...INICIAL, topeIdentificacion: 250000.5, faltaTope: false }),
     });
     await abrir();
@@ -142,7 +160,7 @@ describe('Configuracion', () => {
 
   it('Configuracion_GrabaTope_MuestraValorGuardado', async () => {
     const guardada = { ...GRABADA_INICIAL, topeIdentificacion: 250000, faltaTope: false };
-    const servidor = servidorFalso({
+    const servidor = servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, guardada),
     });
@@ -166,7 +184,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_GrabaMonotributo_MuestraMonotributo', async () => {
-    const servidor = servidorFalso({
+    const servidor = servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, condicionFiscal: 'monotributo' }),
     });
@@ -186,7 +204,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_RespuestaDistintaDeLoEscrito_MuestraLoDevuelto', async () => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, alicuotaIva: 10.5, multiploRedondeo: 10 }),
     });
@@ -204,7 +222,7 @@ describe('Configuracion', () => {
   // ---- FEAT-007: la alícuota de una lista (FR-26, D-06) y el punto de venta (FR-28) ----
 
   it('alicuota lista: muestra las seis y la guardada elegida', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 10.5 }) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 10.5 }) });
     await abrir();
 
     // AC-28: las 6 de ARCA con coma decimal, en el orden de la Api, y la guardada elegida; sin aviso.
@@ -217,14 +235,14 @@ describe('Configuracion', () => {
   });
 
   it('alicuota lista: las opciones son las que devuelve la Api', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotasAdmitidas: [21, 27] }) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotasAdmitidas: [21, 27] }) });
     await abrir();
 
     expect(opcionesAlicuota().map((o) => o.texto)).toEqual(['21', '27']);
   });
 
   it('alicuota guardada 19: ninguna elegida y aviso, envío rechazado', async () => {
-    const servidor = servidorFalso({
+    const servidor = servidorConEmisor({
       'GET /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 19 }),
       'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, alicuotaIva: 21 }),
     });
@@ -258,7 +276,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_PuntoVentaGuardado_SeMuestraYSeEnvia', async () => {
-    const servidor = servidorFalso({
+    const servidor = servidorConEmisor({
       'GET /api/configuracion': json(200, { ...INICIAL, puntoVenta: 3 }),
       'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, puntoVenta: 12 }),
     });
@@ -279,7 +297,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_PuntoVentaVacio_EnviaNullYMuestraElGuardado', async () => {
-    const servidor = servidorFalso({
+    const servidor = servidorConEmisor({
       'GET /api/configuracion': json(200, { ...INICIAL, puntoVenta: 3 }),
       'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, puntoVenta: 3 }),
     });
@@ -305,7 +323,7 @@ describe('Configuracion', () => {
     ['puntoVenta', ETIQUETA_PUNTO_VENTA, MENSAJE_PUNTO_VENTA],
     ['alicuotaIva', ETIQUETA_ALICUOTA, MENSAJE_ALICUOTA_NO_ADMITIDA],
   ])('400 de la Api en %s: error junto al campo', async (nombre, etiqueta, mensaje) => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(400, { status: 400, errors: { [nombre]: ['Texto del servidor.'] } }),
     });
@@ -339,7 +357,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_ErrorCorregido_SeQuitaAlGrabarDeNuevo', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': json(200, GRABADA_INICIAL) });
     await abrir();
     escribir(ETIQUETA_PUNTO_VENTA, '0');
     grabar();
@@ -354,7 +372,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_Error400DelServidor_MuestraCadaCampo', async () => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(400, {
         status: 400,
@@ -379,7 +397,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_Error400EnLaCondicion_JuntoAlSelector', async () => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(400, {
         errors: { condicionFiscal: ['Elegí Responsable Inscripto o Monotributo.'], campoDesconocido: ['Otro error.'] },
@@ -398,7 +416,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_Error413_MensajeGeneralConservaValores', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': vacia(413) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': vacia(413) });
     await abrir();
 
     escribir(ETIQUETA_TOPE, '300000');
@@ -415,7 +433,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_SinSesion401_NavegaAlIngreso', async () => {
-    servidorFalso({ 'GET /api/configuracion': vacia(401) });
+    servidorConEmisor({ 'GET /api/configuracion': vacia(401) });
     renderizarApp(RUTA);
 
     expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
@@ -423,7 +441,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_SesionVencidaAlGrabar_NavegaAlIngreso', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': vacia(401) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': vacia(401) });
     await abrir();
 
     grabar();
@@ -438,7 +456,7 @@ describe('Configuracion', () => {
     ['429', vacia(429), 'El sistema está ocupado. Intentá de nuevo en un momento.'],
     ['413', vacia(413), MENSAJE_CUERPO_GRANDE],
   ] as const)('Configuracion_SinConexion_ErrorGeneralConservaValores (%s)', async (_caso, respuesta, mensaje) => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': respuesta });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), 'POST /api/configuracion': respuesta });
     await abrir();
 
     escribir(ETIQUETA_ALICUOTA, '10,5');
@@ -461,7 +479,7 @@ describe('Configuracion', () => {
     // D-27: punto de miles en la cantidad.
     [10000, 'La configuración se grabó. Cambió el precio de venta de 10.000 artículos.'],
   ])('Configuracion_Grabada_MuestraCantidad (%i)', async (preciosCambiados, mensaje) => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, { ...INICIAL, multiploRedondeo: 50, preciosCambiados }),
     });
@@ -481,7 +499,7 @@ describe('Configuracion', () => {
     ['con decimales', 2.5],
     ['de texto', '2'],
   ])('Configuracion_PreciosCambiadosInvalido_RespuestaIlegible (%s)', async (_caso, preciosCambiados) => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(200, { ...INICIAL, multiploRedondeo: 50, preciosCambiados }),
     });
@@ -497,7 +515,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_Error500_MensajeGeneral', async () => {
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': [
         json(200, { ...INICIAL, multiploRedondeo: 10, preciosCambiados: 3 }),
@@ -527,7 +545,7 @@ describe('Configuracion', () => {
     const error =
       'No se grabó el cambio: el precio de venta de 2 artículos sería demasiado grande (códigos 15 y 42, inactivo). ' +
       'Revisá esos artículos o el múltiplo; un artículo inactivo hay que reactivarlo para editarlo.';
-    servidorFalso({
+    servidorConEmisor({
       'GET /api/configuracion': json(200, INICIAL),
       'POST /api/configuracion': json(400, { status: 400, errors: { multiploRedondeo: [error] } }),
     });
@@ -544,7 +562,7 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_ConsultaFallida_MensajeGeneralSinFormulario', async () => {
-    servidorFalso({ 'GET /api/configuracion': vacia(500) });
+    servidorConEmisor({ 'GET /api/configuracion': vacia(500) });
     renderizarApp(RUTA);
 
     expect((await screen.findByText(MENSAJE_SIN_CONEXION)).getAttribute('role')).toBe('alert');
@@ -553,9 +571,386 @@ describe('Configuracion', () => {
   });
 
   it('Configuracion_EnlaceVolverAlInicio', async () => {
-    servidorFalso({ 'GET /api/configuracion': json(200, INICIAL) });
+    servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL) });
     await abrir();
 
     expect(screen.getByRole('link', { name: 'Volver al inicio' }).getAttribute('href')).toBe('/');
+  });
+
+  // ---- FEAT-009: datos del emisor (FR-01 a FR-03, AC-01 a AC-04) ----
+
+  describe('datos del emisor', () => {
+    const RUTA_EMISOR = '/api/configuracion/emisor';
+    const BOTON_EMISOR = 'Grabar datos del emisor';
+    const ETIQUETA_RAZON_SOCIAL = 'Razón social';
+    const ETIQUETA_DOMICILIO = 'Domicilio comercial';
+    const ETIQUETA_CUIT = 'CUIT';
+    const ETIQUETA_INGRESOS_BRUTOS = 'Ingresos Brutos';
+    const ETIQUETA_INICIO = 'Fecha de inicio de actividades';
+    const ETIQUETAS_EMISOR = [
+      ETIQUETA_RAZON_SOCIAL,
+      ETIQUETA_DOMICILIO,
+      ETIQUETA_CUIT,
+      ETIQUETA_INGRESOS_BRUTOS,
+      ETIQUETA_INICIO,
+    ];
+    const EMISOR_GRABADO = 'Los datos del emisor se grabaron.';
+    const MENSAJE_RAZON_SOCIAL_FALTANTE = 'Ingresá la razón social.';
+    const MENSAJE_CUIT_INVALIDO = 'El CUIT no es válido: tienen que ser 11 dígitos, con o sin guiones.';
+    /** Datos ficticios (D-33): el CUIT 20-00000000-1 tiene dígito verificador válido y no es de nadie. */
+    const ESCRITOS = {
+      razonSocial: 'Óptica de Prueba S.A.',
+      domicilioComercial: 'Calle Falsa 123, Ciudad',
+      cuit: '20-00000000-1',
+      ingresosBrutos: '901-000000-1',
+      inicioActividades: '2020-03-01',
+    };
+    const GUARDADOS = { ...ESCRITOS, cuit: '20000000001' };
+
+    const seccion = () => screen.getByRole('region', { name: 'Datos del emisor' });
+    const campoEmisor = (etiqueta: string) => within(seccion()).getByLabelText(etiqueta) as HTMLInputElement;
+    const escribirEmisor = (etiqueta: string, valor: string) =>
+      fireEvent.change(campoEmisor(etiqueta), { target: { value: valor } });
+    const grabarEmisor = () => fireEvent.click(within(seccion()).getByRole('button', { name: BOTON_EMISOR }));
+
+    /** Abre la pantalla y espera la sección de los datos del emisor con su formulario. */
+    async function abrirEmisor() {
+      await abrir();
+      await screen.findByRole('button', { name: BOTON_EMISOR });
+    }
+
+    /** Escribe los cinco datos ficticios, con los cambios indicados. */
+    function escribirCinco(cambios: Partial<typeof ESCRITOS> = {}) {
+      const datos = { ...ESCRITOS, ...cambios };
+      escribirEmisor(ETIQUETA_RAZON_SOCIAL, datos.razonSocial);
+      escribirEmisor(ETIQUETA_DOMICILIO, datos.domicilioComercial);
+      escribirEmisor(ETIQUETA_CUIT, datos.cuit);
+      escribirEmisor(ETIQUETA_INGRESOS_BRUTOS, datos.ingresosBrutos);
+      escribirEmisor(ETIQUETA_INICIO, datos.inicioActividades);
+    }
+
+    /** Los valores que muestran los cinco campos, en el orden de la pantalla. */
+    const valoresEmisor = () => ETIQUETAS_EMISOR.map((etiqueta) => campoEmisor(etiqueta).value);
+
+    const mensajesDeLaSeccion = (rol: 'status' | 'alert') =>
+      within(seccion())
+        .queryAllByRole(rol)
+        .map((elemento) => elemento.textContent ?? '');
+
+    it('Emisor_GrabaCincoDatos_LosMuestraAlVolver', async () => {
+      const servidor = servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`GET ${RUTA_EMISOR}`]: [json(200, EMISOR_SIN_CARGAR), json(200, GUARDADOS)],
+        [`POST ${RUTA_EMISOR}`]: json(200, GUARDADOS),
+      });
+      await abrirEmisor();
+      // Sin cargar (D-22): los cinco vacíos, la fecha con su control de fecha.
+      expect(valoresEmisor()).toEqual(['', '', '', '', '']);
+      expect(campoEmisor(ETIQUETA_INICIO).getAttribute('type')).toBe('date');
+
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() => expect(mensajesDeLaSeccion('status')).toEqual([EMISOR_GRABADO]));
+      const pedidos = servidor.pedidosA('POST', RUTA_EMISOR);
+      expect(pedidos).toHaveLength(1);
+      expect(JSON.parse(String(pedidos[0]?.init?.body))).toEqual(GUARDADOS);
+      // Muestra lo que devolvió la Api: el CUIT sin guiones (AC-03).
+      expect(valoresEmisor()).toEqual(Object.values(GUARDADOS));
+      // Grabar los datos del emisor no graba los parámetros de negocio.
+      expect(servidor.pedidosA('POST', '/api/configuracion')).toHaveLength(0);
+
+      // AC-01: al volver a abrir la configuración, los cinco datos guardados.
+      cleanup();
+      await abrirEmisor();
+      expect(valoresEmisor()).toEqual(Object.values(GUARDADOS));
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+      expect(servidor.pedidosA('GET', RUTA_EMISOR)).toHaveLength(2);
+    });
+
+    it('Emisor_SinRazonSocial_ErrorJuntoAlCampo', async () => {
+      const servidor = servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: json(200, GUARDADOS),
+      });
+      await abrirEmisor();
+
+      escribirCinco({ razonSocial: '   ' });
+      grabarEmisor();
+
+      // AC-02: no se envía y el mensaje queda junto al campo; los demás valores quedan escritos.
+      await waitFor(() =>
+        expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_RAZON_SOCIAL))).toBe(MENSAJE_RAZON_SOCIAL_FALTANTE),
+      );
+      expect(campoEmisor(ETIQUETA_RAZON_SOCIAL).getAttribute('aria-invalid')).toBe('true');
+      expect(servidor.pedidosA('POST', RUTA_EMISOR)).toHaveLength(0);
+      expect(campoEmisor(ETIQUETA_CUIT).value).toBe(ESCRITOS.cuit);
+      expect(campoEmisor(ETIQUETA_CUIT).getAttribute('aria-invalid')).toBe('false');
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+
+      // El mismo error informado por la Api (un cuerpo alterado): junto al campo, con su texto y los valores quedan.
+      cleanup();
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: json(400, { status: 400, errors: { razonSocial: [MENSAJE_RAZON_SOCIAL_FALTANTE] } }),
+      });
+      await abrirEmisor();
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() =>
+        expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_RAZON_SOCIAL))).toBe(MENSAJE_RAZON_SOCIAL_FALTANTE),
+      );
+      expect(valoresEmisor()).toEqual(Object.values(ESCRITOS));
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+    });
+
+    it.each(['20-12345678-5', '2012345678'])('Emisor_CuitInvalido_ErrorJuntoAlCampo (%s)', async (cuit) => {
+      // AC-04: el CUIT del PRD solo en AC-03 y AC-04 (D-33).
+      const servidor = servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: json(400, { status: 400, errors: { cuit: [MENSAJE_CUIT_INVALIDO] } }),
+      });
+      await abrirEmisor();
+
+      escribirCinco({ cuit });
+      grabarEmisor();
+
+      await waitFor(() => expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_CUIT))).toBe(MENSAJE_CUIT_INVALIDO));
+      expect(campoEmisor(ETIQUETA_CUIT).getAttribute('aria-invalid')).toBe('true');
+      expect(servidor.pedidosA('POST', RUTA_EMISOR)).toHaveLength(0);
+      expect(campoEmisor(ETIQUETA_CUIT).value).toBe(cuit);
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+
+      // Si la Api lo rechaza igual (validación del servidor), el error va junto al campo.
+      escribirEmisor(ETIQUETA_CUIT, '20-00000000-1');
+      grabarEmisor();
+      await waitFor(() => expect(servidor.pedidosA('POST', RUTA_EMISOR)).toHaveLength(1));
+      await waitFor(() => expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_CUIT))).toBe(MENSAJE_CUIT_INVALIDO));
+      expect(campoEmisor(ETIQUETA_CUIT).value).toBe('20-00000000-1');
+    });
+
+    it.each([
+      ['500', vacia(500)],
+      ['sin conexión', sinRed],
+    ] as const)('Emisor_ErrorDelServidor_MensajeGeneral (%s)', async (_caso, respuesta) => {
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: respuesta,
+      });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      // Mensaje general sin datos; nada se da por grabado y lo escrito queda.
+      await waitFor(() => expect(mensajesDeLaSeccion('alert')).toEqual([MENSAJE_SIN_CONEXION]));
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+      expect(valoresEmisor()).toEqual(Object.values(ESCRITOS));
+      for (const etiqueta of ETIQUETAS_EMISOR) {
+        expect(campoEmisor(etiqueta).getAttribute('aria-invalid')).toBe('false');
+      }
+      expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    });
+
+    it('Emisor_Cargados_SeMuestranAlAbrir', async () => {
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`GET ${RUTA_EMISOR}`]: json(200, GUARDADOS),
+      });
+      await abrirEmisor();
+
+      expect(screen.getByRole('heading', { name: 'Datos del emisor', level: 2 })).toBeTruthy();
+      expect(valoresEmisor()).toEqual(Object.values(GUARDADOS));
+      expect(within(seccion()).getByRole('button', { name: BOTON_EMISOR }).closest('form')?.getAttribute('method')).toBe(
+        'post',
+      );
+    });
+
+    it('Emisor_Error400VariosCampos_CadaUnoJuntoASuCampo', async () => {
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: json(400, {
+          status: 400,
+          errors: {
+            domicilioComercial: ['El domicilio comercial puede tener hasta 200 caracteres.'],
+            inicioActividades: ['La fecha de inicio de actividades no puede ser posterior a hoy.'],
+            campoDesconocido: ['Otro error.'],
+          },
+        }),
+      });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() =>
+        expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_DOMICILIO))).toBe(
+          'El domicilio comercial puede tener hasta 200 caracteres.',
+        ),
+      );
+      expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_INICIO))).toBe(
+        'La fecha de inicio de actividades no puede ser posterior a hoy.',
+      );
+      expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_RAZON_SOCIAL))).toBeNull();
+      // Un campo que la sección no tiene se muestra como mensaje general.
+      expect(mensajesDeLaSeccion('alert')).toContain('Otro error.');
+      expect(valoresEmisor()).toEqual(Object.values(ESCRITOS));
+    });
+
+    it('Emisor_FechaPosteriorAHoy_RechazadaSinEnviar', async () => {
+      const servidor = servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL) });
+      await abrirEmisor();
+
+      escribirCinco({ inicioActividades: '2999-01-01' });
+      grabarEmisor();
+
+      await waitFor(() =>
+        expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_INICIO))).toBe(
+          'La fecha de inicio de actividades no puede ser posterior a hoy.',
+        ),
+      );
+      expect(servidor.pedidosA('POST', RUTA_EMISOR)).toHaveLength(0);
+    });
+
+    it('Emisor_ErrorCorregido_SeQuitaAlGrabarDeNuevo', async () => {
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: [vacia(500), json(200, GUARDADOS)],
+      });
+      await abrirEmisor();
+      escribirCinco({ razonSocial: '' });
+      grabarEmisor();
+      await waitFor(() => expect(campoEmisor(ETIQUETA_RAZON_SOCIAL).getAttribute('aria-invalid')).toBe('true'));
+
+      escribirEmisor(ETIQUETA_RAZON_SOCIAL, ESCRITOS.razonSocial);
+      grabarEmisor();
+      await waitFor(() => expect(mensajesDeLaSeccion('alert')).toEqual([MENSAJE_SIN_CONEXION]));
+      expect(campoEmisor(ETIQUETA_RAZON_SOCIAL).getAttribute('aria-invalid')).toBe('false');
+
+      grabarEmisor();
+      await waitFor(() => expect(mensajesDeLaSeccion('status')).toEqual([EMISOR_GRABADO]));
+      expect(mensajesDeLaSeccion('alert')).toEqual([]);
+    });
+
+    it('Emisor_Error413_MensajeGeneral', async () => {
+      servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), [`POST ${RUTA_EMISOR}`]: vacia(413) });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() =>
+        expect(mensajesDeLaSeccion('alert')).toEqual([
+          'Los datos del emisor enviados son demasiado largos. Revisalos y grabá de nuevo.',
+        ]),
+      );
+      expect(valoresEmisor()).toEqual(Object.values(ESCRITOS));
+    });
+
+    it('Emisor_Error409_MensajeGeneral', async () => {
+      // La Api no responde 409 en esta ruta; si llegara uno, es un mensaje general y nada se da por grabado.
+      servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), [`POST ${RUTA_EMISOR}`]: vacia(409) });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() =>
+        expect(mensajesDeLaSeccion('alert')).toEqual([
+          'No se pudo completar la operación. Recargá la página y reintentá.',
+        ]),
+      );
+      expect(mensajesDeLaSeccion('status')).toEqual([]);
+      expect(valoresEmisor()).toEqual(Object.values(ESCRITOS));
+    });
+
+    it('Emisor_Error401ConCampo_JuntoAlCampo', async () => {
+      // Un 401 con `errors` no es una sesión vencida: es el error de un campo, como en el resto de los formularios.
+      servidorConEmisor({
+        'GET /api/configuracion': json(200, INICIAL),
+        [`POST ${RUTA_EMISOR}`]: json(401, { status: 401, errors: { cuit: [MENSAJE_CUIT_INVALIDO] } }),
+      });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      await waitFor(() => expect(mensajeJuntoAlCampo(campoEmisor(ETIQUETA_CUIT))).toBe(MENSAJE_CUIT_INVALIDO));
+      expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    });
+
+    it('Emisor_Consulta404_MensajeGeneralSinFormulario', async () => {
+      // D-22: un 404 no se toma como "sin cargar".
+      servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), [`GET ${RUTA_EMISOR}`]: vacia(404) });
+      await abrir();
+
+      await waitFor(() =>
+        expect(mensajesDeLaSeccion('alert')).toEqual([
+          'No se pudo completar la operación. Recargá la página y reintentá.',
+        ]),
+      );
+      expect(screen.queryByRole('button', { name: BOTON_EMISOR })).toBeNull();
+      // Los parámetros de negocio siguen disponibles.
+      expect(screen.getByRole('button', { name: BOTON })).toBeTruthy();
+    });
+
+    it('Emisor_ConsultaSinSesion_NavegaAlIngreso', async () => {
+      servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), [`GET ${RUTA_EMISOR}`]: vacia(401) });
+      renderizarApp(RUTA);
+
+      expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso');
+    });
+
+    it('Emisor_SesionVencidaAlGrabar_NavegaAlIngreso', async () => {
+      servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL), [`POST ${RUTA_EMISOR}`]: vacia(401) });
+      await abrirEmisor();
+
+      escribirCinco();
+      grabarEmisor();
+
+      expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso');
+    });
+
+    it('Emisor_RespuestaDespuesDeSalir_NoNavega', async () => {
+      // La operadora sale de la configuración antes de que llegue la consulta del emisor; la respuesta es un 401. La
+      // sección ya desmontada no debe navegar: la app sigue donde la operadora fue. Se quita el manejador de sesión de
+      // App para que la única navegación posible sea la de la sección.
+      let responder: (respuesta: Response) => void = () => {};
+      const pendiente = new Promise<Response>((resolver) => {
+        responder = resolver;
+      });
+      servidorConEmisor({
+        'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+        'GET /api/sesion': vacia(204),
+        'GET /api/configuracion': json(200, INICIAL),
+        [`GET ${RUTA_EMISOR}`]: () => pendiente,
+      });
+      await abrir();
+      expect(screen.getByText('Cargando los datos del emisor…')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('link', { name: 'Volver al inicio' }));
+      await screen.findByRole('heading', { name: 'Sesión iniciada' });
+      expect(screen.queryByRole('region', { name: 'Datos del emisor' })).toBeNull();
+      alPerderLaSesion(null);
+
+      responder(new Response(null, { status: 401 }));
+      await pendiente;
+      await new Promise((resolver) => setTimeout(resolver, 20));
+
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/');
+      expect(screen.getByRole('heading', { name: 'Sesión iniciada' })).toBeTruthy();
+    });
+
+    it('Emisor_ConsultaFallidaDeLaConfiguracion_SeccionDisponible', async () => {
+      servidorConEmisor({ 'GET /api/configuracion': vacia(500), [`GET ${RUTA_EMISOR}`]: json(200, GUARDADOS) });
+      renderizarApp(RUTA);
+
+      await screen.findByRole('button', { name: BOTON_EMISOR });
+      expect(valoresEmisor()).toEqual(Object.values(GUARDADOS));
+      expect(screen.queryByRole('button', { name: BOTON })).toBeNull();
+    });
   });
 });

@@ -17,6 +17,8 @@ namespace Optica.Infrastructure.Persistencia;
 public sealed class FacturaRepository(OpticaDbContext contexto) : IFacturaRepository
 {
     private const string MensajeFilaInvalida = "La factura guardada no es válida.";
+    private const string MensajePaginaInvalida = "La página pedida no es válida.";
+    private const string MensajeTamanoPaginaInvalido = "El tamaño de página no es válido.";
 
     private const string ConceptoProductos = "productos";
     private const string ConceptoProductosYServicios = "productos_y_servicios";
@@ -116,6 +118,129 @@ public sealed class FacturaRepository(OpticaDbContext contexto) : IFacturaReposi
     public Task<bool> ExisteParaPresupuestoAsync(long presupuestoNumero, CancellationToken cancelacion = default) =>
         contexto.Facturas.AsNoTracking().AnyAsync(f => f.PresupuestoNumero == presupuestoNumero, cancelacion);
 
+    /// <summary>
+    /// Una página de la búsqueda de facturas (FR-16 a FR-23 y FR-25 de FEAT-009), sin seguimiento. Junta cada factura con
+    /// su presupuesto, así Apellido, Nombre y DNI son los del cliente del presupuesto también en una factura a Consumidor
+    /// Final (D-03). Combina con "Y" solo los filtros cargados: <c>instr(plegar(Apellido), @apellido) &gt; 0</c>, lo
+    /// mismo con Nombre, <c>instr(Dni, @dni) &gt; 0</c>, <c>instr(digitos_comprobante(PuntoVenta, Numero), @numero)
+    /// &gt; 0</c> (D-27) y <c>Fecha &gt;= @desde</c> / <c>Fecha &lt;= @hasta</c>, ambos inclusive. Sin <c>LIKE</c>. Ordena
+    /// por <c>Fecha</c>, <c>Numero</c> e <c>Id</c> descendentes: el Id es el desempate total, porque el número solo es
+    /// único por entorno, tipo y punto de venta (D-20). <see cref="PaginaFacturas.Total"/> cuenta con el mismo filtro. Los
+    /// textos viajan como parámetros y llegan ya normalizados por <see cref="FiltroFacturas"/> (R-09). Recorre la tabla
+    /// completa, sin índice sobre <c>plegar</c>, como la búsqueda de presupuestos (ADR-011).
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="filtro"/> es null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="pagina"/> es menor que 1, <paramref name="tamanoPagina"/> no es positivo, o el desplazamiento de
+    /// la página no entra en un <c>int</c>. No se consulta la base. El mensaje no lleva el valor.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Una fila guardada no se puede leer (una fecha que no existe, un tipo o un punto de venta inválidos): estado
+    /// corrupto. El mensaje es fijo y no lleva valores.
+    /// </exception>
+    public async Task<PaginaFacturas> BuscarAsync(
+        FiltroFacturas filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default)
+    {
+        ArgumentNullException.ThrowIfNull(filtro);
+
+        // Textos fijos, sin el valor recibido: ThrowIfLessThan y ThrowIfNegativeOrZero lo agregarían al mensaje.
+        if (pagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), MensajePaginaInvalida);
+        }
+
+        if (tamanoPagina < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tamanoPagina), MensajeTamanoPaginaInvalido);
+        }
+
+        var desplazamiento = (pagina - 1L) * tamanoPagina;
+        if (desplazamiento > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pagina), MensajePaginaInvalida);
+        }
+
+        var consulta = contexto.Facturas.AsNoTracking()
+            .Join(
+                contexto.Presupuestos.AsNoTracking(),
+                factura => factura.PresupuestoNumero,
+                presupuesto => presupuesto.Numero,
+                (factura, presupuesto) => new { Factura = factura, Cliente = presupuesto });
+
+        // EF Core traduce Contains sobre texto a instr(...) > 0 en SQLite, no a LIKE.
+        if (filtro.Apellido is { } apellido)
+        {
+            consulta = consulta.Where(fila => FuncionesSqlite.Plegar(fila.Cliente.Apellido).Contains(apellido));
+        }
+
+        if (filtro.Nombre is { } nombre)
+        {
+            consulta = consulta.Where(fila => FuncionesSqlite.Plegar(fila.Cliente.Nombre).Contains(nombre));
+        }
+
+        if (filtro.Dni is { } dni)
+        {
+            consulta = consulta.Where(fila => fila.Cliente.Dni.Contains(dni));
+        }
+
+        if (filtro.Numero is { } numero)
+        {
+            consulta = consulta.Where(fila =>
+                FuncionesSqlite.DigitosComprobante(fila.Factura.PuntoVenta, fila.Factura.Numero).Contains(numero));
+        }
+
+        if (filtro.Desde is { } desde)
+        {
+            consulta = consulta.Where(fila => fila.Factura.Fecha >= desde);
+        }
+
+        if (filtro.Hasta is { } hasta)
+        {
+            consulta = consulta.Where(fila => fila.Factura.Fecha <= hasta);
+        }
+
+        List<FilaResumen> filas;
+        int total;
+        try
+        {
+            filas = await consulta
+                .OrderByDescending(fila => fila.Factura.Fecha)
+                .ThenByDescending(fila => fila.Factura.Numero)
+                .ThenByDescending(fila => fila.Factura.Id)
+                .Skip((int)desplazamiento)
+                .Take(tamanoPagina)
+                .Select(fila => new FilaResumen(
+                    fila.Factura.PresupuestoNumero, fila.Factura.Tipo, fila.Factura.PuntoVenta, fila.Factura.Numero,
+                    fila.Factura.Fecha, fila.Cliente.Apellido, fila.Cliente.Nombre, fila.Cliente.Dni, fila.Factura.Total))
+                .ToListAsync(cancelacion);
+            total = await consulta.CountAsync(cancelacion);
+        }
+        catch (FormatException)
+        {
+            // Microsoft.Data.Sqlite no pudo leer una fecha guardada. Sin la causa: su mensaje repite el texto guardado.
+            throw new InvalidOperationException(MensajeFilaInvalida);
+        }
+
+        // Las dos consultas no comparten transacción: una emisión entre una y otra puede sumar una factura. Math.Max solo
+        // evita que PaginaFacturas lance si el total quedó por debajo de la página (como PresupuestoRepository).
+        return new PaginaFacturas([.. filas.Select(AResumen)], Math.Max(total, filas.Count));
+    }
+
+    /// <summary>El resumen de una fila de la búsqueda; una fila que no cumple el dominio es estado corrupto.</summary>
+    private static ResumenFactura AResumen(FilaResumen fila)
+    {
+        try
+        {
+            var comprobante = new NumeroComprobante(TipoDe(fila.Tipo), PuntoVentaDe(fila.PuntoVenta), fila.Numero);
+            return new ResumenFactura(
+                fila.PresupuestoNumero, comprobante, fila.Fecha, fila.Apellido, fila.Nombre, fila.Dni, fila.Total);
+        }
+        catch (ArgumentException error)
+        {
+            throw new InvalidOperationException(MensajeFilaInvalida, error);
+        }
+    }
+
     private static string TextoDe(ConceptoFactura concepto) => concepto switch
     {
         ConceptoFactura.Productos => ConceptoProductos,
@@ -184,5 +309,32 @@ public sealed class FacturaRepository(OpticaDbContext contexto) : IFacturaReposi
         {
             throw new InvalidOperationException(MensajeFilaInvalida, error);
         }
+    }
+
+    /// <summary>
+    /// Las columnas de un resultado de la búsqueda. Una clase y no un record: no muestra los datos del cliente en
+    /// <see cref="object.ToString"/>.
+    /// </summary>
+    private sealed class FilaResumen(
+        long presupuestoNumero, string tipo, long puntoVenta, long numero, DateOnly fecha, string apellido, string nombre,
+        string dni, decimal total)
+    {
+        public long PresupuestoNumero { get; } = presupuestoNumero;
+
+        public string Tipo { get; } = tipo;
+
+        public long PuntoVenta { get; } = puntoVenta;
+
+        public long Numero { get; } = numero;
+
+        public DateOnly Fecha { get; } = fecha;
+
+        public string Apellido { get; } = apellido;
+
+        public string Nombre { get; } = nombre;
+
+        public string Dni { get; } = dni;
+
+        public decimal Total { get; } = total;
     }
 }

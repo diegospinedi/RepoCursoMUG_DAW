@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Optica.Application.Comun;
+using Optica.Domain.Facturacion;
 using Optica.Infrastructure.Persistencia;
 
 namespace Optica.Infrastructure.Tests.Persistencia;
@@ -116,14 +117,17 @@ public class FabricaConexionTests
         using var baseTemporal = new BaseTemporal();
         const string consulta =
             "SELECT plegar('ARMAZ\U000000D3N'), orden_articulo('\U000000D1and\U000000FA'), plegar(NULL) IS NULL, " +
-            "orden_articulo(NULL) IS NULL";
+            "orden_articulo(NULL) IS NULL, digitos_comprobante(3, 125), digitos_comprobante(12345, 7), " +
+            "digitos_comprobante(NULL, 7) IS NULL, digitos_comprobante(3, NULL) IS NULL";
+        string[] esperado = ["armazon", "n{andu", "1", "1", "000300000125", "1234500000007", "1", "1"];
 
-        // Las conexiones que abre EF Core, sincrónica y asincrónicamente, tienen las dos funciones (ADR-011).
+        // Las conexiones que abre EF Core, sincrónica y asincrónicamente, tienen las tres funciones (ADR-011; FEAT-009,
+        // D-27: digitos_comprobante).
         var sincronico = baseTemporal.CrearContexto();
         sincronico.Database.OpenConnection();
         try
         {
-            Assert.Equal(["armazon", "n{andu", "1", "1"], Leer(sincronico.Database.GetDbConnection(), consulta));
+            Assert.Equal(esperado, Leer(sincronico.Database.GetDbConnection(), consulta));
         }
         finally
         {
@@ -135,12 +139,13 @@ public class FabricaConexionTests
         try
         {
             var conexion = asincronico.Database.GetDbConnection();
-            Assert.Equal(["armazon", "n{andu", "1", "1"], Leer(conexion, consulta));
+            Assert.Equal(esperado, Leer(conexion, consulta));
 
             // Deterministas, como pide ADR-011.
             var deterministas = Leer(conexion,
-                "SELECT count(*) FROM pragma_function_list WHERE name IN ('plegar', 'orden_articulo') AND (flags & 0x800) <> 0");
-            Assert.Equal(["2"], deterministas);
+                "SELECT count(DISTINCT name) FROM pragma_function_list " +
+                "WHERE name IN ('plegar', 'orden_articulo', 'digitos_comprobante') AND (flags & 0x800) <> 0");
+            Assert.Equal(["3"], deterministas);
         }
         finally
         {
@@ -176,6 +181,7 @@ public class FabricaConexionTests
         // La conexión cruda no conoce las funciones, como sqlite3 o un backup con VACUUM INTO.
         Assert.Throws<SqliteException>(() => Leer(cruda, "SELECT plegar('a')"));
         Assert.Throws<SqliteException>(() => Leer(cruda, "SELECT orden_articulo('a')"));
+        Assert.Throws<SqliteException>(() => Leer(cruda, "SELECT digitos_comprobante(3, 125)"));
 
         // Y aun así lee el esquema completo y la base está íntegra: ningún índice, CHECK, trigger ni vista las usa (R-07).
         var objetos = new List<string>();
@@ -194,7 +200,26 @@ public class FabricaConexionTests
             && o.Contains("\"Activo\"", StringComparison.Ordinal) && o.Contains("\"Version\"", StringComparison.Ordinal));
         Assert.DoesNotContain(objetos, o => o.Contains("plegar", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(objetos, o => o.Contains("orden_articulo", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(objetos, o => o.Contains("digitos_comprobante", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(["ok"], Leer(cruda, "PRAGMA integrity_check"));
+    }
+
+    /// <summary>
+    /// D-27, como D-24: <c>digitos_comprobante</c> repite la regla del texto visible de <see cref="NumeroComprobante"/>
+    /// (punto de venta en D4 y número en D8); esta prueba compara las dos fuentes para que no se separen.
+    /// </summary>
+    [Theory]
+    [InlineData(3, 125L)]
+    [InlineData(12345, 7L)]
+    [InlineData(1234, 5_000_000L)]
+    [InlineData(99999, 99_999_999L)]
+    [InlineData(1, 1L)]
+    public void DigitosComprobante_IgualQueElTextoVisible(int puntoVenta, long numero)
+    {
+        var visible = new NumeroComprobante(TipoComprobante.FacturaB, puntoVenta, numero).ToString();
+        var digitos = new string([.. visible["Factura B ".Length..].Where(char.IsAsciiDigit)]);
+
+        Assert.Equal(digitos, FuncionesSqlite.Digitos(puntoVenta, numero));
     }
 
     private static List<string> Leer(System.Data.Common.DbConnection conexion, string consulta)

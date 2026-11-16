@@ -52,6 +52,9 @@ public static class ConfiguracionInfraestructura
         // operación (FR-06).
         servicios.AddScoped<IConfiguracionNegocioRepository, ConfiguracionNegocioRepository>();
 
+        // Datos del emisor (FEAT-009, ADR-028): comparte el contexto (y la unidad de trabajo) del alcance.
+        servicios.AddScoped<IDatosEmisorRepository, DatosEmisorRepository>();
+
         // Catálogo: comparte el contexto (y la unidad de trabajo) del alcance.
         servicios.AddScoped<IArticuloRepository, ArticuloRepository>();
 
@@ -87,8 +90,12 @@ public static class ConfiguracionInfraestructura
         servicios.AddKeyedSingleton(ClaveClienteHttpArca, (_, _) => ServiciosArca.CrearClienteHttp());
 
         // PDF del presupuesto con QuestPDF (ADR-018). Singleton: no guarda estado y la configuración de QuestPDF es
-        // global, fijada una vez en su constructor estático (D-13).
+        // global, fijada una vez en ConfiguracionQuestPdf (D-13; D-25 de FEAT-009).
         servicios.AddSingleton<IGeneradorPdfPresupuesto, GeneradorPdfPresupuesto>();
+
+        // PDF de la factura con QuestPDF y el QR de ARCA con QRCoder (ADR-027). Singleton por lo mismo: sin estado y con
+        // la configuración global de ConfiguracionQuestPdf.
+        servicios.AddSingleton<IGeneradorPdfFactura, GeneradorPdfFactura>();
 
         // Marca: la instalada en Optica:Marca:Directorio o la de ejemplo copiada junto a los binarios. Singleton: se lee
         // una vez y queda en memoria hasta reiniciar la Api.

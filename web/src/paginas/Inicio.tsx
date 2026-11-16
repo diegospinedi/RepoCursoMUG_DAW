@@ -112,6 +112,9 @@ export function Inicio() {
       <p>
         <Link to="/presupuestos">Buscar presupuestos</Link>
       </p>
+      <p>
+        <Link to="/facturas">Facturas</Link>
+      </p>
       <button type="button" onClick={alSalir} disabled={saliendo}>
         Salir
       </button>

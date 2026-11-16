@@ -18,6 +18,7 @@ import {
   PUNTO_VENTA_MINIMO,
   sumarCentesimos,
 } from '../configuracion/numeros';
+import { esFecha } from './fechas';
 
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
@@ -107,8 +108,9 @@ export interface PaginaArticulos {
 
 /**
  * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05), `borrador` del PDF
- * del presupuesto (FEAT-006, D-11) y de la factura, los demás de la emisión de la factura (FEAT-007, D-18, D-31) y los
- * de la verificación y el descarte de una emisión pendiente (FEAT-008, spec Block 6).
+ * del presupuesto (FEAT-006, D-11) y de la factura, los demás de la emisión de la factura (FEAT-007, D-18, D-31), los
+ * de la verificación y el descarte de una emisión pendiente (FEAT-008, spec Block 6) y `sin_datos_emisor` del PDF de la
+ * factura (FEAT-009, FR-04).
  */
 export type MotivoConflicto =
   | 'inactivo'
@@ -130,7 +132,8 @@ export type MotivoConflicto =
   | 'sin_numero'
   | 'otro_entorno'
   | 'sin_respuesta_emision'
-  | 'sin_observacion';
+  | 'sin_observacion'
+  | 'sin_datos_emisor';
 
 const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = [
   'inactivo',
@@ -153,6 +156,7 @@ const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = [
   'otro_entorno',
   'sin_respuesta_emision',
   'sin_observacion',
+  'sin_datos_emisor',
 ];
 
 const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
@@ -608,6 +612,86 @@ export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<Resultad
     leerConfiguracionGrabada,
   );
 
+// ---- Datos del emisor (FEAT-009, ADR-028): GET y POST /api/configuracion/emisor ----
+
+export const CAMPO_RAZON_SOCIAL = 'razonSocial';
+export const CAMPO_DOMICILIO_COMERCIAL = 'domicilioComercial';
+export const CAMPO_CUIT = 'cuit';
+export const CAMPO_INGRESOS_BRUTOS = 'ingresosBrutos';
+export const CAMPO_INICIO_ACTIVIDADES = 'inicioActividades';
+
+/** Mensaje general de un 413 al grabar los datos del emisor: el navegador nunca envía un cuerpo de ese tamaño. */
+export const MENSAJE_EMISOR_GRANDE = 'Los datos del emisor enviados son demasiado largos. Revisalos y grabá de nuevo.';
+
+/**
+ * Los cinco datos del emisor, como los graba y los devuelve la Api: el CUIT con 11 dígitos, sin guiones, y la fecha de
+ * inicio de actividades como `yyyy-MM-dd`.
+ */
+export interface DatosEmisor {
+  razonSocial: string;
+  domicilioComercial: string;
+  cuit: string;
+  ingresosBrutos: string;
+  inicioActividades: string;
+}
+
+/** El resultado de grabar los datos del emisor: un 400 trae todos los campos inválidos juntos. */
+export type ResultadoGrabacionEmisor = Resultado<DatosEmisor> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+/** El CUIT en forma canónica: 11 dígitos ASCII, sin guiones (sin el dígito verificador, que valida `reglas.ts`). */
+export const CUIT_CANONICO = /^\d{11}$/;
+
+/** Los cinco datos cargados: textos, el CUIT en forma canónica y la fecha existente. Solo copia los cinco campos. */
+const leerDatosEmisorCargados: Lector<DatosEmisor> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.razonSocial === 'string' &&
+  typeof cuerpo.domicilioComercial === 'string' &&
+  typeof cuerpo.cuit === 'string' &&
+  CUIT_CANONICO.test(cuerpo.cuit) &&
+  typeof cuerpo.ingresosBrutos === 'string' &&
+  esFecha(cuerpo.inicioActividades)
+    ? {
+        razonSocial: cuerpo.razonSocial,
+        domicilioComercial: cuerpo.domicilioComercial,
+        cuit: cuerpo.cuit,
+        ingresosBrutos: cuerpo.ingresosBrutos,
+        inicioActividades: cuerpo.inicioActividades,
+      }
+    : undefined;
+
+/** Los cinco campos de los datos del emisor, en el orden del formulario y del contrato. */
+export const CAMPOS_EMISOR = [
+  CAMPO_RAZON_SOCIAL,
+  CAMPO_DOMICILIO_COMERCIAL,
+  CAMPO_CUIT,
+  CAMPO_INGRESOS_BRUTOS,
+  CAMPO_INICIO_ACTIVIDADES,
+] as const;
+
+/**
+ * Los datos del emisor vigentes: los cinco cargados, o `null` si la Api devolvió los cinco en null (nunca se cargaron,
+ * D-22). Una mezcla de null y textos, o cualquier otra forma, es una respuesta ilegible.
+ */
+const leerDatosEmisorVigentes: Lector<DatosEmisor | null> = (cuerpo) =>
+  esObjeto(cuerpo) && CAMPOS_EMISOR.every((campo) => cuerpo[campo] === null) ? null : leerDatosEmisorCargados(cuerpo);
+
+/**
+ * Los datos del emisor guardados (FR-01); `null` mientras no se cargaron. "Sin cargar" es el 200 con los cinco en null
+ * del contrato: un 404 no se toma como tal, es el mensaje general de pedido rechazado (D-22).
+ */
+export const consultarDatosEmisor = (): Promise<Resultado<DatosEmisor | null>> =>
+  pedir({ metodo: 'GET', ruta: '/api/configuracion/emisor' }, leerDatosEmisorVigentes);
+
+/**
+ * Graba los cinco datos del emisor juntos (FR-02) y devuelve lo que quedó guardado (el CUIT sin guiones, AC-03). Como
+ * {@link grabarConfiguracion}: un 400 devuelve TODOS los campos de `errors` y un 413 es un mensaje general propio.
+ */
+export const grabarDatosEmisor = (datos: DatosEmisor): Promise<ResultadoGrabacionEmisor> =>
+  grabarConCampos(
+    { metodo: 'POST', ruta: '/api/configuracion/emisor', cuerpo: datos, mensaje413: MENSAJE_EMISOR_GRANDE },
+    leerDatosEmisorCargados,
+  );
+
 /**
  * Graba un artículo y devuelve lo que quedó guardado, con su código y su precio de venta (FR-01, FR-11). Como
  * {@link grabarConfiguracion}: un 400 devuelve TODOS los campos de `errors` (incluido el código duplicado, D-07) y un
@@ -748,22 +832,6 @@ const esTextoONulo = (valor: unknown): valor is string | null => valor === null 
 
 const esEstadoPresupuesto = (valor: unknown): valor is EstadoPresupuesto =>
   ESTADOS_PRESUPUESTO.some((estado) => estado === valor);
-
-const FORMATO_FECHA = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** Una fecha `yyyy-MM-dd` que existe en el calendario ("2026-02-30" no). Se compara en UTC: sin zona horaria. */
-function esFecha(valor: unknown): valor is string {
-  if (typeof valor !== 'string') {
-    return false;
-  }
-  const partes = FORMATO_FECHA.exec(valor);
-  if (partes === null) {
-    return false;
-  }
-  const [anio, mes, dia] = [Number(partes[1]), Number(partes[2]), Number(partes[3])];
-  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
-  return fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia;
-}
 
 /** El cliente: solo los seis campos; un dato ausente o de otro tipo hace ilegible la respuesta. */
 const leerCliente: Lector<DatosCliente> = (cuerpo) =>
@@ -1131,16 +1199,30 @@ const TIPO_PDF = /^application\/pdf\s*(;|$)/i;
  * presupuesto.". Una falla de red, un 5xx, una respuesta exitosa que no es `application/pdf` o un cuerpo que no se
  * pudo leer son {@link MENSAJE_SIN_CONEXION}. Un número que no puede existir no se envía.
  */
-export async function descargarPdfPresupuesto(numero: number): Promise<Resultado<Blob>> {
+export const descargarPdfPresupuesto = (numero: number): Promise<Resultado<Blob>> =>
+  descargarPdf(
+    numero,
+    `/api/presupuestos/${numero}/pdf`,
+    { borrador: MENSAJE_PRESUPUESTO_BORRADOR_PDF },
+    MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+  );
+
+/**
+ * Un PDF por `GET` (el del presupuesto, FEAT-006, y el de la factura, FEAT-009): los bytes como `Blob`. Los 409 se leen
+ * con los motivos que admite la operación; un 404 y un número que no puede existir (no se envía) son
+ * `mensajeNoEncontrado`. Una respuesta exitosa que no es `application/pdf`, o cuyo cuerpo no se pudo leer, es
+ * {@link MENSAJE_SIN_CONEXION}.
+ */
+async function descargarPdf(
+  numero: number,
+  ruta: string,
+  motivos409: Partial<Record<MotivoConflicto, string>>,
+  mensajeNoEncontrado: string,
+): Promise<Resultado<Blob>> {
   if (!esEnteroEntre(numero, 1)) {
-    return { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+    return { tipo: 'general', mensaje: mensajeNoEncontrado };
   }
-  const respuesta = await enviar({
-    metodo: 'GET',
-    ruta: `/api/presupuestos/${numero}/pdf`,
-    motivos409: { borrador: MENSAJE_PRESUPUESTO_BORRADOR_PDF },
-    mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
-  });
+  const respuesta = await enviar({ metodo: 'GET', ruta, motivos409, mensaje404: mensajeNoEncontrado });
   if (respuesta.tipo !== 'respuesta') {
     return respuesta;
   }
@@ -1527,15 +1609,8 @@ const leerPaginaPresupuestos: Lector<PaginaPresupuestos> = (cuerpo) => {
  * El cuerpo de la búsqueda: cada filtro recortado y solo si quedó cargado, y la página. Un campo vacío se omite: la Api
  * responde 400 a una fecha `""` (D-23), y un texto vacío no es un filtro.
  */
-function cuerpoBusqueda(filtro: FiltroPresupuestos, pagina: number): Record<string, string | number> {
+function cuerpoBusqueda(campos: readonly [string, string][], pagina: number): Record<string, string | number> {
   const cuerpo: Record<string, string | number> = {};
-  const campos: [string, string][] = [
-    [CAMPO_APELLIDO, filtro.apellido],
-    [CAMPO_NOMBRE, filtro.nombre],
-    [CAMPO_DNI, filtro.dni],
-    [CAMPO_DESDE, filtro.desde],
-    [CAMPO_HASTA, filtro.hasta],
-  ];
   for (const [campo, valor] of campos) {
     const recortado = valor.trim();
     if (recortado !== '') {
@@ -1560,10 +1635,265 @@ export const buscarPresupuestos = (
     {
       metodo: 'POST',
       ruta: '/api/presupuestos/busqueda',
-      cuerpo: cuerpoBusqueda(filtro, pagina),
+      cuerpo: cuerpoBusqueda(
+        [
+          [CAMPO_APELLIDO, filtro.apellido],
+          [CAMPO_NOMBRE, filtro.nombre],
+          [CAMPO_DNI, filtro.dni],
+          [CAMPO_DESDE, filtro.desde],
+          [CAMPO_HASTA, filtro.hasta],
+        ],
+        pagina,
+      ),
       mensaje413: MENSAJE_BUSQUEDA_GRANDE,
     },
     leerPaginaPresupuestos,
+  );
+
+/*
+ * Facturas: búsqueda, detalle y PDF (FEAT-009, FR-04, FR-05, FR-16 a FR-24).
+ */
+
+/** El campo del número de comprobante en el cuerpo y en `errors` de `POST /api/facturacion/busqueda`. */
+export const CAMPO_NUMERO_COMPROBANTE = 'numero';
+
+/** El 404 del detalle y del PDF de la factura (D-41): el mismo texto si el presupuesto no existe o no tiene factura. */
+export const MENSAJE_FACTURA_NO_ENCONTRADA = 'No se encontró la factura.';
+/** FR-04, AC-05: el 409 `sin_datos_emisor` del PDF de la factura, con el texto propio de la pantalla. */
+export const MENSAJE_FACTURA_SIN_DATOS_EMISOR =
+  'Completá los datos del emisor en la configuración para generar el PDF de la factura.';
+
+/**
+ * Lo escrito en el formulario de la búsqueda de facturas: textos tal cual y fechas `yyyy-MM-dd` o vacías. Datos
+ * personales (Ley 25.326): viajan solo en el cuerpo JSON, nunca en la URL, en el almacenamiento ni en la consola.
+ */
+export interface FiltroFacturas {
+  apellido: string;
+  nombre: string;
+  dni: string;
+  /** El número de comprobante, por coincidencia parcial (FR-20). */
+  numero: string;
+  desde: string;
+  hasta: string;
+}
+
+/** Un resultado de la búsqueda de facturas: los datos de FR-23, con el comprobante como texto (D-15), y nada más. */
+export interface FacturaListada {
+  /** El número del presupuesto de origen: identifica la factura en la web (D-14, D-28). */
+  presupuesto: number;
+  /** "Factura B 0003-00000125". */
+  comprobante: string;
+  /** `yyyy-MM-dd`. */
+  fecha: string;
+  apellido: string;
+  nombre: string;
+  dni: string;
+  total: number;
+}
+
+/** Una página de la búsqueda de facturas; una página posterior a la última trae la lista vacía y el total. */
+export interface PaginaFacturas {
+  facturas: FacturaListada[];
+  pagina: number;
+  tamanoPagina: number;
+  total: number;
+}
+
+/** El resultado de buscar facturas: un 400 trae todos los campos inválidos. */
+export type ResultadoBusquedaFacturas = Resultado<PaginaFacturas> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+/** Una línea del detalle de la factura: descripción, cantidad e importe (el precio final de la línea). */
+export interface LineaFactura {
+  descripcion: string;
+  cantidad: number;
+  importe: number;
+}
+
+/**
+ * El detalle de la factura de un presupuesto (FR-24): el comprobante como texto (D-15), el presupuesto de origen, el
+ * cliente del presupuesto (FR-25), el receptor como lo dice la factura ("Consumidor Final" o "DNI 00123456"), las
+ * líneas, el total, el IVA contenido (`null` en la Factura C), el CAE con su vencimiento y si es simulada.
+ */
+export interface FacturaDetalle {
+  comprobante: string;
+  /** `yyyy-MM-dd`. */
+  fecha: string;
+  presupuesto: number;
+  apellido: string;
+  nombre: string;
+  dni: string;
+  receptor: string;
+  lineas: LineaFactura[];
+  total: number;
+  ivaContenido: number | null;
+  cae: string;
+  /** `yyyy-MM-dd`. */
+  vencimientoCae: string;
+  simulada: boolean;
+}
+
+/** Un resultado: solo copia los siete datos de FR-23; si la respuesta trajera otros datos del cliente, se descartan. */
+const leerFacturaListada: Lector<FacturaListada> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  esEnteroEntre(cuerpo.presupuesto, 1) &&
+  esComprobante(cuerpo.comprobante) &&
+  esFecha(cuerpo.fecha) &&
+  typeof cuerpo.apellido === 'string' &&
+  typeof cuerpo.nombre === 'string' &&
+  typeof cuerpo.dni === 'string' &&
+  esImporte(cuerpo.total)
+    ? {
+        presupuesto: cuerpo.presupuesto,
+        comprobante: cuerpo.comprobante,
+        fecha: cuerpo.fecha,
+        apellido: cuerpo.apellido,
+        nombre: cuerpo.nombre,
+        dni: cuerpo.dni,
+        total: cuerpo.total,
+      }
+    : undefined;
+
+/** Una lista en la que cada elemento se lee con `leer`: cualquier elemento ilegible hace ilegible la lista. */
+function leerLista<T>(valor: unknown, leer: Lector<T>): T[] | undefined {
+  if (!Array.isArray(valor)) {
+    return undefined;
+  }
+  const leidos: T[] = [];
+  for (const elemento of valor as unknown[]) {
+    const leido = leer(elemento);
+    if (leido === undefined) {
+      return undefined;
+    }
+    leidos.push(leido);
+  }
+  return leidos;
+}
+
+/** Una página de la búsqueda de facturas: cualquier resultado ilegible hace ilegible la página entera. */
+const leerPaginaFacturas: Lector<PaginaFacturas> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    !esEnteroEntre(cuerpo.pagina, 1) ||
+    !esEnteroEntre(cuerpo.tamanoPagina, 1) ||
+    !esEnteroEntre(cuerpo.total, 0)
+  ) {
+    return undefined;
+  }
+  const facturas = leerLista(cuerpo.facturas, leerFacturaListada);
+  return facturas === undefined
+    ? undefined
+    : { facturas, pagina: cuerpo.pagina, tamanoPagina: cuerpo.tamanoPagina, total: cuerpo.total };
+};
+
+/** Una línea del detalle: solo sus tres datos; cantidad entera positiva. */
+const leerLineaFactura: Lector<LineaFactura> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.descripcion === 'string' &&
+  esEnteroEntre(cuerpo.cantidad, 1) &&
+  esImporte(cuerpo.importe)
+    ? { descripcion: cuerpo.descripcion, cantidad: cuerpo.cantidad, importe: cuerpo.importe }
+    : undefined;
+
+/**
+ * El detalle: los trece datos, y solo ellos. Una factura sin líneas, o con un IVA contenido que no corresponde a su
+ * letra (importe en la B, `null` en la C), es ilegible.
+ */
+const leerFacturaDetalle: Lector<FacturaDetalle> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    !esComprobante(cuerpo.comprobante) ||
+    !esFecha(cuerpo.fecha) ||
+    !esEnteroEntre(cuerpo.presupuesto, 1) ||
+    typeof cuerpo.apellido !== 'string' ||
+    typeof cuerpo.nombre !== 'string' ||
+    typeof cuerpo.dni !== 'string' ||
+    typeof cuerpo.receptor !== 'string' ||
+    !esImporte(cuerpo.total) ||
+    !(cuerpo.ivaContenido === null || esImporte(cuerpo.ivaContenido)) ||
+    typeof cuerpo.cae !== 'string' ||
+    !FORMATO_CAE.test(cuerpo.cae) ||
+    !esFecha(cuerpo.vencimientoCae) ||
+    typeof cuerpo.simulada !== 'boolean'
+  ) {
+    return undefined;
+  }
+  // FR-11, FR-12: la Factura B siempre lleva el IVA contenido y la C nunca, como lo cruza `leerFacturaEmitida`.
+  // El comprobante ya cumple FORMATO_COMPROBANTE: si no es una B, es una C.
+  const esFacturaB = cuerpo.comprobante.startsWith('Factura B ');
+  if (esFacturaB !== (cuerpo.ivaContenido !== null)) {
+    return undefined;
+  }
+  const lineas = leerLista(cuerpo.lineas, leerLineaFactura);
+  if (lineas === undefined || lineas.length === 0) {
+    return undefined;
+  }
+  return {
+    comprobante: cuerpo.comprobante,
+    fecha: cuerpo.fecha,
+    presupuesto: cuerpo.presupuesto,
+    apellido: cuerpo.apellido,
+    nombre: cuerpo.nombre,
+    dni: cuerpo.dni,
+    receptor: cuerpo.receptor,
+    lineas,
+    total: cuerpo.total,
+    ivaContenido: cuerpo.ivaContenido,
+    cae: cuerpo.cae,
+    vencimientoCae: cuerpo.vencimientoCae,
+    simulada: cuerpo.simulada,
+  };
+};
+
+/**
+ * Busca facturas (FR-16 a FR-23) con `POST /api/facturacion/busqueda` (D-28): los filtros viajan en el cuerpo JSON y
+ * nunca en la URL (ADR-019). Como {@link buscarPresupuestos}: un 400 devuelve todos los campos de `errors`; un 413,
+ * {@link MENSAJE_BUSQUEDA_GRANDE}; un 401 sin cuerpo avisa a {@link alPerderLaSesion}; una falla de red, un 5xx o una
+ * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}.
+ */
+export const buscarFacturas = (filtro: FiltroFacturas, pagina: number): Promise<ResultadoBusquedaFacturas> =>
+  grabarConCampos(
+    {
+      metodo: 'POST',
+      ruta: '/api/facturacion/busqueda',
+      cuerpo: cuerpoBusqueda(
+        [
+          [CAMPO_APELLIDO, filtro.apellido],
+          [CAMPO_NOMBRE, filtro.nombre],
+          [CAMPO_DNI, filtro.dni],
+          [CAMPO_NUMERO_COMPROBANTE, filtro.numero],
+          [CAMPO_DESDE, filtro.desde],
+          [CAMPO_HASTA, filtro.hasta],
+        ],
+        pagina,
+      ),
+      mensaje413: MENSAJE_BUSQUEDA_GRANDE,
+    },
+    leerPaginaFacturas,
+  );
+
+/**
+ * La factura emitida desde un presupuesto (FR-24) con `GET /api/presupuestos/{numero}/factura` (D-14). Un 404, o un
+ * número que no puede existir (no se envía), es {@link MENSAJE_FACTURA_NO_ENCONTRADA}.
+ */
+export const consultarFactura = (numero: number): Promise<Resultado<FacturaDetalle>> =>
+  esEnteroEntre(numero, 1)
+    ? pedir(
+        { metodo: 'GET', ruta: `/api/presupuestos/${numero}/factura`, mensaje404: MENSAJE_FACTURA_NO_ENCONTRADA },
+        leerFacturaDetalle,
+      )
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA });
+
+/**
+ * El PDF de la factura de un presupuesto (FR-05) con `GET /api/presupuestos/{numero}/factura/pdf`, como `Blob`. El 409
+ * `sin_datos_emisor` (FR-04) es un conflicto propio con {@link MENSAJE_FACTURA_SIN_DATOS_EMISOR}, nunca el `detail` del
+ * servidor; cualquier otro motivo es una respuesta ilegible. Un 404 es {@link MENSAJE_FACTURA_NO_ENCONTRADA}.
+ */
+export const descargarPdfFactura = (numero: number): Promise<Resultado<Blob>> =>
+  descargarPdf(
+    numero,
+    `/api/presupuestos/${numero}/factura/pdf`,
+    { sin_datos_emisor: MENSAJE_FACTURA_SIN_DATOS_EMISOR },
+    MENSAJE_FACTURA_NO_ENCONTRADA,
   );
 
 /**

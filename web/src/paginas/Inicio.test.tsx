@@ -91,6 +91,14 @@ describe('Inicio', () => {
         puntoVenta: null,
         alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
       }),
+      // FEAT-009: la sección de los datos del emisor, sin cargar (D-22).
+      'GET /api/configuracion/emisor': json(200, {
+        razonSocial: null,
+        domicilioComercial: null,
+        cuit: null,
+        ingresosBrutos: null,
+        inicioActividades: null,
+      }),
     });
     renderizarApp('/');
     const enlace = await screen.findByRole('link', { name: 'Configuración' });
@@ -139,6 +147,20 @@ describe('Inicio', () => {
     expect(await screen.findByRole('heading', { name: 'Buscar presupuestos' })).toBeTruthy();
     expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos');
     expect(servidor.pedidosA('POST', '/api/presupuestos/busqueda')).toHaveLength(0);
+  });
+
+  it('Inicio: enlace Facturas', async () => {
+    // FEAT-009: la búsqueda de facturas no consulta al abrir, como la de presupuestos.
+    const servidor = servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Facturas' });
+    expect(enlace.getAttribute('href')).toBe('/facturas');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Buscar facturas' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/facturas');
+    expect(servidor.pedidosA('POST', '/api/facturacion/busqueda')).toHaveLength(0);
   });
 
   it('Inicio_EnlaceArticulos', async () => {

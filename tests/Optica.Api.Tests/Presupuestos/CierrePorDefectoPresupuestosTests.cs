@@ -135,6 +135,41 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Equal(GenerarPdfPresupuesto.DetalleBorrador, problema.Detail);
     }
 
+    /// <summary>
+    /// FEAT-009, Block 5: el traductor del PDF de la factura es cerrado por defecto. Generado, 200
+    /// <c>application/pdf</c> como adjunto <c>factura-B-0003-00000125.pdf</c>; no encontrado, 404 con el título fijo; sin
+    /// datos del emisor, 409 <c>sin_datos_emisor</c> con el detalle fijo (D-26). Cualquier otro resultado lanza, y el
+    /// helper del 409 rechaza un motivo no previsto.
+    /// </summary>
+    [Fact]
+    public void ResponderPdfFactura_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderPdfFactura(null));
+
+        var comprobante = new Domain.Facturacion.NumeroComprobante(Domain.Facturacion.TipoComprobante.FacturaB, 3, 125);
+        var archivo = Assert.IsType<FileContentResult>(
+            controller.ResponderPdfFactura(ResultadoPdfFactura.Generado([1, 2, 3], comprobante)));
+        Assert.Equal("application/pdf", archivo.ContentType);
+        Assert.Equal("factura-B-0003-00000125.pdf", archivo.FileDownloadName);
+        Assert.Equal([1, 2, 3], archivo.FileContents);
+
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderPdfFactura(ResultadoPdfFactura.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+        Assert.Equal("No se encontró la factura.", Assert.IsType<ProblemDetails>(noEncontrado.Value).Title);
+
+        var sinEmisor = Assert.IsType<ObjectResult>(controller.ResponderPdfFactura(ResultadoPdfFactura.SinDatosEmisor));
+        Assert.Equal(StatusCodes.Status409Conflict, sinEmisor.StatusCode);
+        var problema = Assert.IsType<ProblemDetails>(sinEmisor.Value);
+        Assert.Equal("No se pudo generar el PDF de la factura.", problema.Title);
+        Assert.Equal(
+            "Completá los datos del emisor en la configuración para generar el PDF de la factura.", problema.Detail);
+        Assert.Equal("sin_datos_emisor", problema.Extensions["motivo"]);
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoPdfFactura("otro"));
+    }
+
     /// <summary>FEAT-003c: <c>version</c> y <c>lineas[i].orden</c> tienen su propio campo en un error de lectura.</summary>
     [Theory]
     [InlineData("$.version", "version")]
@@ -662,7 +697,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

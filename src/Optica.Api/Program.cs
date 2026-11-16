@@ -139,6 +139,12 @@ public partial class Program
         builder.Services.AddScoped<ObtenerConfiguracionNegocio>();
         builder.Services.AddScoped<GrabarConfiguracionConRecalculo>();
 
+        // Datos del emisor (FEAT-009, ADR-028), con sesión: se leen de la base en cada pedido y cada grabación queda en el
+        // log solo con los nombres de los campos que cambiaron (categoría Optica.Application.Configuracion.DatosEmisor,
+        // R-06).
+        builder.Services.AddScoped<ObtenerDatosEmisor>();
+        builder.Services.AddScoped<GrabarDatosEmisor>();
+
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
         // listado (sin costo ni margen, D-12), la modificación con versión (D-08, D-17) y el cambio de estado (D-09).
@@ -180,6 +186,15 @@ public partial class Program
         builder.Services.AddScoped<VerificarEmision>();
         builder.Services.AddScoped<DescartarEmision>();
         builder.Services.AddScoped<ListarEmisionesPendientes>();
+
+        // FEAT-009 (Block 5): el detalle y el PDF de la factura de un presupuesto, dos lecturas sin transacción de
+        // escritura. El PDF usa los datos del emisor vigentes (ADR-028) y el generador que registra Infrastructure
+        // (QuestPDF y QRCoder, ADR-027).
+        builder.Services.AddScoped<ObtenerFactura>();
+        builder.Services.AddScoped<GenerarPdfFactura>();
+        // FEAT-009 (Block 6): la búsqueda de facturas, una lectura sin transacción de escritura y sin registrador; los
+        // filtros llegan en el cuerpo (ADR-019, D-28, R-01).
+        builder.Services.AddScoped<BuscarFacturas>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

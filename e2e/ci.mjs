@@ -626,14 +626,20 @@ const RUTAS_W3 = new Set(['/2000/svg', '/1999/xhtml', '/1999/xlink', '/Graphics/
 /**
  * ARCA (FEAT-007): pares exactos de host y ruta que escriben las pruebas del cliente de WSAA y WSFEv1 sin pedirlos (un
  * `HttpMessageHandler` falso responde): el espacio de nombres SOAP 1.1, el de WSFEv1 con las acciones SOAP usadas, y
- * las direcciones de homologación. La ruta se compara tal cual, con mayúsculas. Producción (`wsaa.afip.gov.ar`,
- * `servicios1.afip.gov.ar`) no está y nunca se agrega: AGENTS.md prohíbe emitir contra producción.
+ * las direcciones de homologación. La ruta se compara tal cual, con mayúsculas. Producción de emisión
+ * (`wsaa.afip.gov.ar`, `servicios1.afip.gov.ar`) no está y nunca se agrega: AGENTS.md prohíbe emitir contra producción.
+ *
+ * FEAT-009 (ADR-027): `www.afip.gob.ar/fe/qr/` es otra cosa. No es un host de emisión sino la URL pública de
+ * verificación que el QR del PDF de la factura lleva como dato (`QrArca`); las pruebas la escriben y decodifican sin
+ * pedirla nunca. Vale solo esa ruta exacta (el parámetro `p` queda fuera de la ruta); el resto de `www.afip.gob.ar`
+ * sigue siendo externo, y esto no habilita ningún host de producción para emitir.
  */
 const RUTAS_ARCA = new Map([
   ['schemas.xmlsoap.org', new Set(['/soap/envelope/'])],
   ['ar.gov.afip.dif.fev1', new Set(['/', '/FECAESolicitar', '/FECompUltimoAutorizado', '/FECompConsultar'])],
   ['wsaahomo.afip.gov.ar', new Set(['/ws/services/LoginCms'])],
   ['wswhomo.afip.gov.ar', new Set(['/wsfev1/service.asmx'])],
+  ['www.afip.gob.ar', new Set(['/fe/qr/'])],
 ]);
 
 /** Hosts que una prueba puede escribir: la propia máquina, la red privada y los dominios reservados para ejemplos. */
@@ -654,8 +660,9 @@ function esHostPermitido(host, ruta) {
  * Hosts externos nombrados en URL del texto (FR-10). Permitidos: `localhost`, `127.0.0.1` y `::1` (sin corchetes),
  * las IPv4 `10.*`, `192.168.*` y `172.16.*` a `172.31.*` (en decimal, sin ceros iniciales), los terminados en
  * `.example`, `example.com` y sus subdominios, `www.w3.org` solo con las rutas de `RUTAS_W3` y los hosts de ARCA de
- * `RUTAS_ARCA` solo con sus rutas (homologación y espacios de nombres; nunca producción). Cualquier otra IP o
- * nombre es externo. El host es lo que sigue al último `@` de la autoridad, como lo lee el parser de URL.
+ * `RUTAS_ARCA` solo con sus rutas (homologación, espacios de nombres y la URL del QR; nunca producción de emisión).
+ * Cualquier otra IP o nombre es externo. El host es lo que sigue al último `@` de la autoridad, como lo lee el
+ * parser de URL.
  * @param {string} texto contenido de un archivo.
  * @returns {string[]} hosts externos en minúsculas, sin repetir, en el orden en que aparecen.
  */

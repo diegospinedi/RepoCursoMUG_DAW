@@ -18,40 +18,46 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5544 |
 | `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
 | `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
-| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5547 |
-| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5548 |
-| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5549 |
-| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5550 |
-| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5551 |
-| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5552 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5553 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5554 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5555 |
-| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5556 |
-| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5557 |
-| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5558 |
-| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5559 |
-| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5560 |
-| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5561 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5562 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5563 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5564 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5565 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5566 |
-| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5567 |
-| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5568 |
-| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5569 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5570 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5571 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5572 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5573 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5574 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5575 |
-| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5576 |
-| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5577 |
-| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5578 |
-| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5579 |
-| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5580 |
+| `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5547 |
+| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5548 |
+| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5549 |
+| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5550 |
+| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5551 |
+| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5552 |
+| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5553 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5554 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5555 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5556 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5557 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5558 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5559 |
+| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5560 |
+| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5561 |
+| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5562 |
+| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5563 |
+| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5564 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5565 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5566 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5567 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5568 |
+| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5569 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5570 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5571 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5572 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5573 |
+| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5574 |
+| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5575 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5576 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5577 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5578 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5579 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5580 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5581 |
+| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5582 |
+| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5583 |
+| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5584 |
+| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5585 |
+| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5586 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -70,7 +76,10 @@ de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec
 `facturacion-rechazo.spec.ts` y `facturacion-sin-respuesta.spec.ts` (FEAT-007) ocupan 5548–5550 en Chrome, mueven los
 `chrome-presupuestos-*` a 5551–5556 y los de Edge a 5557–5561 y 5565–5570, con los suyos en 5562–5564; y los cinco
 `verificacion-*.spec.ts` (FEAT-008) ocupan 5557–5561 en Chrome, después de todos los demás, mueven los de Edge a
-5562–5575 y tienen los suyos en 5576–5580. Son 38 proyectos, de 5543 a 5580. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
+5562–5575 y tienen los suyos en 5576–5580; y `configuracion-emisor.spec.ts`, `facturas-busqueda.spec.ts` y
+`facturas-pdf.spec.ts` (FEAT-009) ocupan 5547, 5552 y 5553 en Chrome, mueven `chrome-configuracion-recalculo` y los
+`chrome-facturacion*` a 5548–5551 y los `chrome-presupuestos-*` y `chrome-verificacion-*` a 5554–5564, y los de Edge a
+5565–5568, 5570–5573 y 5576–5586, con los suyos en 5569, 5574 y 5575. Son 44 proyectos, de 5543 a 5586. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
 `[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
 
 **ARCA en la suite (FEAT-007).** Todas las Api de la suite arrancan con ARCA simulada (`Arca__Entorno=Simulado`), con
@@ -95,6 +104,8 @@ Api) salen del archivo de pruebas, que `servidor.mjs` conoce por el nombre del p
 | `facturacion.spec.ts` | `autorizar` | `responder` | 3 s | contador en 124 (\*) |
 | `facturacion-rechazo.spec.ts` | `rechazar` | `responder` | 3 s | sin archivo |
 | `facturacion-sin-respuesta.spec.ts` | `no_responder` | `responder` | 3 s | sin archivo |
+| `facturas-pdf.spec.ts` | `autorizar` | `responder` | 3 s | Factura B en 124 (\*\*) |
+| `facturas-busqueda.spec.ts` | `autorizar` | `responder` | 3 s | Factura B en 124 y Factura C en 34560 (\*\*) |
 | `verificacion-recupera.spec.ts` | `autorizar_sin_responder` | `responder` | 3 s | sin archivo |
 | `verificacion-emite.spec.ts` | `no_responder_una_vez` | `responder` | 8 s | sin archivo |
 | `verificacion-sin-respuesta.spec.ts` | `no_responder` | `responder` | 6 s | sin archivo |
@@ -104,6 +115,11 @@ Api) salen del archivo de pruebas, que `servidor.mjs` conoce por el nombre del p
 
 (\*) La Factura B del punto de venta 3 arranca en 124: la primera autorizada es la 0003-00000125 (AC-19 y AC-30 de
 FEAT-007).
+
+(\*\*) FEAT-009: en los dos archivos la Factura B del punto de venta 3 arranca en 124 (`'B-3': 124`), así la primera
+es la 0003-00000125 (AC-08 y AC-23); en `facturas-busqueda.spec.ts` la Factura C del punto de venta 3 arranca además
+en 34560 (`'C-3': 34560`), así la primera es la 0003-00034561 (AC-19). El harness revisa los contadores como los lee el
+simulador (claves `B-<pv>` o `C-<pv>`, enteros de 0 a 99999999) y se detiene antes de compilar si uno no sirve.
 
 La espera (`Arca__EsperaVerificacionSegundos`) es de 3 s salvo en dos archivos que tienen que hacer un pedido antes de
 que pase: `verificacion-emite.spec.ts` (8 s: la otra pestaña pide verificar durante la emisión, AC-17) y

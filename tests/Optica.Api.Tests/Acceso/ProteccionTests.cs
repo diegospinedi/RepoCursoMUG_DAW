@@ -104,6 +104,8 @@ public sealed class ProteccionTests
             (HttpMethods.Post, RutaVerificacion),
             (HttpMethods.Post, RutaDescarte),
             (HttpMethods.Get, RutaEmisionesPendientes),
+            // FEAT-009: la búsqueda de facturas lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (R-01).
+            (HttpMethods.Post, RutaBusquedaFacturas),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -185,6 +187,14 @@ public sealed class ProteccionTests
                 cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/descarte",
                 CuerpoFacturaDeBytes(LimiteFactura + 1))),
             ("GET emisiones pendientes", Http.GetAsync(cliente, RutaEmisionesPendientes)),
+            ("POST busqueda facturas", EnviarJsonAsync(cliente, HttpMethod.Post, RutaBusquedaFacturas, CuerpoBusqueda)),
+            ("POST busqueda facturas texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                RutaBusquedaFacturas,
+                new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"))),
+            ("POST busqueda facturas grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, RutaBusquedaFacturas, CuerpoBusquedaDeBytes(LimiteBusqueda + 1))),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -322,9 +332,104 @@ public sealed class ProteccionTests
         return Http.EnviarAsync(cliente, HttpMethod.Post, $"{RutaPresupuestos}/999/factura", contenido, cookie);
     }
 
+    // FEAT-009: los datos del emisor (ADR-028).
+
+    private const string RutaEmisor = "/api/configuracion/emisor";
+
+    /// <summary>El límite del cuerpo de los datos del emisor: 2 KB (<c>[RequestSizeLimit]</c>, D-21).</summary>
+    private const int LimiteEmisor = 2 * 1024;
+
+    /// <summary>Los cinco datos del emisor, inventados, con el CUIT ficticio (D-33).</summary>
+    private const string CuerpoEmisor =
+        "{\"razonSocial\":\"Zq7Ficticia SA\",\"domicilioComercial\":\"Calle Inventada 123\",\"cuit\":\"20-00000000-1\","
+        + "\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}";
+
+    /// <summary>
+    /// Sad path (R-06): sin sesión, el GET y el POST de <c>/api/configuracion/emisor</c> responden 401 sin cuerpo; el
+    /// POST, antes de leer el cuerpo y antes del 415 y del 413. Las rutas existen, no son anónimas y no se grabó nada.
+    /// </summary>
+    [Fact]
+    public async Task RutasEmisor_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        foreach (var metodo in new[] { HttpMethods.Get, HttpMethods.Post })
+        {
+            Assert.Contains((metodo, RutaEmisor), endpoints);
+            Assert.False(RutasAnonimas.Contiene(metodo, RutaEmisor), $"{metodo} {RutaEmisor} no puede ser anónima.");
+        }
+
+        var pedidos = new List<(string Descripcion, HttpMethod Metodo, HttpContent? Contenido)>
+        {
+            ("GET", HttpMethod.Get, null),
+            ("POST", HttpMethod.Post, new StringContent(CuerpoEmisor, Encoding.UTF8, "application/json")),
+            ("POST ilegible", HttpMethod.Post, new StringContent("esto no es json", Encoding.UTF8, "application/json")),
+            ("POST texto plano", HttpMethod.Post, new StringContent(CuerpoEmisor, Encoding.UTF8, "text/plain")),
+            ("POST grande", HttpMethod.Post, new StringContent(
+                CuerpoEmisorDeBytes(LimiteEmisor + 1), Encoding.UTF8, "application/json")),
+            ("POST sin cuerpo", HttpMethod.Post, null),
+        };
+        foreach (var (descripcion, metodo, contenido) in pedidos)
+        {
+            var respuesta = await Http.EnviarAsync(cliente, metodo, RutaEmisor, contenido);
+
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.Unauthorized,
+                $"{descripcion} respondió {(int)respuesta.StatusCode} sin sesión; se esperaba 401.");
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        // Nada se grabó: con sesión, el GET sigue con los cinco datos en null.
+        var leido = await Http.JsonAsync(await Http.GetAsync(cliente, RutaEmisor, cookie));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("razonSocial").ValueKind);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("cuit").ValueKind);
+    }
+
+    /// <summary>El POST de los datos del emisor exige <c>Content-Type: application/json</c>: si no, 415 sin cuerpo.</summary>
+    [Theory]
+    [InlineData("textoPlano")]
+    [InlineData("sinTipo")]
+    [InlineData("sinTipoNiCuerpo")]
+    public async Task PostEmisor_SinJson_415(string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(CuerpoEmisor, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoEmisor)),
+            _ => new ByteArrayContent([]),
+        };
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaEmisor, contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        AfirmarQueElEndpointExiste(fabrica, RutaEmisor);
+    }
+
+    /// <summary><see cref="CuerpoEmisor"/> con una propiedad que se ignora, hasta ocupar <paramref name="bytes"/>.</summary>
+    private static string CuerpoEmisorDeBytes(int bytes)
+    {
+        var sinRelleno = CuerpoEmisor[..^1] + ",\"relleno\":\"\"}";
+        var faltan = bytes - Encoding.UTF8.GetByteCount(sinRelleno);
+        Assert.True(faltan >= 0, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = CuerpoEmisor[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    /// <summary>FEAT-009: la búsqueda de facturas, con el mismo tope de 4 KB y el mismo cuerpo (ADR-019, D-28).</summary>
+    private const string RutaBusquedaFacturas = "/api/facturacion/busqueda";
 
     /// <summary>El límite del cuerpo de la búsqueda: 4 KB (<c>[RequestSizeLimit]</c>).</summary>
     private const int LimiteBusqueda = 4 * 1024;
@@ -362,8 +467,8 @@ public sealed class ProteccionTests
     }
 
     /// <summary>
-    /// La búsqueda exige <c>Content-Type: application/json</c> (<see cref="LimitesDelCuerpo"/>): texto plano, ningún tipo,
-    /// o ningún tipo y ningún cuerpo, 415 sin cuerpo.
+    /// Las dos búsquedas (presupuestos y, desde FEAT-009, facturas) exigen <c>Content-Type: application/json</c>
+    /// (<see cref="LimitesDelCuerpo"/>): texto plano, ningún tipo, o ningún tipo y ningún cuerpo, 415 sin cuerpo.
     /// </summary>
     [Theory]
     [InlineData("textoPlano")]
@@ -375,17 +480,20 @@ public sealed class ProteccionTests
         var cliente = fabrica.CrearClienteSinCookies();
         var cookie = await Http.DefinirAsync(cliente);
 
-        HttpContent contenido = variante switch
+        foreach (var ruta in new[] { RutaBusqueda, RutaBusquedaFacturas })
         {
-            "textoPlano" => new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
-            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoBusqueda)),
-            _ => new ByteArrayContent([]),
-        };
-        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, contenido, cookie);
+            HttpContent contenido = variante switch
+            {
+                "textoPlano" => new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
+                "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoBusqueda)),
+                _ => new ByteArrayContent([]),
+            };
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido, cookie);
 
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
-        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
-        AfirmarQueElEndpointExiste(fabrica, RutaBusqueda);
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+            AfirmarQueElEndpointExiste(fabrica, ruta);
+        }
     }
 
     /// <summary>
@@ -956,6 +1064,46 @@ public sealed class ProteccionTests
                 .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
                 .Select(usado => (Tipo: t, Usado: usado)))
             .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith("QuestPDF", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
+            .ToList();
+        Assert.Empty(usos);
+    }
+
+    /// <summary>
+    /// ADR-027: la biblioteca de QR (QRCoder) es un detalle de Infrastructure, como QuestPDF. La Api no compila contra
+    /// ella ni la declara en su proyecto: el QR le llega dibujado dentro del PDF por <c>IGeneradorPdfFactura</c>. Ningún
+    /// tipo de la Api usa un tipo de QRCoder en su firma.
+    /// </summary>
+    [Fact]
+    public void Api_NoReferenciaQrCoder()
+    {
+        var api = typeof(Program).Assembly;
+
+        var referencias = api.GetReferencedAssemblies().Select(r => r.Name).ToList();
+        Assert.DoesNotContain(referencias, r => r!.StartsWith("QRCoder", StringComparison.OrdinalIgnoreCase));
+
+        // Control: la enumeración ve las referencias reales de la Api.
+        Assert.Contains("Optica.Application", referencias);
+
+        var proyecto = File.ReadAllText(Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "Optica.Api.csproj"));
+        Assert.DoesNotContain("QRCoder", proyecto, StringComparison.OrdinalIgnoreCase);
+
+        // Control: QRCoder sí es una dependencia de Infrastructure, que es quien dibuja el QR; si no lo fuera, su
+        // ausencia en la Api no probaría nada.
+        var infraestructura = typeof(Optica.Infrastructure.ConfiguracionInfraestructura).Assembly;
+        Assert.Contains(
+            infraestructura.GetReferencedAssemblies(),
+            r => string.Equals(r.Name, "QRCoder", StringComparison.OrdinalIgnoreCase));
+
+        var usos = api.GetTypes()
+            .SelectMany(t => t.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.DeclaredOnly)
+                .SelectMany(m => m.GetParameters().Select(p => p.ParameterType).Append(m.ReturnType))
+                .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
+                .Select(usado => (Tipo: t, Usado: usado)))
+            .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith("QRCoder", StringComparison.OrdinalIgnoreCase) == true)
             .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
             .ToList();
         Assert.Empty(usos);

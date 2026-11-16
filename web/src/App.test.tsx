@@ -163,6 +163,34 @@ const PRESUPUESTO_155 = {
   observacionEmision: null,
 };
 
+/** La Factura B 0003-00000125 del presupuesto 155 en la búsqueda (FEAT-009), con datos ficticios. */
+const FACTURA_LISTADA_155 = {
+  presupuesto: 155,
+  comprobante: 'Factura B 0003-00000125',
+  fecha: '2026-10-30',
+  apellido: 'Pérez',
+  nombre: 'Ana',
+  dni: '00123456',
+  total: 1815,
+};
+
+/** El detalle de esa factura (FEAT-009): el comprobante como texto, sin el punto de venta como dato aparte (D-15). */
+const FACTURA_DETALLE_155 = {
+  comprobante: 'Factura B 0003-00000125',
+  fecha: '2026-10-30',
+  presupuesto: 155,
+  apellido: 'Pérez',
+  nombre: 'Ana',
+  dni: '00123456',
+  receptor: 'DNI 00123456',
+  lineas: [{ descripcion: 'Armazón metálico', cantidad: 1, importe: 1815 }],
+  total: 1815,
+  ivaContenido: 315,
+  cae: '12345678901234',
+  vencimientoCae: '2026-11-09',
+  simulada: true,
+};
+
 const PANTALLAS: Pantalla[] = [
   {
     ruta: '/',
@@ -222,9 +250,20 @@ const PANTALLAS: Pantalla[] = [
           puntoVenta: null,
           alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
+        // FEAT-009: los datos del emisor sin cargar (D-22).
+        'GET /api/configuracion/emisor': json(200, {
+          razonSocial: null,
+          domicilioComercial: null,
+          cuit: null,
+          ingresosBrutos: null,
+          inicioActividades: null,
+        }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
+    interactuar: async () => {
+      await screen.findByRole('button', { name: 'Grabar datos del emisor' });
+    },
   },
   {
     ruta: '/configuracion',
@@ -240,10 +279,19 @@ const PANTALLAS: Pantalla[] = [
           puntoVenta: 3,
           alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
+        // FEAT-009: los datos del emisor cargados, con datos ficticios (D-33).
+        'GET /api/configuracion/emisor': json(200, {
+          razonSocial: 'Óptica de Prueba S.A.',
+          domicilioComercial: 'Calle Falsa 123, Ciudad',
+          cuit: '20000000001',
+          ingresosBrutos: '901-000000-1',
+          inicioActividades: '2020-03-01',
+        }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
     interactuar: async () => {
+      await screen.findByRole('button', { name: 'Grabar datos del emisor' });
       // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía.
       await screen.findByLabelText('Alícuota de IVA (%)');
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
@@ -448,6 +496,46 @@ const PANTALLAS: Pantalla[] = [
       expect(await screen.findByText('La fecha Desde no puede ser posterior a Hasta.')).toBeTruthy();
     },
   },
+  {
+    ruta: '/facturas',
+    descripcion: 'búsqueda de facturas con resultados y el rango de fechas invertido (FEAT-009)',
+    preparar: () =>
+      servidorFalso({
+        'POST /api/facturacion/busqueda': json(200, {
+          facturas: [FACTURA_LISTADA_155],
+          pagina: 1,
+          tamanoPagina: 50,
+          total: 1,
+        }),
+      }),
+    titulo: 'Buscar facturas',
+    interactuar: async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+      expect(await screen.findByText('Factura B 0003-00000125')).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-03-20' } });
+      fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-03-10' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+      expect(await screen.findByText('La fecha Desde no puede ser posterior a Hasta.')).toBeTruthy();
+    },
+  },
+  {
+    ruta: '/facturas/:numero',
+    url: '/facturas/155',
+    descripcion: 'detalle de la factura con el aviso de los datos del emisor (FEAT-009)',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/presupuestos/155/factura': json(200, FACTURA_DETALLE_155),
+        'GET /api/presupuestos/155/factura/pdf': json(409, {
+          title: 'No se pudo generar el PDF de la factura.',
+          motivo: 'sin_datos_emisor',
+        }),
+      }),
+    titulo: 'Factura',
+    interactuar: async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Descargar PDF' }));
+      expect(await screen.findByRole('link', { name: 'Ir a la configuración' })).toBeTruthy();
+    },
+  },
 ];
 
 describe('Sin datos de ARCA en pantalla', () => {
@@ -472,6 +560,23 @@ describe('Sin datos de ARCA en pantalla', () => {
         encontrado?.[0] ?? null,
         `La pantalla de ${pantalla.descripcion} (${pantalla.ruta}) muestra un dato de ARCA`,
       ).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('Pantallas_NingunaMuestraDatosArca_IncluyeFacturas', async () => {
+    // FEAT-009: la búsqueda y el detalle de facturas son rutas de la App, revisadas como las demás (D-15).
+    const rutas = rutasDeLaApp();
+    expect(rutas).toEqual(expect.arrayContaining(['/facturas', '/facturas/:numero']));
+    const facturas = PANTALLAS.filter((p) => p.ruta === '/facturas' || p.ruta === '/facturas/:numero');
+    expect(facturas.map((p) => p.ruta)).toEqual(['/facturas', '/facturas/:numero']);
+    for (const pantalla of facturas) {
+      pantalla.preparar();
+      renderizarApp(pantalla.url ?? pantalla.ruta);
+      expect(await screen.findByRole('heading', { name: pantalla.titulo })).toBeTruthy();
+      await pantalla.interactuar?.();
+      expect(pantalla.conPuntoVenta).toBeUndefined();
+      expect(DATOS_ARCA.exec(textoDeLaPantalla())?.[0] ?? null, pantalla.descripcion).toBeNull();
       cleanup();
     }
   });

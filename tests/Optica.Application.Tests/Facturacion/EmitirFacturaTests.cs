@@ -832,6 +832,10 @@ public sealed class EmitirFacturaTests
         public Task<bool> ExisteParaPresupuestoAsync(long numero, CancellationToken cancelacion = default) =>
             real.ExisteParaPresupuestoAsync(numero, cancelacion);
 
+        public Task<PaginaFacturas> BuscarAsync(
+            FiltroFacturas filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default) =>
+            real.BuscarAsync(filtro, pagina, tamanoPagina, cancelacion);
+
         public void Agregar(EmisionPendiente pendiente) => real.Agregar(pendiente);
 
         public void Quitar(long numero) => real.Quitar(numero);

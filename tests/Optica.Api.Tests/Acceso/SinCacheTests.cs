@@ -246,9 +246,25 @@ public sealed class SinCacheTests : IDisposable
         var ilegible = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"pagina\":\"2\"}", cookie);
         Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
         AfirmarNoStore(ilegible, "400 de un cuerpo de búsqueda ilegible");
+
+        // FEAT-009 (R-01): la búsqueda de facturas también trae Apellido, Nombre y DNI; lo mismo para sus respuestas.
+        var facturas = await Http.PostJsonAsync(cliente, RutaBusquedaFacturas, "{\"apellido\":\"ficticio\"}", cookie);
+        Assert.Equal(HttpStatusCode.OK, facturas.StatusCode);
+        AfirmarNoStore(facturas, "POST /api/facturacion/busqueda");
+
+        var facturasInvalida = await Http.PostJsonAsync(
+            cliente, RutaBusquedaFacturas, "{\"desde\":\"2026-03-20\",\"hasta\":\"2026-03-10\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, facturasInvalida.StatusCode);
+        AfirmarNoStore(facturasInvalida, "400 de la búsqueda de facturas");
+
+        var facturasIlegible = await Http.PostJsonAsync(cliente, RutaBusquedaFacturas, "{\"pagina\":\"2\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, facturasIlegible.StatusCode);
+        AfirmarNoStore(facturasIlegible, "400 de un cuerpo de búsqueda de facturas ilegible");
     }
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    private const string RutaBusquedaFacturas = "/api/facturacion/busqueda";
 
     /// <summary>
     /// FEAT-006 (R-02): el PDF lleva los datos del cliente; su 200 (<c>application/pdf</c>), su 409 <c>borrador</c> y su
@@ -389,6 +405,98 @@ public sealed class SinCacheTests : IDisposable
         var descarteInexistente = await Http.PostJsonAsync(cliente, $"{RutaPresupuestos}/999/factura/descarte", string.Empty, cookie);
         Assert.Equal(HttpStatusCode.NotFound, descarteInexistente.StatusCode);
         AfirmarNoStore(descarteInexistente, "404 del descarte");
+    }
+
+    /// <summary>
+    /// FEAT-009 (R-06): los datos del emisor pueden ser de una persona física (razón social, CUIT); el GET (200 sin datos
+    /// y con datos), el POST (200, 400 por campo, 400 de cuerpo ilegible, 413) y el 401 sin sesión responden con
+    /// <c>no-store</c>. Datos inventados y CUIT ficticio (D-33).
+    /// </summary>
+    [Fact]
+    public async Task RutasEmisor_NoStore()
+    {
+        const string ruta = "/api/configuracion/emisor";
+        const string cuerpo =
+            "{\"razonSocial\":\"Ficticia SA\",\"domicilioComercial\":\"Calle Inventada 123\",\"cuit\":\"20-00000000-1\","
+            + "\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}";
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, ruta);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del emisor");
+
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var sinDatos = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, sinDatos.StatusCode);
+        AfirmarNoStore(sinDatos, "GET del emisor sin datos");
+
+        var grabado = await Http.PostJsonAsync(cliente, ruta, cuerpo, cookie);
+        Assert.Equal(HttpStatusCode.OK, grabado.StatusCode);
+        AfirmarNoStore(grabado, "POST del emisor");
+
+        var conDatos = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, conDatos.StatusCode);
+        Assert.Equal("20000000001", (await Http.JsonAsync(conDatos)).GetProperty("cuit").GetString());
+        AfirmarNoStore(conDatos, "GET del emisor con datos");
+
+        var invalido = await Http.PostJsonAsync(cliente, ruta, cuerpo.Replace("00000000-1", "00000000-5", StringComparison.Ordinal), cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalido.StatusCode);
+        AfirmarNoStore(invalido, "400 del emisor");
+
+        var ilegible = await Http.PostJsonAsync(cliente, ruta, "{\"cuit\":20000000001}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        AfirmarNoStore(ilegible, "400 de un cuerpo del emisor ilegible");
+
+        var grande = await Http.PostJsonAsync(cliente, ruta, cuerpo[..^1] + ",\"r\":\"" + new string('a', 2100) + "\"}", cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 del emisor");
+    }
+
+    /// <summary>
+    /// FEAT-009, Block 5: el detalle y el PDF de la factura llevan el DNI, el Apellido y el Nombre del cliente; responden
+    /// con <c>no-store</c> en el 200 del detalle y del PDF, el 409 <c>sin_datos_emisor</c>, el 404 y el 401 sin sesión.
+    /// Datos ficticios.
+    /// </summary>
+    [Fact]
+    public async Task RutasFactura_NoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await Facturacion.EscenarioFacturacion.CrearAsync(fabrica);
+        var numero = await escenario.FinalAsync(1000m);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+        var detalle = $"{RutaPresupuestos}/{numero}/factura";
+        var pdf = $"{RutaPresupuestos}/{numero}/factura/pdf";
+
+        var sinSesion = await Http.GetAsync(escenario.Cliente, detalle);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del detalle de la factura");
+
+        var pdfSinSesion = await Http.GetAsync(escenario.Cliente, pdf);
+        Assert.Equal(HttpStatusCode.Unauthorized, pdfSinSesion.StatusCode);
+        AfirmarNoStore(pdfSinSesion, "401 del PDF de la factura");
+
+        var leido = await Http.GetAsync(escenario.Cliente, detalle, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.OK, leido.StatusCode);
+        AfirmarNoStore(leido, "200 del detalle de la factura");
+
+        var sinEmisor = await Http.GetAsync(escenario.Cliente, pdf, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.Conflict, sinEmisor.StatusCode);
+        AfirmarNoStore(sinEmisor, "409 del PDF de la factura");
+
+        await escenario.CargarEmisorAsync();
+        var descargado = await Http.GetAsync(escenario.Cliente, pdf, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.OK, descargado.StatusCode);
+        Assert.Equal("application/pdf", descargado.Content.Headers.ContentType?.MediaType);
+        AfirmarNoStore(descargado, "200 del PDF de la factura");
+
+        foreach (var inexistente in new[] { $"{RutaPresupuestos}/999/factura", $"{RutaPresupuestos}/999/factura/pdf" })
+        {
+            var respuesta = await Http.GetAsync(escenario.Cliente, inexistente, escenario.Cookie);
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            AfirmarNoStore(respuesta, $"404 de {inexistente}");
+        }
     }
 
     /// <summary>
