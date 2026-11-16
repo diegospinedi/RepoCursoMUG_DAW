@@ -138,6 +138,49 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.DatosEmisorFila", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Cuit")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DomicilioComercial")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IngresosBrutos")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InicioActividades")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RazonSocial")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DatosEmisor", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_DatosEmisor_Cuit", "length(\"Cuit\") = 11 AND \"Cuit\" NOT GLOB '*[^0-9]*'");
+
+                            t.HasCheckConstraint("CK_DatosEmisor_DomicilioComercial", "length(\"DomicilioComercial\") BETWEEN 1 AND 200");
+
+                            t.HasCheckConstraint("CK_DatosEmisor_Id", "\"Id\" = 1");
+
+                            t.HasCheckConstraint("CK_DatosEmisor_IngresosBrutos", "length(\"IngresosBrutos\") BETWEEN 1 AND 30");
+
+                            t.HasCheckConstraint("CK_DatosEmisor_InicioActividades", "\"InicioActividades\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+
+                            t.HasCheckConstraint("CK_DatosEmisor_RazonSocial", "length(\"RazonSocial\") BETWEEN 1 AND 120");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.DescarteEmisionFila", b =>
                 {
                     b.Property<long>("Id")

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Optica.Application.Facturacion;
+using Optica.Domain.Configuracion;
 using Optica.Domain.Facturacion;
 using Optica.Infrastructure.Arca;
 using Optica.Infrastructure.Persistencia;
@@ -265,6 +266,68 @@ public sealed class OpcionesArcaTests : IDisposable
         // En simulado el CUIT no se usa y no se valida.
         var simulado = OpcionesArca.Leer(Configuracion((OpcionesArca.ClaveCuit, cuit)));
         Assert.Equal(EntornoArca.Simulado, simulado.Entorno);
+    }
+
+    /// <summary>
+    /// Spec FEAT-009, Block 1 (D-12, D-18): <c>Arca:Cuit</c> se valida con el <see cref="Cuit"/> del dominio, la única
+    /// implementación del módulo 11, con las mismas reglas que antes y el mismo mensaje.
+    /// </summary>
+    [Theory]
+    [InlineData(CuitValido, true)]
+    [InlineData("27000000006", true)] // otro ficticio válido (DNI 0)
+    [InlineData("20000000002", false)] // dígito verificador incorrecto
+    [InlineData("2000000000", false)] // 10 dígitos
+    [InlineData("20000000010", false)] // el verificador da 10: inválido, como hasta ahora
+    public void OpcionesArca_CuitInvalido_SigueRechazado(string cuit, bool valido)
+    {
+        // La misma respuesta que el objeto de valor, en las dos direcciones.
+        Assert.Equal(valido, Cuit.EsValidoCanonico(cuit));
+        Assert.Equal(valido, OpcionesArca.EsCuitValido(cuit));
+        var leer = () => OpcionesArca.Leer(Configuracion(
+            (OpcionesArca.ClaveEntorno, "Homologacion"),
+            (OpcionesArca.ClaveCuit, cuit)));
+        if (valido)
+        {
+            Assert.Equal(cuit, leer().Cuit);
+        }
+        else
+        {
+            var error = Assert.Throws<OpcionesArcaInvalidasException>(leer);
+            Assert.Equal(OpcionesArca.ClaveCuit, error.Clave);
+            Assert.Equal(
+                "El valor de la clave de configuración 'Arca:Cuit' no es válido: deben ser 11 dígitos, sin guiones, con " +
+                "dígito verificador válido.",
+                error.Message);
+        }
+
+        // Una sola implementación del módulo 11 (D-12): OpcionesArca no declara una tabla de pesos propia, se llame
+        // como se llame.
+        Assert.DoesNotContain(
+            typeof(OpcionesArca).GetFields(
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly),
+            campo => campo.FieldType == typeof(int[]));
+    }
+
+    /// <summary>
+    /// Spec FEAT-009, Block 1 (D-18): un CUIT con guiones es válido para los datos del emisor, pero <c>Arca:Cuit</c> lo
+    /// sigue rechazando, así nunca llega con guiones a WSAA/WSFEv1.
+    /// </summary>
+    [Theory]
+    [InlineData("20-00000000-1")]
+    [InlineData("27-00000000-6")]
+    public void OpcionesArca_CuitConGuiones_SigueRechazado(string cuit)
+    {
+        Assert.NotNull(Cuit.Interpretar(cuit));
+        Assert.False(Cuit.EsValidoCanonico(cuit));
+
+        var error = Assert.Throws<OpcionesArcaInvalidasException>(() => OpcionesArca.Leer(Configuracion(
+            (OpcionesArca.ClaveEntorno, "Produccion"),
+            (OpcionesArca.ClaveCuit, cuit))));
+
+        Assert.Equal(OpcionesArca.ClaveCuit, error.Clave);
+        Assert.DoesNotContain(cuit, error.Message, StringComparison.Ordinal);
+        Assert.Contains("sin guiones", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

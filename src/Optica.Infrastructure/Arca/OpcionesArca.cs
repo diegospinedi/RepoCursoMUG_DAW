@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Optica.Domain.Facturacion;
+using CuitDominio = Optica.Domain.Configuracion.Cuit;
 
 namespace Optica.Infrastructure.Arca;
 
@@ -97,9 +98,6 @@ public sealed class OpcionesArca
         ("responder", ConsultaSimulador.Responder),
         ("no_responder", ConsultaSimulador.NoResponder),
     ];
-
-    // Pesos del dígito verificador del CUIT (módulo 11).
-    private static readonly int[] PesosCuit = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
 
     private OpcionesArca()
     {
@@ -221,28 +219,13 @@ public sealed class OpcionesArca
         };
     }
 
-    /// <summary>11 dígitos ASCII cuyo último es el verificador de módulo 11 de los 10 anteriores.</summary>
-    public static bool EsCuitValido(string cuit)
-    {
-        if (cuit.Length != 11 || !cuit.All(char.IsAsciiDigit))
-        {
-            return false;
-        }
-
-        var suma = 0;
-        for (var i = 0; i < PesosCuit.Length; i++)
-        {
-            suma += (cuit[i] - '0') * PesosCuit[i];
-        }
-
-        var verificador = 11 - (suma % 11);
-        if (verificador == 11)
-        {
-            verificador = 0;
-        }
-
-        return verificador != 10 && verificador == cuit[10] - '0';
-    }
+    /// <summary>
+    /// 11 dígitos ASCII, sin guiones, cuyo último es el verificador de módulo 11 de los 10 anteriores (un verificador
+    /// 10 es inválido). Delega en <see cref="CuitDominio.EsValidoCanonico"/>, la única implementación del
+    /// módulo 11 (D-12 y D-18 de FEAT-009): un CUIT con guiones, válido para los datos del emisor, acá se rechaza, así
+    /// nunca llega con guiones a WSAA/WSFEv1.
+    /// </summary>
+    public static bool EsCuitValido(string cuit) => CuitDominio.EsValidoCanonico(cuit);
 
     private static string? Valor(IConfiguration configuracion, string clave) =>
         string.IsNullOrWhiteSpace(configuracion[clave]) ? null : configuracion[clave]!.Trim();

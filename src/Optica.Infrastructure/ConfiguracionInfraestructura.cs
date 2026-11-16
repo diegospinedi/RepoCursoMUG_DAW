@@ -52,6 +52,9 @@ public static class ConfiguracionInfraestructura
         // operación (FR-06).
         servicios.AddScoped<IConfiguracionNegocioRepository, ConfiguracionNegocioRepository>();
 
+        // Datos del emisor (FEAT-009, ADR-028): comparte el contexto (y la unidad de trabajo) del alcance.
+        servicios.AddScoped<IDatosEmisorRepository, DatosEmisorRepository>();
+
         // Catálogo: comparte el contexto (y la unidad de trabajo) del alcance.
         servicios.AddScoped<IArticuloRepository, ArticuloRepository>();
 

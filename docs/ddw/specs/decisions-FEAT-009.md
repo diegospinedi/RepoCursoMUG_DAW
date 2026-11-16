@@ -78,3 +78,20 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   escritos en PLAN (WARN 15), reglas del comprobante impreso en el dominio (INFO 16), recorrido completo aceptado como
   en ADR-011 (INFO 18), comentario de `RUTAS_ARCA` (INFO 21), excepción propia del filtro y validación en el borde
   (INFO 23), origen del DNI escrito (INFO 24). INFO 17: sin cambios (lecturas entre módulos aceptables).
+
+## CODE
+- **D-29 (del agente, Block 1).** `DatosEmisor.ParaGrabar` recibe la fecha de inicio como texto `yyyy-MM-dd` y la
+  interpreta en el dominio: una fecha mal escrita es una infracción del campo y no una excepción de Application. La
+  spec nombra `DatosEmisor.Crear` en Error handling; lo implementado es `ParaGrabar`, que es lo que dice Files. —
+  agente (D-06), aceptado por el verificador y el auditor — 2026-11-16 — Block 1.
+- **D-30 (del agente, Block 1).** CHECK extra `CK_DatosEmisor_InicioActividades` con GLOB `yyyy-MM-dd`, como `Fecha`
+  en `Presupuesto` y `Factura`. — agente (D-06) — 2026-11-16 — Block 1.
+- **D-31 (del agente, Block 1).** `OpcionesArca.EsCuitValido` se conserva como método que delega en
+  `Cuit.EsValidoCanonico` (lo usan `ClienteWsfe.cs` y `AislamientoArcaTests.cs`); el algoritmo y `PesosCuit` se
+  eliminaron, así que hay una sola implementación del módulo 11. — agente (D-06) — 2026-11-16 — Block 1.
+- **D-32 (del agente, Block 1).** `FacturasTriggersTests.SqlExistentes` excluye la tabla `DatosEmisor`, porque revertir
+  hasta `ConfiguracionPuntoVenta` también la borra (igual que hizo FEAT-008 con sus tablas). — agente (D-06) —
+  2026-11-16 — Block 1.
+- **D-33 (del agente, Block 1, datos personales).** El CUIT 20-12345678-6 del PRD tiene dígito verificador válido y
+  podría ser de una persona real: queda solo en las pruebas de AC-03 y AC-04; el resto usa 20-00000000-1. Nunca se usa
+  en bases de demostración ni contra ARCA. — agente (D-06) — 2026-11-16 — Block 1 y siguientes.

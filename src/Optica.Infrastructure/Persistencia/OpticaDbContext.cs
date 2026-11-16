@@ -25,6 +25,9 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
 
     public DbSet<ConfiguracionNegocioFila> ConfiguracionesNegocio => Set<ConfiguracionNegocioFila>();
 
+    /// <summary>Los datos del emisor (FEAT-009, ADR-028): una fila como máximo, con <c>Id = 1</c>.</summary>
+    public DbSet<DatosEmisorFila> DatosEmisor => Set<DatosEmisorFila>();
+
     public DbSet<EventoAccesoFila> EventosAcceso => Set<EventoAccesoFila>();
 
     public DbSet<ArticuloFila> Articulos => Set<ArticuloFila>();
@@ -107,6 +110,35 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
             configuracion.Property(c => c.TopeIdentificacion)
                 .HasColumnName("TopeIdentificacionCentavos").HasConversion(Centesimos);
             configuracion.Property(c => c.PuntoVenta);
+        });
+
+        modelBuilder.Entity<DatosEmisorFila>(emisor =>
+        {
+            // FEAT-009 (ADR-028): fila única, sin fila inicial (null mientras no se carguen). Los CHECK son la segunda
+            // barrera detrás de DatosEmisor; la migración DatosEmisor los crea con el mismo nombre y la misma expresión.
+            emisor.ToTable("DatosEmisor", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_DatosEmisor_Id", "\"Id\" = 1");
+                tabla.HasCheckConstraint("CK_DatosEmisor_RazonSocial", "length(\"RazonSocial\") BETWEEN 1 AND 120");
+                tabla.HasCheckConstraint(
+                    "CK_DatosEmisor_DomicilioComercial", "length(\"DomicilioComercial\") BETWEEN 1 AND 200");
+                tabla.HasCheckConstraint(
+                    "CK_DatosEmisor_Cuit", "length(\"Cuit\") = 11 AND \"Cuit\" NOT GLOB '*[^0-9]*'");
+                tabla.HasCheckConstraint("CK_DatosEmisor_IngresosBrutos", "length(\"IngresosBrutos\") BETWEEN 1 AND 30");
+                tabla.HasCheckConstraint(
+                    "CK_DatosEmisor_InicioActividades",
+                    "\"InicioActividades\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+            });
+            emisor.HasKey(e => e.Id);
+            emisor.Property(e => e.Id).ValueGeneratedNever();
+            emisor.Property(e => e.RazonSocial).IsRequired();
+            emisor.Property(e => e.DomicilioComercial).IsRequired();
+            emisor.Property(e => e.Cuit).IsRequired();
+            emisor.Property(e => e.IngresosBrutos).IsRequired();
+
+            // Texto yyyy-MM-dd, que interpreta el repositorio: una fecha mal escrita es una fila corrupta, no una falla
+            // del lector de EF Core.
+            emisor.Property(e => e.InicioActividades).IsRequired();
         });
 
         modelBuilder.Entity<ArticuloFila>(articulo =>
@@ -545,6 +577,26 @@ public sealed class ConfiguracionNegocioFila
 
     /// <summary>Punto de venta de ARCA, de 1 a 99999, o null mientras no se cargue (D-07 de FEAT-007).</summary>
     public int? PuntoVenta { get; set; }
+}
+
+/// <summary>
+/// Fila de la tabla <c>DatosEmisor</c> (única, <c>Id = 1</c>, FEAT-009, ADR-028): los cinco datos del emisor como texto.
+/// </summary>
+public sealed class DatosEmisorFila
+{
+    public int Id { get; set; }
+
+    public string RazonSocial { get; set; } = string.Empty;
+
+    public string DomicilioComercial { get; set; } = string.Empty;
+
+    /// <summary>Los 11 dígitos, sin guiones.</summary>
+    public string Cuit { get; set; } = string.Empty;
+
+    public string IngresosBrutos { get; set; } = string.Empty;
+
+    /// <summary>La fecha de inicio de actividades como <c>yyyy-MM-dd</c>.</summary>
+    public string InicioActividades { get; set; } = string.Empty;
 }
 
 /// <summary>
