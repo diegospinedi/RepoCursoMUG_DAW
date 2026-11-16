@@ -206,6 +206,8 @@ public sealed class FacturaApiTests
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(JsonValueKind.Null, leido.GetProperty("factura").ValueKind);
         Assert.True(leido.GetProperty("emisionPendiente").GetBoolean());
+        // FR-01 (ADR-025): la pendiente guardada tiene el número pedido al simulador, el primero del punto de venta.
+        Assert.Equal(1, (await PendienteAsync(fabrica, numero))?.Numero);
 
         await AfirmarConflictoAsync(
             await escenario.EmitirAsync(numero), "pendiente", "La emisión anterior está pendiente de verificación.");
@@ -296,8 +298,9 @@ public sealed class FacturaApiTests
     }
 
     /// <summary>
-    /// R-09 (sad path): dos pedidos simultáneos del mismo presupuesto. Uno graba la pendiente y llega a ARCA; el otro
-    /// responde 409 <c>pendiente</c> sin llamar a ARCA. Al responder ARCA, el primero responde 201.
+    /// R-09 y FEAT-008 (sad path, ADR-025): dos pedidos simultáneos del mismo presupuesto. El primero toma el turno,
+    /// registra la pendiente con el número 125 y queda esperando a ARCA; el segundo, que llega mientras tanto, responde
+    /// 409 <c>pendiente</c> sin pedir el número ni llamar a ARCA. Al responder ARCA, el primero responde 201.
     /// </summary>
     [Fact]
     public async Task Emitir_DosPedidosSimultaneos_UnoConflictoPendiente()
@@ -311,16 +314,18 @@ public sealed class FacturaApiTests
         var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
         var numero = await escenario.FinalAsync(1000m);
 
-        var pedidos = new[] { escenario.EmitirAsync(numero), escenario.EmitirAsync(numero) };
+        var primero = escenario.EmitirAsync(numero);
         await autorizador.Llamado.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        var primero = await Task.WhenAny(pedidos).WaitAsync(TimeSpan.FromSeconds(30));
-        var conflicto = await primero;
+        // El número quedó registrado antes de enviar la solicitud (FR-01).
+        Assert.Equal(125, (await PendienteAsync(fabrica, numero))?.Numero);
+        var conflicto = await escenario.EmitirAsync(numero).WaitAsync(TimeSpan.FromSeconds(30));
         autorizador.Liberar.TrySetResult();
-        var otro = await (pedidos[0] == primero ? pedidos[1] : pedidos[0]).WaitAsync(TimeSpan.FromSeconds(30));
+        var emitida = await primero.WaitAsync(TimeSpan.FromSeconds(30));
 
         await AfirmarConflictoAsync(conflicto, "pendiente", "La emisión anterior está pendiente de verificación.");
-        Assert.Equal(HttpStatusCode.Created, otro.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
         Assert.Equal(1, autorizador.Llamadas);
+        Assert.Equal(1, autorizador.PedidosDeNumero);
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(
             "Factura B 0003-00000125", leido.GetProperty("factura").GetProperty("comprobante").GetString());
@@ -328,9 +333,10 @@ public sealed class FacturaApiTests
     }
 
     /// <summary>
-    /// Sad path: una excepción imprevista del autorizador (el puerto dice que no lanza) responde el 500 genérico, sin su
-    /// texto; como no se sabe si la solicitud llegó a ARCA, la emisión queda pendiente y volver a facturar es 409
-    /// <c>pendiente</c>.
+    /// Sad path, con el orden de ADR-025: el próximo número (125) se registra en la pendiente y recién entonces el
+    /// autorizador lanza una excepción imprevista (el puerto dice que no lanza). Responde el 500 genérico, sin su texto;
+    /// como no se sabe si la solicitud llegó a ARCA, la emisión queda pendiente con el número 125 y volver a facturar es
+    /// 409 <c>pendiente</c>.
     /// </summary>
     [Fact]
     public async Task Emitir_AutorizadorLanza_500ConLaPendienteGuardada()
@@ -350,8 +356,20 @@ public sealed class FacturaApiTests
         var leido = await escenario.LeerAsync(numero);
         Assert.Equal(JsonValueKind.Null, leido.GetProperty("factura").ValueKind);
         Assert.True(leido.GetProperty("emisionPendiente").GetBoolean());
+        var pendiente = await PendienteAsync(fabrica, numero);
+        Assert.NotNull(pendiente);
+        Assert.Equal(125, pendiente.Numero);
+        Assert.Equal(1000m, pendiente.Total);
         await AfirmarConflictoAsync(
             await escenario.EmitirAsync(numero), "pendiente", "La emisión anterior está pendiente de verificación.");
+    }
+
+    /// <summary>La emisión pendiente guardada del presupuesto, leída en un alcance propio.</summary>
+    private static async Task<EmisionPendiente?> PendienteAsync(FabricaApi fabrica, long numero)
+    {
+        using var alcance = fabrica.Services.CreateScope();
+        return await alcance.ServiceProvider.GetRequiredService<IEmisionPendienteRepository>()
+            .ObtenerPendienteAsync(numero);
     }
 
     /// <summary>
@@ -384,7 +402,16 @@ public sealed class FacturaApiTests
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
-        public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion) =>
+        public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+
+        public Task<ResultadoAutorizacion> AutorizarAsync(
+            SolicitudComprobante solicitud, long numero, CancellationToken cancelacion) =>
+            throw new InvalidOperationException(Texto);
+
+        public Task<ResultadoConsulta> ConsultarAsync(
+            TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
             throw new InvalidOperationException(Texto);
     }
 
@@ -392,6 +419,7 @@ public sealed class FacturaApiTests
     private sealed class AutorizadorQueEspera : IAutorizadorComprobantes
     {
         private int _llamadas;
+        private int _pedidosDeNumero;
 
         public TaskCompletionSource Llamado { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -399,25 +427,41 @@ public sealed class FacturaApiTests
 
         public int Llamadas => Volatile.Read(ref _llamadas);
 
+        public int PedidosDeNumero => Volatile.Read(ref _pedidosDeNumero);
+
         public EntornoArca Entorno => EntornoArca.Simulado;
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
+        public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+        {
+            Interlocked.Increment(ref _pedidosDeNumero);
+            return Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(125));
+        }
+
         public async Task<ResultadoAutorizacion> AutorizarAsync(
-            SolicitudComprobante solicitud, CancellationToken cancelacion)
+            SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
         {
             Interlocked.Increment(ref _llamadas);
             Llamado.TrySetResult();
             await Liberar.Task.WaitAsync(TimeSpan.FromSeconds(60), CancellationToken.None);
-            return new ResultadoAutorizacion.Autorizada(125, "71234567890123", solicitud.Fecha.AddDays(10));
+            return new ResultadoAutorizacion.Autorizada(numero, "71234567890123", solicitud.Fecha.AddDays(10));
         }
+
+        public Task<ResultadoConsulta> ConsultarAsync(
+            TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
     }
 }
 
 /// <summary>
 /// Envuelve el autorizador que registró la raíz de composición (el simulador) y avisa en <see cref="Llamado"/> cuando
-/// recibe la solicitud. Para las pruebas de "sin respuesta": el plazo de la emisión ya corre en ese momento (se crea
-/// antes de pedir el candado, D-32), así que la prueba adelanta el reloj de la fábrica una sola vez, sin esperas reales.
+/// la autorización ya está en curso. Para las pruebas de "sin respuesta": el plazo de la emisión ya corre en ese momento
+/// (se crea antes de pedir el candado, D-32), así que la prueba adelanta el reloj de la fábrica una sola vez, sin esperas
+/// reales. D-25: el aviso va después de que el autorizador real devolvió su tarea; el simulador con
+/// <c>no_responder</c> registra la espera de la cancelación antes de devolverla, así que adelantar el reloj ya no puede
+/// caer antes de que empiece a esperar (lo que lo hacía responder "no enviada").
 /// </summary>
 internal sealed class AutorizadorConSenal(IAutorizadorComprobantes real, TaskCompletionSource llamado)
     : IAutorizadorComprobantes
@@ -426,11 +470,21 @@ internal sealed class AutorizadorConSenal(IAutorizadorComprobantes real, TaskCom
 
     public TimeSpan TiempoMaximo => real.TiempoMaximo;
 
-    public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+        real.ProximoNumeroAsync(tipo, puntoVenta, cancelacion);
+
+    public Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
+        var autorizacion = real.AutorizarAsync(solicitud, numero, cancelacion);
         llamado.TrySetResult();
-        return real.AutorizarAsync(solicitud, cancelacion);
+        return autorizacion;
     }
+
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
+        real.ConsultarAsync(tipo, puntoVenta, numero, cancelacion);
 
     /// <summary>
     /// Reemplaza el registro del autorizador por su versión con señal y devuelve la señal: se completa cuando el

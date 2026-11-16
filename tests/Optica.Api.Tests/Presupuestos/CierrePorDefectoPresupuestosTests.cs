@@ -433,6 +433,218 @@ public sealed class CierrePorDefectoPresupuestosTests
         Assert.Equal("No se pudo leer el concepto enviado. Elegilo de nuevo.", RespuestasValidacion.AccionCuerpoIlegibleFactura);
     }
 
+    // FEAT-008: la verificación y el descarte de una emisión pendiente.
+
+    /// <summary>Los motivos sin datos del 409 de la verificación, con su texto en la Api y su detalle fijo.</summary>
+    public static TheoryData<MotivoConflictoVerificacion, string, string> MotivosVerificacionSinDatos => new()
+    {
+        {
+            MotivoConflictoVerificacion.SinPendiente, "sin_pendiente",
+            "El presupuesto no tiene una emisión pendiente de verificación."
+        },
+        {
+            MotivoConflictoVerificacion.SinRespuesta, "sin_respuesta",
+            "ARCA no respondió. La emisión sigue pendiente de verificación."
+        },
+        {
+            MotivoConflictoVerificacion.SinRespuestaEmision, "sin_respuesta_emision",
+            "ARCA no respondió a la nueva emisión. La emisión quedó pendiente de verificación."
+        },
+        {
+            MotivoConflictoVerificacion.NoEnviada, "no_enviada",
+            "No se pudo completar la verificación con ARCA. Intentá de nuevo en unos minutos."
+        },
+        { MotivoConflictoVerificacion.Facturado, "facturado", "El presupuesto ya tiene una factura." },
+    };
+
+    /// <summary>
+    /// El traductor de la verificación es cerrado por defecto: recuperada y emitida, 200 con el resultado y la factura;
+    /// no encontrado, 404; cualquier otro resultado lanza.
+    /// </summary>
+    [Fact]
+    public void ResponderVerificacion_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+        var factura = new FacturaEmitida(
+            "Factura B 0003-00000125", "b", 125, "71234567890123", new DateOnly(2026, 11, 9), new DateOnly(2026, 10, 30),
+            1815m, 1500m, 315m);
+
+        foreach (var (resultado, texto) in new[]
+                 {
+                     (ResultadoVerificacion.Recuperada(factura), "recuperada"),
+                     (ResultadoVerificacion.Emitida(factura), "emitida"),
+                 })
+        {
+            var ok = Assert.IsType<OkObjectResult>(controller.ResponderVerificacion(resultado));
+            var cuerpo = Assert.IsType<VerificacionConFactura>(ok.Value);
+            Assert.Equal(texto, cuerpo.Resultado);
+            Assert.Same(factura, cuerpo.Factura);
+        }
+
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderVerificacion(ResultadoVerificacion.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+        Assert.Equal("No se encontró el presupuesto.", Assert.IsType<ProblemDetails>(noEncontrado.Value).Title);
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderVerificacion(null));
+    }
+
+    /// <summary>Cada motivo sin datos de la verificación: título fijo, detalle fijo, su texto en <c>motivo</c> y nada más.</summary>
+    [Theory]
+    [MemberData(nameof(MotivosVerificacionSinDatos))]
+    public void ResponderVerificacion_ConflictoSinDatos_MotivoYDetalleFijos(
+        MotivoConflictoVerificacion motivo, string texto, string detalle)
+    {
+        var problema = Conflicto(Crear().ResponderVerificacion(ResultadoVerificacion.Conflicto(motivo)));
+
+        Assert.Equal("No se pudo verificar la emisión.", problema.Title);
+        Assert.Equal(detalle, problema.Detail);
+        Assert.Equal(texto, problema.Extensions["motivo"]);
+        Assert.Equal(["motivo"], Extensiones(problema));
+    }
+
+    /// <summary>
+    /// Los motivos con datos: <c>espera</c> con <c>segundosRestantes</c>; <c>importe_distinto</c> con el comprobante y los
+    /// dos importes; <c>sin_numero</c> sin datos; <c>otro_entorno</c> con el entorno; <c>rechazada</c> con el código y la
+    /// descripción de ARCA, recortada a 500 caracteres.
+    /// </summary>
+    [Fact]
+    public void ResponderVerificacion_ConflictoConDatos_SusExtensiones()
+    {
+        var controller = Crear();
+
+        var espera = Conflicto(controller.ResponderVerificacion(ResultadoVerificacion.Espera(40)));
+        Assert.Equal("espera", espera.Extensions["motivo"]);
+        Assert.Equal("Todavía no pasó el tiempo de espera para verificar con ARCA.", espera.Detail);
+        Assert.Equal(40, espera.Extensions["segundosRestantes"]);
+        Assert.Equal(["motivo", "segundosRestantes"], Extensiones(espera));
+
+        var distinto = Conflicto(controller.ResponderVerificacion(ResultadoVerificacion.Observada(new DetalleObservacion(
+            Optica.Domain.Facturacion.MotivoObservacionEmision.ImporteDistinto, "Factura B 0003-00000125", 1815m, 2000m,
+            Optica.Domain.Facturacion.EntornoArca.Simulado))));
+        Assert.Equal("importe_distinto", distinto.Extensions["motivo"]);
+        Assert.Equal(
+            "ARCA tiene autorizado el comprobante con otro importe. Revisá el punto de venta en ARCA.", distinto.Detail);
+        Assert.Equal("Factura B 0003-00000125", distinto.Extensions["comprobante"]);
+        Assert.Equal(1815m, distinto.Extensions["importeRegistrado"]);
+        Assert.Equal(2000m, distinto.Extensions["importeArca"]);
+        Assert.Equal(["comprobante", "importeArca", "importeRegistrado", "motivo"], Extensiones(distinto));
+
+        var sinNumero = Conflicto(controller.ResponderVerificacion(ResultadoVerificacion.Observada(new DetalleObservacion(
+            Optica.Domain.Facturacion.MotivoObservacionEmision.SinNumero, null, 1815m, null,
+            Optica.Domain.Facturacion.EntornoArca.Simulado))));
+        Assert.Equal("sin_numero", sinNumero.Extensions["motivo"]);
+        Assert.Equal(
+            "La emisión pendiente no tiene número de comprobante registrado. Revisá el punto de venta en ARCA.",
+            sinNumero.Detail);
+        Assert.Equal(["motivo"], Extensiones(sinNumero));
+
+        var otroEntorno = Conflicto(controller.ResponderVerificacion(ResultadoVerificacion.Observada(new DetalleObservacion(
+            Optica.Domain.Facturacion.MotivoObservacionEmision.OtroEntorno, "Factura B 0003-00000125", 1815m, null,
+            Optica.Domain.Facturacion.EntornoArca.Homologacion))));
+        Assert.Equal("otro_entorno", otroEntorno.Extensions["motivo"]);
+        Assert.Equal(
+            "La emisión pendiente se envió a otro entorno de ARCA. Revisá el punto de venta en ARCA.", otroEntorno.Detail);
+        Assert.Equal("homologacion", otroEntorno.Extensions["entorno"]);
+        Assert.Equal(["entorno", "motivo"], Extensiones(otroEntorno));
+
+        var rechazada = Conflicto(controller.ResponderVerificacion(
+            ResultadoVerificacion.Rechazada(10016, new string('x', 499) + "😀" + new string('y', 50))));
+        Assert.Equal("rechazada", rechazada.Extensions["motivo"]);
+        Assert.Equal("ARCA rechazó la factura.", rechazada.Detail);
+        Assert.Equal(10016, rechazada.Extensions["codigoArca"]);
+        Assert.Equal(new string('x', 499), rechazada.Extensions["descripcionArca"]);
+        Assert.Equal(["codigoArca", "descripcionArca", "motivo"], Extensiones(rechazada));
+    }
+
+    /// <summary>
+    /// El helper del 409 de la verificación solo acepta sus diez motivos, cada uno con exactamente sus datos; el de la
+    /// emisión no acepta los motivos nuevos.
+    /// </summary>
+    [Fact]
+    public void ConflictoVerificacion_MotivoAjenoODatosFueraDeLugar_Lanza()
+    {
+        var controller = Crear();
+
+        Assert.Throws<ArgumentException>(() => controller.ConflictoVerificacion("pendiente"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoVerificacion("sin_observacion"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoVerificacion("espera"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoVerificacion(
+            "sin_pendiente", new Dictionary<string, object> { ["segundosRestantes"] = 1 }));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoVerificacion(
+            "otro_entorno", new Dictionary<string, object> { ["codigoArca"] = 1 }));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoFactura("sin_numero"));
+        Assert.Throws<ArgumentException>(() => controller.ConflictoDescarte("sin_numero"));
+        Assert.IsType<ObjectResult>(controller.ConflictoVerificacion("sin_pendiente"));
+    }
+
+    /// <summary>
+    /// El traductor del descarte es cerrado por defecto: descartada, 204; no encontrado, 404; sin pendiente y sin
+    /// observación, 409 con su motivo y su detalle fijo; cualquier otro resultado lanza.
+    /// </summary>
+    [Fact]
+    public void ResponderDescarte_ResultadosPrevistos_SuCodigo()
+    {
+        var controller = Crear();
+
+        Assert.IsType<NoContentResult>(controller.ResponderDescarte(ResultadoDescarte.Descartada));
+        var noEncontrado = Assert.IsType<ObjectResult>(controller.ResponderDescarte(ResultadoDescarte.NoEncontrado));
+        Assert.Equal(StatusCodes.Status404NotFound, noEncontrado.StatusCode);
+
+        foreach (var (resultado, motivo, detalle) in new[]
+                 {
+                     (ResultadoDescarte.SinPendiente, "sin_pendiente",
+                         "El presupuesto no tiene una emisión pendiente de verificación."),
+                     (ResultadoDescarte.SinObservacion, "sin_observacion",
+                         "La emisión pendiente no tiene una observación que permita descartarla. Verificala con ARCA."),
+                 })
+        {
+            var problema = Conflicto(controller.ResponderDescarte(resultado));
+            Assert.Equal("No se pudo descartar la emisión.", problema.Title);
+            Assert.Equal(detalle, problema.Detail);
+            Assert.Equal(motivo, problema.Extensions["motivo"]);
+            Assert.Equal(["motivo"], Extensiones(problema));
+        }
+
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderDescarte(null));
+        Assert.Throws<InvalidOperationException>(() => controller.ResponderDescarte((ResultadoDescarte)99));
+    }
+
+    /// <summary>
+    /// La observación del GET (FR-08, FR-14, FR-15): motivo y entorno en su texto, sin datos del cliente; sin observación,
+    /// null. Un motivo o un entorno no previstos lanzan.
+    /// </summary>
+    [Fact]
+    public void PresupuestoConFacturacion_Observacion_SusTextos()
+    {
+        var observacion = ObservacionDelPresupuesto.Desde(new DetalleObservacion(
+            Optica.Domain.Facturacion.MotivoObservacionEmision.ImporteDistinto, "Factura B 0003-00000125", 1815m, 2000m,
+            Optica.Domain.Facturacion.EntornoArca.Produccion));
+
+        Assert.NotNull(observacion);
+        Assert.Equal("importe_distinto", observacion.Motivo);
+        Assert.Equal("Factura B 0003-00000125", observacion.Comprobante);
+        Assert.Equal(1815m, observacion.ImporteRegistrado);
+        Assert.Equal(2000m, observacion.ImporteArca);
+        Assert.Equal("produccion", observacion.Entorno);
+        Assert.Null(ObservacionDelPresupuesto.Desde(null));
+        Assert.Throws<InvalidOperationException>(() => ObservacionDelPresupuesto.Desde(new DetalleObservacion(
+            (Optica.Domain.Facturacion.MotivoObservacionEmision)99, null, 1m, null,
+            Optica.Domain.Facturacion.EntornoArca.Simulado)));
+        Assert.Throws<InvalidOperationException>(() => ObservacionDelPresupuesto.Desde(new DetalleObservacion(
+            Optica.Domain.Facturacion.MotivoObservacionEmision.SinNumero, null, 1m, null,
+            (Optica.Domain.Facturacion.EntornoArca)99)));
+    }
+
+    private static ProblemDetails Conflicto(IActionResult resultado)
+    {
+        var objeto = Assert.IsType<ObjectResult>(resultado);
+        Assert.Equal(StatusCodes.Status409Conflict, objeto.StatusCode);
+        return Assert.IsType<ProblemDetails>(objeto.Value);
+    }
+
+    private static string[] Extensiones(ProblemDetails problema) =>
+        [.. problema.Extensions.Keys.Where(clave => clave != "traceId").Order(StringComparer.Ordinal)];
+
     /// <summary>El traductor de la búsqueda es cerrado por defecto: un resultado no previsto lanza; inválido, 400.</summary>
     [Fact]
     public void ResponderBusqueda_Cerrado()
@@ -450,7 +662,7 @@ public sealed class CierrePorDefectoPresupuestosTests
         // MVC aporta la fábrica de ProblemDetails que usan las respuestas de error.
         var servicios = new ServiceCollection().AddLogging().AddMvcCore().Services.BuildServiceProvider();
         // Los casos de uso no se usan: la prueba ejercita solo la traducción del resultado.
-        return new PresupuestosController(null!, null!, null!, null!, null!, null!, null!, null!)
+        return new PresupuestosController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = servicios } },
         };

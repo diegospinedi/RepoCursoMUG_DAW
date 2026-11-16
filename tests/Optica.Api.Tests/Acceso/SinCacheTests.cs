@@ -345,6 +345,53 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-008: la verificación (409, 404, 413), el descarte (204, 409, 404) y la lista de pendientes (200) responden con
+    /// <c>no-store</c>, también sin sesión (401).
+    /// </summary>
+    [Fact]
+    public async Task SinCache_RutasVerificacion_NoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, "/api/facturacion/emisiones-pendientes");
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 de las pendientes");
+
+        var cookie = await Http.DefinirAsync(cliente);
+        var codigo = await GrabarArticuloAsync(cliente, cookie);
+        var alta = await Http.PostJsonAsync(cliente, RutaPresupuestos, CuerpoPresupuesto(codigo), cookie);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var numero = (await Http.JsonAsync(alta)).GetProperty("numero").GetInt64();
+        var verificacion = $"{RutaPresupuestos}/{numero}/factura/verificacion";
+        var descarte = $"{RutaPresupuestos}/{numero}/factura/descarte";
+
+        var pendientes = await Http.GetAsync(cliente, "/api/facturacion/emisiones-pendientes", cookie);
+        Assert.Equal(HttpStatusCode.OK, pendientes.StatusCode);
+        AfirmarNoStore(pendientes, "200 de las pendientes");
+
+        var sinPendiente = await Http.PostJsonAsync(cliente, verificacion, string.Empty, cookie);
+        Assert.Equal(HttpStatusCode.Conflict, sinPendiente.StatusCode);
+        AfirmarNoStore(sinPendiente, "409 de la verificación");
+
+        var inexistente = await Http.PostJsonAsync(cliente, $"{RutaPresupuestos}/999/factura/verificacion", string.Empty, cookie);
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+        AfirmarNoStore(inexistente, "404 de la verificación");
+
+        var grande = await Http.PostJsonAsync(cliente, verificacion, "{\"r\":\"" + new string('a', 1100) + "\"}", cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 de la verificación");
+
+        var descarteSinPendiente = await Http.PostJsonAsync(cliente, descarte, string.Empty, cookie);
+        Assert.Equal(HttpStatusCode.Conflict, descarteSinPendiente.StatusCode);
+        AfirmarNoStore(descarteSinPendiente, "409 del descarte");
+
+        var descarteInexistente = await Http.PostJsonAsync(cliente, $"{RutaPresupuestos}/999/factura/descarte", string.Empty, cookie);
+        Assert.Equal(HttpStatusCode.NotFound, descarteInexistente.StatusCode);
+        AfirmarNoStore(descarteInexistente, "404 del descarte");
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

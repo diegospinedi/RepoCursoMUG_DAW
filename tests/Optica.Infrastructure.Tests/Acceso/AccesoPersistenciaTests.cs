@@ -388,6 +388,7 @@ public class AccesoPersistenciaTests
         [
             "Inicial", "IndiceEventoAccesoTipoResultado", "TokenConcurrenciaCredencial", "ConfiguracionNegocio", "Catalogo",
             "CatalogoActivo", "Presupuestos", "CierrePresupuestos", "ConfiguracionPuntoVenta", "Facturas",
+            "RecuperacionEmisiones",
         ];
         Assert.Equal(conocidas, migraciones.Select(m => m[(m.IndexOf('_') + 1)..]).Where(conocidas.Contains));
         Assert.Equal(migraciones.Order(StringComparer.Ordinal), migraciones);

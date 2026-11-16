@@ -6,13 +6,14 @@ using Optica.Domain.Facturacion;
 namespace Optica.Infrastructure.Arca;
 
 /// <summary>
-/// El autorizador de homologación y producción (FR-17, ADR-022, ADR-023): ticket de WSAA → último número autorizado →
-/// <c>FECAESolicitar</c> con ese número + 1, y la clasificación de D-16. Todo lo que falla antes de enviar
-/// <c>FECAESolicitar</c> (certificado, WSAA, último número, la cancelación recibida o una falla no prevista) es "no
-/// enviada"; después, una respuesta ilegible, una falla de la red, la cancelación o cualquier falla no prevista es "sin
-/// respuesta". No aplica un plazo propio: el de <c>EmitirFactura</c> llega en la cancelación (D-32), y un token que no se
-/// puede cancelar termina "no enviada" sin tocar la red. No reintenta (FR-23) y no lanza. Singleton: el ticket de WSAA
-/// vive en memoria mientras dure la Api.
+/// El autorizador de homologación y producción (FR-17, ADR-022, ADR-023, ADR-025), con tres operaciones sobre el ticket
+/// de WSAA: el próximo número (<c>FECompUltimoAutorizado</c> + 1), la autorización con el número recibido
+/// (<c>FECAESolicitar</c>) y la consulta por número (<c>FECompConsultar</c>). Todo lo que falla antes de enviar
+/// (certificado, WSAA, último número, la cancelación recibida o una falla no prevista) es "no enviada" o "no consultada";
+/// después del envío de la autorización o de la consulta, una respuesta ilegible, una falla de la red, la cancelación o
+/// cualquier falla no prevista es "sin respuesta" (D-16). No aplica un plazo propio: el de quien llama llega en la
+/// cancelación (D-32), y un token que no se puede cancelar termina sin tocar la red. No reintenta (FR-23) y no lanza por
+/// fallas de ARCA. Singleton: el ticket de WSAA vive en memoria mientras dure la Api.
 /// </summary>
 public sealed class AutorizadorWsfe : IAutorizadorComprobantes, IAsyncDisposable, IDisposable
 {
@@ -25,7 +26,7 @@ public sealed class AutorizadorWsfe : IAutorizadorComprobantes, IAsyncDisposable
     /// <summary>WSFEv1 no informó el último número autorizado.</summary>
     public const string MotivoUltimoNumero = "No se pudo obtener el último número autorizado de ARCA.";
 
-    /// <summary>La cancelación (el plazo de la emisión) llegó antes de enviar el pedido de autorización.</summary>
+    /// <summary>La cancelación (el plazo de la operación) llegó antes de enviar el pedido a WSFEv1.</summary>
     public const string MotivoCancelada = "La emisión se canceló antes de enviar la solicitud.";
 
     /// <summary>
@@ -34,7 +35,7 @@ public sealed class AutorizadorWsfe : IAutorizadorComprobantes, IAsyncDisposable
     /// </summary>
     public const string MotivoSinPlazo = "La emisión no tiene un tiempo máximo de espera de ARCA.";
 
-    /// <summary>Una falla no prevista antes de enviar el pedido de autorización (solo su tipo va al log).</summary>
+    /// <summary>Una falla no prevista antes de enviar el pedido a WSFEv1 (solo su tipo va al log).</summary>
     public const string MotivoInesperado = "No se pudo preparar la solicitud a ARCA.";
 
     private readonly ClienteWsaa _wsaa;
@@ -101,80 +102,164 @@ public sealed class AutorizadorWsfe : IAutorizadorComprobantes, IAsyncDisposable
             registro.CreateLogger<AutorizadorWsfe>());
     }
 
-    public async Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    /// <summary>
+    /// Ticket de WSAA → <c>FECompUltimoAutorizado</c> + 1. Es de solo lectura en ARCA: cualquier falla, la cancelación o
+    /// un token sin plazo es "no enviada".
+    /// </summary>
+    public async Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
     {
-        ArgumentNullException.ThrowIfNull(solicitud);
-
+        _ = new NumeroComprobante(tipo, puntoVenta, NumeroComprobante.NumeroMinimo); // valida tipo y punto de venta
         if (!cancelacion.CanBeCanceled)
         {
-            _registro.LogError(
-                "ARCA ({Entorno}): la emisión llegó sin tiempo máximo de espera; no se envió nada a ARCA.", Entorno);
-            return new ResultadoAutorizacion.NoEnviada(MotivoSinPlazo);
+            RegistrarSinPlazo();
+            return new ResultadoProximoNumero.NoEnviada(MotivoSinPlazo);
         }
 
-        long numero;
-        TicketAcceso ticket;
-        try
+        var preparado = await AntesDeEnviarAsync(
+            async () =>
+            {
+                var ticket = await _wsaa.ObtenerTicketAsync(cancelacion);
+                return await _wsfe.UltimoAutorizadoAsync(ticket, tipo, puntoVenta, cancelacion);
+            },
+            "el pedido del próximo número",
+            tipo,
+            puntoVenta,
+            cancelacion);
+        if (preparado.Motivo is { } motivo)
         {
-            cancelacion.ThrowIfCancellationRequested();
-            ticket = await _wsaa.ObtenerTicketAsync(cancelacion);
-            var ultimo = await _wsfe.UltimoAutorizadoAsync(ticket, solicitud.Tipo, solicitud.PuntoVenta, cancelacion);
-            numero = ultimo + 1;
-        }
-        catch (OperationCanceledException) when (cancelacion.IsCancellationRequested)
-        {
-            _registro.LogWarning(
-                "ARCA ({Entorno}): el plazo de la emisión venció antes de enviar el pedido de autorización ({Tipo}, " +
-                "punto de venta {PuntoVenta}). La emisión no se envió.",
-                Entorno,
-                solicitud.Tipo,
-                solicitud.PuntoVenta);
-            return new ResultadoAutorizacion.NoEnviada(MotivoCancelada);
-        }
-        catch (CertificadoArcaException)
-        {
-            return new ResultadoAutorizacion.NoEnviada(MotivoCertificado);
-        }
-        catch (FallaArcaException error)
-        {
-            // El texto es uno de los motivos fijos de esta clase; la causa ya quedó en el log.
-            return new ResultadoAutorizacion.NoEnviada(error.Message);
-        }
-        catch (Exception error)
-        {
-            // No prevista, y todavía no se envió el pedido de autorización: no enviada. Solo el tipo: el texto de la
-            // excepción puede traer datos (R-02, R-07).
-            _registro.LogError(
-                "ARCA ({Entorno}): falla no prevista antes de enviar el pedido de autorización ({TipoFalla}). La emisión " +
-                "no se envió.",
-                Entorno,
-                error.GetType().Name);
-            return new ResultadoAutorizacion.NoEnviada(MotivoInesperado);
+            return new ResultadoProximoNumero.NoEnviada(motivo);
         }
 
+        var numero = preparado.Valor + 1;
         if (numero > NumeroComprobante.NumeroMaximo)
         {
             _registro.LogError(
                 "ARCA ({Entorno}): {Tipo}, punto de venta {PuntoVenta}, llegó al número máximo de comprobante. La emisión " +
                 "no se envió.",
                 Entorno,
-                solicitud.Tipo,
-                solicitud.PuntoVenta);
-            return new ResultadoAutorizacion.NoEnviada(MotivoUltimoNumero);
+                tipo,
+                puntoVenta);
+            return new ResultadoProximoNumero.NoEnviada(MotivoUltimoNumero);
+        }
+
+        return new ResultadoProximoNumero.Numero(numero);
+    }
+
+    /// <summary>
+    /// Ticket de WSAA → <c>FECAESolicitar</c> con <paramref name="numero"/>, con la clasificación de D-16: hasta el envío,
+    /// "no enviada"; desde el envío, "sin respuesta" ante cualquier falla.
+    /// </summary>
+    public async Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
+    {
+        ArgumentNullException.ThrowIfNull(solicitud);
+        _ = new NumeroComprobante(solicitud.Tipo, solicitud.PuntoVenta, numero);
+        if (!cancelacion.CanBeCanceled)
+        {
+            RegistrarSinPlazo();
+            return new ResultadoAutorizacion.NoEnviada(MotivoSinPlazo);
+        }
+
+        var preparado = await AntesDeEnviarAsync(
+            () => _wsaa.ObtenerTicketAsync(cancelacion),
+            "el pedido de autorización",
+            solicitud.Tipo,
+            solicitud.PuntoVenta,
+            cancelacion);
+        if (preparado.Motivo is { } motivo)
+        {
+            return new ResultadoAutorizacion.NoEnviada(motivo);
         }
 
         // El límite de D-16: hasta acá no se envió nada; desde el envío, la cancelación es "sin respuesta".
         if (cancelacion.IsCancellationRequested)
         {
-            _registro.LogWarning(
-                "ARCA ({Entorno}): el plazo de la emisión venció antes de enviar el pedido de autorización ({Tipo}, " +
-                "punto de venta {PuntoVenta}). La emisión no se envió.",
-                Entorno,
-                solicitud.Tipo,
-                solicitud.PuntoVenta);
+            RegistrarCancelada("el pedido de autorización", solicitud.Tipo, solicitud.PuntoVenta);
             return new ResultadoAutorizacion.NoEnviada(MotivoCancelada);
         }
 
-        return await _wsfe.SolicitarCaeAsync(ticket, solicitud, numero, cancelacion);
+        return await _wsfe.SolicitarCaeAsync(preparado.Valor!, solicitud, numero, cancelacion);
     }
+
+    /// <summary>
+    /// Ticket de WSAA → <c>FECompConsultar</c>. Hasta el envío, cualquier falla es "no consultada"; desde el envío, lo
+    /// clasifica <see cref="ClienteWsfe.ConsultarComprobanteAsync"/> (autorizado, no autorizado o sin respuesta).
+    /// </summary>
+    public async Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        _ = new NumeroComprobante(tipo, puntoVenta, numero);
+        if (!cancelacion.CanBeCanceled)
+        {
+            RegistrarSinPlazo();
+            return new ResultadoConsulta.NoConsultada(MotivoSinPlazo);
+        }
+
+        var preparado = await AntesDeEnviarAsync(
+            () => _wsaa.ObtenerTicketAsync(cancelacion), "la consulta", tipo, puntoVenta, cancelacion);
+        if (preparado.Motivo is { } motivo)
+        {
+            return new ResultadoConsulta.NoConsultada(motivo);
+        }
+
+        if (cancelacion.IsCancellationRequested)
+        {
+            RegistrarCancelada("la consulta", tipo, puntoVenta);
+            return new ResultadoConsulta.NoConsultada(MotivoCancelada);
+        }
+
+        return await _wsfe.ConsultarComprobanteAsync(preparado.Valor!, tipo, puntoVenta, numero, cancelacion);
+    }
+
+    /// <summary>
+    /// Corre lo que va antes de enviar a WSFEv1 (ticket y, si corresponde, el último número) y convierte cada falla en el
+    /// motivo fijo de "no enviada" o "no consultada": la cancelación, el certificado, WSAA o el último número, y una falla
+    /// no prevista (solo su tipo va al log: su texto puede traer datos, R-02, R-07).
+    /// </summary>
+    private async Task<(T? Valor, string? Motivo)> AntesDeEnviarAsync<T>(
+        Func<Task<T>> paso, string operacion, TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+    {
+        try
+        {
+            cancelacion.ThrowIfCancellationRequested();
+            return (await paso(), null);
+        }
+        catch (OperationCanceledException) when (cancelacion.IsCancellationRequested)
+        {
+            RegistrarCancelada(operacion, tipo, puntoVenta);
+            return (default, MotivoCancelada);
+        }
+        catch (CertificadoArcaException)
+        {
+            return (default, MotivoCertificado);
+        }
+        catch (FallaArcaException error)
+        {
+            // El texto es uno de los motivos fijos de esta clase; la causa ya quedó en el log.
+            return (default, error.Message);
+        }
+        catch (Exception error)
+        {
+            _registro.LogError(
+                "ARCA ({Entorno}): falla no prevista antes de enviar {Operacion} ({TipoFalla}). No se envió nada a ARCA.",
+                Entorno,
+                operacion,
+                error.GetType().Name);
+            return (default, MotivoInesperado);
+        }
+    }
+
+    private void RegistrarSinPlazo() =>
+        _registro.LogError(
+            "ARCA ({Entorno}): la operación llegó sin tiempo máximo de espera; no se envió nada a ARCA.", Entorno);
+
+    private void RegistrarCancelada(string operacion, TipoComprobante tipo, int puntoVenta) =>
+        _registro.LogWarning(
+            "ARCA ({Entorno}): el plazo venció antes de enviar {Operacion} ({Tipo}, punto de venta {PuntoVenta}). No se " +
+            "envió.",
+            Entorno,
+            operacion,
+            tipo,
+            puntoVenta);
 }

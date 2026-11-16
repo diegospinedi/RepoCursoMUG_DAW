@@ -138,10 +138,79 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.DescarteEmisionFila", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Entorno")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Momento")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Motivo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("Numero")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("PresupuestoNumero")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("PuntoVenta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Total")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("TotalCentavos");
+
+                    b.Property<long?>("TotalArca")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("TotalArcaCentavos");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PresupuestoNumero");
+
+                    b.ToTable("DescarteEmision", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_DescarteEmision_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_ImporteDistinto", "\"Motivo\" <> 'importe_distinto' OR (\"Numero\" IS NOT NULL AND \"TotalArcaCentavos\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_Motivo", "\"Motivo\" IN ('importe_distinto', 'sin_numero', 'otro_entorno')");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_PuntoVenta", "\"PuntoVenta\" BETWEEN 1 AND 99999");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_Tipo", "\"Tipo\" IN ('b', 'c')");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_TotalArcaCentavos", "\"TotalArcaCentavos\" IS NULL OR \"TotalArcaCentavos\" >= 0");
+
+                            t.HasCheckConstraint("CK_DescarteEmision_TotalCentavos", "\"TotalCentavos\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.EmisionPendienteFila", b =>
                 {
                     b.Property<long>("PresupuestoNumero")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Alicuota")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Concepto")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Entorno")
                         .IsRequired()
@@ -150,11 +219,25 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                     b.Property<DateOnly>("Fecha")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("Iva")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("IvaCentavos");
+
                     b.Property<string>("Momento")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("Neto")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("NetoCentavos");
+
+                    b.Property<long?>("Numero")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("PuntoVenta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ReceptorIdentificado")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Tipo")
@@ -169,11 +252,21 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("EmisionPendiente", null, t =>
                         {
+                            t.HasCheckConstraint("CK_EmisionPendiente_Concepto", "\"Concepto\" IS NULL OR \"Concepto\" IN ('productos', 'productos_y_servicios')");
+
                             t.HasCheckConstraint("CK_EmisionPendiente_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
 
                             t.HasCheckConstraint("CK_EmisionPendiente_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
 
+                            t.HasCheckConstraint("CK_EmisionPendiente_IvaCentavos", "\"IvaCentavos\" IS NULL OR \"IvaCentavos\" >= 0");
+
+                            t.HasCheckConstraint("CK_EmisionPendiente_NetoCentavos", "\"NetoCentavos\" IS NULL OR \"NetoCentavos\" >= 0");
+
+                            t.HasCheckConstraint("CK_EmisionPendiente_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+
                             t.HasCheckConstraint("CK_EmisionPendiente_PuntoVenta", "\"PuntoVenta\" BETWEEN 1 AND 99999");
+
+                            t.HasCheckConstraint("CK_EmisionPendiente_ReceptorIdentificado", "\"ReceptorIdentificado\" IS NULL OR \"ReceptorIdentificado\" IN (0, 1)");
 
                             t.HasCheckConstraint("CK_EmisionPendiente_Tipo", "\"Tipo\" IN ('b', 'c')");
 
@@ -420,6 +513,52 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.ObservacionEmisionFila", b =>
+                {
+                    b.Property<long>("PresupuestoNumero")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Entorno")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Momento")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Motivo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("Numero")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Total")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("TotalCentavos");
+
+                    b.Property<long?>("TotalArca")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("TotalArcaCentavos");
+
+                    b.HasKey("PresupuestoNumero");
+
+                    b.ToTable("ObservacionEmision", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ObservacionEmision_Entorno", "\"Entorno\" IN ('simulado', 'homologacion', 'produccion')");
+
+                            t.HasCheckConstraint("CK_ObservacionEmision_ImporteDistinto", "\"Motivo\" <> 'importe_distinto' OR (\"Numero\" IS NOT NULL AND \"TotalArcaCentavos\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_ObservacionEmision_Motivo", "\"Motivo\" IN ('importe_distinto', 'sin_numero', 'otro_entorno')");
+
+                            t.HasCheckConstraint("CK_ObservacionEmision_Numero", "\"Numero\" IS NULL OR \"Numero\" BETWEEN 1 AND 99999999");
+
+                            t.HasCheckConstraint("CK_ObservacionEmision_TotalArcaCentavos", "\"TotalArcaCentavos\" IS NULL OR \"TotalArcaCentavos\" >= 0");
+
+                            t.HasCheckConstraint("CK_ObservacionEmision_TotalCentavos", "\"TotalCentavos\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.PresupuestoFila", b =>
                 {
                     b.Property<long>("Numero")
@@ -483,6 +622,15 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.DescarteEmisionFila", b =>
+                {
+                    b.HasOne("Optica.Infrastructure.Persistencia.PresupuestoFila", null)
+                        .WithMany()
+                        .HasForeignKey("PresupuestoNumero")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Optica.Infrastructure.Persistencia.EmisionPendienteFila", b =>
                 {
                     b.HasOne("Optica.Infrastructure.Persistencia.PresupuestoFila", null)
@@ -521,6 +669,15 @@ namespace Optica.Infrastructure.Persistencia.Migraciones
                     b.HasOne("Optica.Infrastructure.Persistencia.PresupuestoFila", null)
                         .WithMany("Lineas")
                         .HasForeignKey("PresupuestoNumero")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Optica.Infrastructure.Persistencia.ObservacionEmisionFila", b =>
+                {
+                    b.HasOne("Optica.Infrastructure.Persistencia.EmisionPendienteFila", null)
+                        .WithOne()
+                        .HasForeignKey("Optica.Infrastructure.Persistencia.ObservacionEmisionFila", "PresupuestoNumero")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <FECompConsultarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECompConsultarResult>
+        <ResultGet>
+          <Concepto>1</Concepto>
+          <DocTipo>96</DocTipo>
+          <DocNro>00718294</DocNro>
+          <CbteDesde>125</CbteDesde>
+          <CbteHasta>125</CbteHasta>
+          <CbteFch>20261030</CbteFch>
+          <ImpTotal>1815.00</ImpTotal>
+          <MonId>PES</MonId>
+          <MonCotiz>1</MonCotiz>
+          <Resultado>A</Resultado>
+          <CodAutorizacion>12345678901234</CodAutorizacion>
+          <EmisionTipo>CAE</EmisionTipo>
+          <FchVto>20261109</FchVto>
+          <FchProceso>20261030120000</FchProceso>
+          <PtoVta>3</PtoVta>
+          <CbteTipo>6</CbteTipo>
+        </ResultGet>
+        <Errors>
+          <Err>
+            <Code>602</Code>
+            <Msg>No existen datos en nuestros registros para los parametros ingresados.</Msg>
+          </Err>
+        </Errors>
+      </FECompConsultarResult>
+    </FECompConsultarResponse>
+  </soap:Body>
+</soap:Envelope>

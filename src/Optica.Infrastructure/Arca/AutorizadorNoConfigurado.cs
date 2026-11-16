@@ -4,8 +4,8 @@ using Optica.Domain.Facturacion;
 namespace Optica.Infrastructure.Arca;
 
 /// <summary>
-/// El autorizador de homologación o producción que no envía nada: cada emisión termina "no enviada" con un motivo fijo,
-/// sin llamar a nadie, y la Api arranca igual. Se usa cuando faltan el CUIT, el certificado o su clave
+/// El autorizador de homologación o producción que no envía nada: cada operación termina "no enviada" o "no consultada"
+/// con un motivo fijo, sin llamar a nadie, y la Api arranca igual. Se usa cuando faltan el CUIT, el certificado o su clave
 /// (<see cref="MotivoNoConfigurada"/>); con las credenciales completas, la raíz de composición registra
 /// <see cref="AutorizadorWsfe"/>.
 /// </summary>
@@ -37,9 +37,25 @@ public sealed class AutorizadorNoConfigurado : IAutorizadorComprobantes
 
     public TimeSpan TiempoMaximo { get; }
 
-    public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+    {
+        _ = new NumeroComprobante(tipo, puntoVenta, NumeroComprobante.NumeroMinimo); // valida tipo y punto de venta
+        return Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.NoEnviada(_motivo));
+    }
+
+    public Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
         ArgumentNullException.ThrowIfNull(solicitud);
+        _ = new NumeroComprobante(solicitud.Tipo, solicitud.PuntoVenta, numero);
         return Task.FromResult<ResultadoAutorizacion>(new ResultadoAutorizacion.NoEnviada(_motivo));
+    }
+
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        _ = new NumeroComprobante(tipo, puntoVenta, numero);
+        return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoConsultada(_motivo));
     }
 }

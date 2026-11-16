@@ -59,7 +59,7 @@ public sealed class RendimientoEmisionTests(ITestOutputHelper salida)
 
     /// <summary>
     /// Demora <paramref name="demora"/> de verdad y registra la espera medida por presupuesto (por el total, que es único
-    /// en esta prueba); autoriza con números consecutivos.
+    /// en esta prueba); autoriza el número recibido (el último + 1).
     /// </summary>
     private sealed class AutorizadorQueDemora(TimeSpan demora) : IAutorizadorComprobantes
     {
@@ -71,8 +71,16 @@ public sealed class RendimientoEmisionTests(ITestOutputHelper salida)
 
         public TimeSpan TiempoMaximo => TimeSpan.FromSeconds(30);
 
+        public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+            TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(Volatile.Read(ref _numero) + 1));
+
+        public Task<ResultadoConsulta> ConsultarAsync(
+            TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion) =>
+            Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
+
         public async Task<ResultadoAutorizacion> AutorizarAsync(
-            SolicitudComprobante solicitud, CancellationToken cancelacion)
+            SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
         {
             var reloj = Stopwatch.StartNew();
             await Task.Delay(demora, CancellationToken.None);
@@ -80,8 +88,8 @@ public sealed class RendimientoEmisionTests(ITestOutputHelper salida)
             // Los presupuestos se numeran desde 1 y cada uno tiene total 1000 + (número - 1).
             var presupuesto = (long)solicitud.Importes.Total - 999;
             Esperas[presupuesto] = reloj.Elapsed;
-            return new ResultadoAutorizacion.Autorizada(
-                Interlocked.Increment(ref _numero), "71234567890123", solicitud.Fecha.AddDays(10));
+            Interlocked.Exchange(ref _numero, numero);
+            return new ResultadoAutorizacion.Autorizada(numero, "71234567890123", solicitud.Fecha.AddDays(10));
         }
     }
 }

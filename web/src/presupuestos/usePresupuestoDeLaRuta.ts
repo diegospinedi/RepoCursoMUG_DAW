@@ -18,8 +18,9 @@ export interface PresupuestoDeLaRuta {
   numero: number | null;
   carga: CargaPresupuesto;
   /**
-   * Muestra un presupuesto que devolvió otra operación (por ejemplo, el paso a Final o la emisión de la factura), si
-   * es el de la ruta, con su estado de facturación (FEAT-007).
+   * Muestra un presupuesto que devolvió otra operación (por ejemplo, el paso a Final, la emisión de la factura o la
+   * verificación y el descarte de la emisión pendiente), si es el de la ruta, con su estado de facturación (FEAT-007) y
+   * la observación de la emisión pendiente (FEAT-008).
    */
   mostrar: (presupuesto: PresupuestoConsultado) => void;
   /** Vuelve a leer el presupuesto de la ruta; mientras tanto se sigue mostrando el anterior. */

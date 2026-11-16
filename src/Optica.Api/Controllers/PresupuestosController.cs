@@ -111,9 +111,49 @@ public sealed record SolicitudFactura(string? Concepto)
 public sealed record FacturaDelPresupuesto(string Comprobante);
 
 /// <summary>
+/// La respuesta 200 de la verificación de una emisión pendiente (FEAT-008): <c>resultado</c> (<see cref="Recuperada"/>
+/// si ARCA ya la había autorizado, FR-05; <see cref="Emitida"/> si se emitió con un número nuevo, FR-06) y la factura,
+/// con los mismos campos que el 201 de la emisión. No lleva datos del cliente.
+/// </summary>
+public sealed record VerificacionConFactura(string Resultado, FacturaEmitida Factura)
+{
+    /// <summary>El texto de <see cref="Resultado"/> de una factura recuperada.</summary>
+    public const string Recuperada = "recuperada";
+
+    /// <summary>El texto de <see cref="Resultado"/> de una factura emitida en la verificación.</summary>
+    public const string Emitida = "emitida";
+}
+
+/// <summary>
+/// La observación vigente de la emisión pendiente en el GET del presupuesto (FEAT-008, FR-08, FR-14, FR-15): el motivo
+/// (<c>importe_distinto</c>, <c>sin_numero</c>, <c>otro_entorno</c>), el comprobante ("Factura B 0003-00000125", o null
+/// sin número), el importe registrado, el de ARCA (o null) y el entorno de la pendiente (<c>simulado</c>,
+/// <c>homologacion</c>, <c>produccion</c>). No lleva datos del cliente.
+/// </summary>
+public sealed record ObservacionDelPresupuesto(
+    string Motivo, string? Comprobante, decimal ImporteRegistrado, decimal? ImporteArca, string Entorno)
+{
+    /// <summary>La observación con sus textos, o null sin observación.</summary>
+    /// <exception cref="InvalidOperationException">El motivo o el entorno no están previstos (cerrado por defecto).</exception>
+    /// <remarks>
+    /// Los textos del motivo y del entorno los traduce Application (<see cref="DetalleObservacion.TextoMotivo"/>,
+    /// <see cref="DetalleObservacion.TextoEntorno"/>): la Api no compila contra el dominio.
+    /// </remarks>
+    public static ObservacionDelPresupuesto? Desde(DetalleObservacion? observacion) => observacion is null
+        ? null
+        : new ObservacionDelPresupuesto(
+            observacion.TextoMotivo,
+            observacion.Comprobante,
+            observacion.ImporteRegistrado,
+            observacion.ImporteArca,
+            observacion.TextoEntorno);
+}
+
+/// <summary>
 /// La respuesta del GET de un presupuesto (D-28): los mismos datos que <see cref="PresupuestoGrabado"/>, en el mismo
-/// orden, más <see cref="Factura"/> (null sin factura) y <see cref="EmisionPendiente"/> (FR-20, FR-24). La combina la
-/// Api: Presupuestos no conoce Facturación. El alta y los PUT siguen respondiendo <see cref="PresupuestoGrabado"/>.
+/// orden, más <see cref="Factura"/> (null sin factura), <see cref="EmisionPendiente"/> (FR-20, FR-24) y, desde
+/// FEAT-008, <see cref="ObservacionEmision"/> (null sin observación). La combina la Api: Presupuestos no conoce
+/// Facturación. El alta y los PUT siguen respondiendo <see cref="PresupuestoGrabado"/>.
 /// </summary>
 /// <remarks>Lleva los datos del cliente: <see cref="object.ToString"/> no muestra ningún valor (D-17).</remarks>
 public sealed record PresupuestoConFacturacion(
@@ -125,7 +165,8 @@ public sealed record PresupuestoConFacturacion(
     decimal Total,
     long Version,
     FacturaDelPresupuesto? Factura,
-    bool EmisionPendiente)
+    bool EmisionPendiente,
+    ObservacionDelPresupuesto? ObservacionEmision)
 {
     private bool PrintMembers(System.Text.StringBuilder constructor) => false;
 
@@ -139,7 +180,8 @@ public sealed record PresupuestoConFacturacion(
         presupuesto.Total,
         presupuesto.Version,
         estado.Comprobante is { } comprobante ? new FacturaDelPresupuesto(comprobante) : null,
-        estado.EmisionPendiente);
+        estado.EmisionPendiente,
+        ObservacionDelPresupuesto.Desde(estado.Observacion));
 }
 
 /// <summary>
@@ -157,7 +199,8 @@ public sealed record ListadoPresupuestos(
 /// Presupuestos: alta en Borrador y consulta por número (FEAT-003a); modificación en Borrador y paso a Final
 /// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>; búsqueda y PDF de un Final (FEAT-006), con 409 <c>borrador</c>
 /// para el PDF de un Borrador; emisión de la factura y estado de facturación en el GET (FEAT-007), con 409 y su
-/// <c>motivo</c> para los rechazos y los desenlaces de ARCA. Solo traduce HTTP: delega en los casos de uso, que validan, leen
+/// <c>motivo</c> para los rechazos y los desenlaces de ARCA; verificación y descarte de la emisión pendiente y su
+/// observación en el GET (FEAT-008), con 409 y su <c>motivo</c>. Solo traduce HTTP: delega en los casos de uso, que validan, leen
 /// los artículos, numeran y graban. Exige sesión por la política por defecto (no está en
 /// <see cref="RutasAnonimas"/>): las respuestas traen datos personales del cliente (D-17). Sin sesión, 401 antes del 415
 /// y del 413; el Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (D-16). No registra el
@@ -181,8 +224,111 @@ public sealed class PresupuestosController(
     BuscarPresupuestos buscarPresupuestos,
     GenerarPdfPresupuesto generarPdfPresupuesto,
     EmitirFactura emitirFactura,
-    ObtenerEstadoFacturacion obtenerEstadoFacturacion) : ControllerBase
+    ObtenerEstadoFacturacion obtenerEstadoFacturacion,
+    VerificarEmision verificarEmision,
+    DescartarEmision descartarEmision) : ControllerBase
 {
+    /// <summary>
+    /// Verifica en ARCA la emisión pendiente del presupuesto (FEAT-008, FR-04 a FR-16): 200 con <c>resultado</c>
+    /// (<c>recuperada</c> o <c>emitida</c>) y la factura; inexistente, 404; sin pendiente, espera, observación, sin
+    /// respuesta, rechazo, no enviada o facturado, 409 con su <c>motivo</c>. Sin cuerpo: como todo POST exige
+    /// <c>Content-Type: application/json</c> (<see cref="LimitesDelCuerpo"/>); lo que llegue no se lee, hasta
+    /// <see cref="CuerpoMaximoFactura"/> (más, 413). El token del pedido solo cubre las primeras lecturas: la consulta y
+    /// la emisión tienen su propio plazo y no se cancelan si el navegador corta el pedido (D-10).
+    /// </summary>
+    [HttpPost("{numero:long}/factura/verificacion")]
+    [RequestSizeLimit(CuerpoMaximoFactura)]
+    public async Task<IActionResult> Verificar(long numero, CancellationToken cancelacion) =>
+        ResponderVerificacion(await verificarEmision.EjecutarAsync(numero, cancelacion));
+
+    /// <summary>
+    /// Descarta la emisión pendiente observada del presupuesto (FEAT-008, FR-09 a FR-11): 204 sin cuerpo; inexistente,
+    /// 404; sin pendiente o sin observación vigente, 409 con su <c>motivo</c>. Sin cuerpo, como la verificación.
+    /// </summary>
+    [HttpPost("{numero:long}/factura/descarte")]
+    [RequestSizeLimit(CuerpoMaximoFactura)]
+    public async Task<IActionResult> Descartar(long numero, CancellationToken cancelacion) =>
+        ResponderDescarte(await descartarEmision.EjecutarAsync(numero, cancelacion));
+
+    /// <summary>
+    /// Traduce el resultado de la verificación. Cerrado por defecto: recuperada o emitida con su factura, 200; no
+    /// encontrado, 404; conflicto con su motivo y sus datos, 409 (<see cref="RespuestasValidacion.ConflictoVerificacion"/>).
+    /// Cualquier otro resultado, o un motivo sin los datos que le corresponden, lanza, y el manejador de errores responde
+    /// 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderVerificacion(ResultadoVerificacion? resultado) => resultado switch
+    {
+        { Tipo: TipoResultadoVerificacion.Recuperada, Factura: { } factura } =>
+            Ok(new VerificacionConFactura(VerificacionConFactura.Recuperada, factura)),
+        { Tipo: TipoResultadoVerificacion.Emitida, Factura: { } factura } =>
+            Ok(new VerificacionConFactura(VerificacionConFactura.Emitida, factura)),
+        { Tipo: TipoResultadoVerificacion.NoEncontrado } =>
+            Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado),
+        { Tipo: TipoResultadoVerificacion.Conflicto, Motivo: { } motivo } => ConflictoDeLaVerificacion(motivo, resultado),
+        _ => throw new InvalidOperationException("Resultado de la verificación de una emisión no previsto."),
+    };
+
+    /// <summary>El 409 de cada motivo de la verificación, con los datos que ese motivo lleva y ningún otro.</summary>
+    private IActionResult ConflictoDeLaVerificacion(MotivoConflictoVerificacion motivo, ResultadoVerificacion resultado) =>
+        (motivo, resultado) switch
+        {
+            (MotivoConflictoVerificacion.SinPendiente, _) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoSinPendiente),
+            (MotivoConflictoVerificacion.Espera, { SegundosRestantes: { } segundos }) =>
+                this.ConflictoVerificacion(
+                    RespuestasValidacion.MotivoEspera,
+                    new Dictionary<string, object> { [RespuestasValidacion.ExtensionSegundosRestantes] = segundos }),
+            (MotivoConflictoVerificacion.ImporteDistinto,
+                { Observacion: { Comprobante: { } comprobante, ImporteArca: { } importeArca } observacion }) =>
+                this.ConflictoVerificacion(
+                    RespuestasValidacion.MotivoImporteDistinto,
+                    new Dictionary<string, object>
+                    {
+                        [RespuestasValidacion.ExtensionComprobante] = comprobante,
+                        [RespuestasValidacion.ExtensionImporteRegistrado] = observacion.ImporteRegistrado,
+                        [RespuestasValidacion.ExtensionImporteArca] = importeArca,
+                    }),
+            (MotivoConflictoVerificacion.SinNumero, { Observacion: not null }) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoSinNumero),
+            (MotivoConflictoVerificacion.OtroEntorno, { Observacion: { } observacion }) =>
+                this.ConflictoVerificacion(
+                    RespuestasValidacion.MotivoOtroEntorno,
+                    new Dictionary<string, object>
+                    {
+                        [RespuestasValidacion.ExtensionEntorno] = observacion.TextoEntorno,
+                    }),
+            (MotivoConflictoVerificacion.SinRespuesta, _) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoSinRespuesta),
+            (MotivoConflictoVerificacion.SinRespuestaEmision, _) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoSinRespuestaEmision),
+            (MotivoConflictoVerificacion.Rechazada, { CodigoArca: { } codigo, DescripcionArca: { } descripcion }) =>
+                this.ConflictoVerificacion(
+                    RespuestasValidacion.MotivoRechazada,
+                    new Dictionary<string, object>
+                    {
+                        [RespuestasValidacion.ExtensionCodigoArca] = codigo,
+                        [RespuestasValidacion.ExtensionDescripcionArca] = descripcion,
+                    }),
+            (MotivoConflictoVerificacion.NoEnviada, _) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoNoEnviada),
+            (MotivoConflictoVerificacion.Facturado, _) =>
+                this.ConflictoVerificacion(RespuestasValidacion.MotivoFacturado),
+            _ => throw new InvalidOperationException("Motivo del conflicto de la verificación no previsto."),
+        };
+
+    /// <summary>
+    /// Traduce el resultado del descarte. Cerrado por defecto: descartada, 204; no encontrado, 404; sin pendiente o sin
+    /// observación, 409 (<see cref="RespuestasValidacion.ConflictoDescarte"/>). Cualquier otro resultado lanza.
+    /// </summary>
+    internal IActionResult ResponderDescarte(ResultadoDescarte? resultado) => resultado switch
+    {
+        ResultadoDescarte.Descartada => NoContent(),
+        ResultadoDescarte.NoEncontrado => Problem(statusCode: StatusCodes.Status404NotFound, title: TituloNoEncontrado),
+        ResultadoDescarte.SinPendiente => this.ConflictoDescarte(RespuestasValidacion.MotivoSinPendiente),
+        ResultadoDescarte.SinObservacion => this.ConflictoDescarte(RespuestasValidacion.MotivoSinObservacion),
+        _ => throw new InvalidOperationException("Resultado del descarte de una emisión no previsto."),
+    };
+
     /// <summary>Tamaño máximo del cuerpo de la emisión de la factura (FEAT-007); más grande, 413.</summary>
     public const long CuerpoMaximoFactura = 1024;
 

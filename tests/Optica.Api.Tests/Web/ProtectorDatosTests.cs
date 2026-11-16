@@ -64,9 +64,11 @@ public sealed class ProtectorDatosTests
             Assert.Equal(EntornoArca.Homologacion, autorizador.Entorno);
             Assert.Equal("ProtectorDatos", app.Services.GetRequiredService<IProtectorDatos>().GetType().Name);
 
-            // Un plazo ya vencido no sale a la red: no enviada.
+            // Un plazo ya vencido no sale a la red: no enviada, y la consulta no consultada.
             using var vencido = new CancellationTokenSource();
             await vencido.CancelAsync();
+            Assert.IsType<ResultadoProximoNumero.NoEnviada>(
+                await autorizador.ProximoNumeroAsync(TipoComprobante.FacturaC, 3, vencido.Token));
             Assert.IsType<ResultadoAutorizacion.NoEnviada>(
                 await autorizador.AutorizarAsync(
                     new SolicitudComprobante(
@@ -76,7 +78,10 @@ public sealed class ProtectorDatosTests
                         ConceptoFactura.Productos,
                         ReceptorFactura.SinIdentificar,
                         ImportesFactura.ParaFacturaC(1000m)),
+                    1,
                     vencido.Token));
+            Assert.IsType<ResultadoConsulta.NoConsultada>(
+                await autorizador.ConsultarAsync(TipoComprobante.FacturaC, 3, 1, vencido.Token));
         }
         finally
         {

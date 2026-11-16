@@ -18,15 +18,22 @@ namespace Optica.Application.Tests.Facturacion;
 /// <remarks>
 /// Anota cada acceso en <see cref="Accesos"/> y si hay una transacción abierta (<see cref="EnTransaccion"/>), para fijar
 /// que la llamada a ARCA corre fuera de toda transacción. Guarda el token que recibió cada transacción en
-/// <see cref="TokensDeTransaccion"/>.
+/// <see cref="TokensDeTransaccion"/>. Las transacciones de flujos distintos se ejecutan de a una, como
+/// <c>BEGIN IMMEDIATE</c> en SQLite; dentro del mismo flujo no se anidan. Las observaciones (FEAT-008) cumplen la clave
+/// foránea a la pendiente: confirmar la baja de una pendiente que conserva su observación falla (D-24).
 /// </remarks>
 internal sealed class AlmacenFacturacion :
     IPresupuestoRepository, IConfiguracionNegocioRepository, IFacturaRepository, IEmisionPendienteRepository,
-    IUnidadDeTrabajo
+    IObservacionEmisionRepository, IDescarteEmisionRepository, IUnidadDeTrabajo
 {
+    private readonly List<DescarteEmision> _descartesRegistrados = [];
     private readonly List<Factura> _facturasRegistradas = [];
     private readonly List<EmisionPendiente> _pendientesRegistradas = [];
     private readonly List<long> _pendientesQuitadas = [];
+    private readonly List<ObservacionEmision> _observacionesRegistradas = [];
+    private readonly List<long> _observacionesQuitadas = [];
+    private readonly SemaphoreSlim _escritura = new(1, 1);
+    private readonly AsyncLocal<bool> _enEsteFlujo = new();
 
     public List<Presupuesto> Presupuestos { get; } = [];
 
@@ -35,6 +42,11 @@ internal sealed class AlmacenFacturacion :
     public List<Factura> Facturas { get; } = [];
 
     public List<EmisionPendiente> Pendientes { get; } = [];
+
+    public List<ObservacionEmision> Observaciones { get; } = [];
+
+    /// <summary>Los descartes confirmados (FEAT-008, FR-10): solo se agregan.</summary>
+    public List<DescarteEmision> Descartes { get; } = [];
 
     public ConcurrentQueue<string> Accesos { get; } = new();
 
@@ -47,6 +59,9 @@ internal sealed class AlmacenFacturacion :
 
     /// <summary>Si no es null, confirmar solo la baja de una pendiente (sin factura) lanza esta excepción.</summary>
     public Func<Exception>? FallaAlConfirmarBaja { get; set; }
+
+    /// <summary>Si no es null, confirmar el alta de una pendiente lanza esta excepción (D-28: conflicto en el reemplazo).</summary>
+    public Func<Exception>? FallaAlConfirmarAlta { get; set; }
 
     // Presupuestos: solo la lectura por número.
 
@@ -139,20 +154,86 @@ internal sealed class AlmacenFacturacion :
         return Task.FromResult(Pendientes.Any(pendiente => pendiente.PresupuestoNumero == presupuestoNumero));
     }
 
+    public Task<EmisionPendiente?> ObtenerPendienteAsync(long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ObtenerPendiente");
+        return Task.FromResult(Pendientes.SingleOrDefault(pendiente => pendiente.PresupuestoNumero == presupuestoNumero));
+    }
+
+    public Task<IReadOnlyList<long>> ListarNumerosAsync(CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ListarPendientes");
+        return Task.FromResult<IReadOnlyList<long>>(
+            Pendientes.Select(pendiente => pendiente.PresupuestoNumero).Order().ToList());
+    }
+
+    // Observaciones (FEAT-008).
+
+    public void Agregar(ObservacionEmision observacion)
+    {
+        ArgumentNullException.ThrowIfNull(observacion);
+        if (_observacionesQuitadas.Contains(observacion.PresupuestoNumero))
+        {
+            throw new InvalidOperationException("La observación se quitó y la baja no se confirmó.");
+        }
+
+        Accesos.Enqueue("AgregarObservacion");
+        _observacionesRegistradas.Add(observacion);
+    }
+
+    public void QuitarObservacion(long presupuestoNumero)
+    {
+        Accesos.Enqueue("QuitarObservacion");
+        _observacionesQuitadas.Add(presupuestoNumero);
+    }
+
+    public Task<ObservacionEmision?> ObtenerObservacionAsync(
+        long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ObtenerObservacion");
+        return Task.FromResult(
+            Observaciones.SingleOrDefault(observacion => observacion.PresupuestoNumero == presupuestoNumero));
+    }
+
+    // Descartes (FEAT-008): solo alta y lectura.
+
+    public void Agregar(DescarteEmision descarte)
+    {
+        ArgumentNullException.ThrowIfNull(descarte);
+        Accesos.Enqueue("AgregarDescarte");
+        _descartesRegistrados.Add(descarte);
+    }
+
+    public Task<IReadOnlyList<DescarteEmision>> ListarDescartesAsync(
+        long presupuestoNumero, CancellationToken cancelacion = default)
+    {
+        cancelacion.ThrowIfCancellationRequested();
+        Accesos.Enqueue("ListarDescartes");
+        return Task.FromResult<IReadOnlyList<DescarteEmision>>(
+            Descartes.Where(descarte => descarte.PresupuestoNumero == presupuestoNumero).ToList());
+    }
+
     // Unidad de trabajo.
 
     public async Task<T> EjecutarEnTransaccionAsync<T>(
         Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
     {
         ArgumentNullException.ThrowIfNull(operacion);
-        if (EnTransaccion)
+        if (_enEsteFlujo.Value)
         {
             throw new InvalidOperationException("La operación en transacción no se anida.");
         }
 
+        await _escritura.WaitAsync(CancellationToken.None);
         TokensDeTransaccion.Add(cancelacion);
         var facturasAlEntrar = new List<Factura>(Facturas);
         var pendientesAlEntrar = new List<EmisionPendiente>(Pendientes);
+        var observacionesAlEntrar = new List<ObservacionEmision>(Observaciones);
+        var descartesAlEntrar = new List<DescarteEmision>(Descartes);
+        _enEsteFlujo.Value = true;
         EnTransaccion = true;
         Accesos.Enqueue("Transaccion");
         try
@@ -171,13 +252,19 @@ internal sealed class AlmacenFacturacion :
             Facturas.AddRange(facturasAlEntrar);
             Pendientes.Clear();
             Pendientes.AddRange(pendientesAlEntrar);
+            Observaciones.Clear();
+            Observaciones.AddRange(observacionesAlEntrar);
+            Descartes.Clear();
+            Descartes.AddRange(descartesAlEntrar);
             Descartar();
             throw;
         }
         finally
         {
             EnTransaccion = false;
+            _enEsteFlujo.Value = false;
             Accesos.Enqueue("FinTransaccion");
+            _escritura.Release();
         }
     }
 
@@ -196,17 +283,36 @@ internal sealed class AlmacenFacturacion :
                 throw fallaBaja();
             }
 
+            if (_pendientesRegistradas.Count > 0 && FallaAlConfirmarAlta is { } fallaAlta)
+            {
+                throw fallaAlta();
+            }
+
             var pendientes = Pendientes.Where(p => !_pendientesQuitadas.Contains(p.PresupuestoNumero)).ToList();
+            var observaciones =
+                Observaciones.Where(o => !_observacionesQuitadas.Contains(o.PresupuestoNumero)).ToList();
             if (_facturasRegistradas.Any(nueva => Facturas.Any(f => f.PresupuestoNumero == nueva.PresupuestoNumero))
-                || _pendientesRegistradas.Any(nueva => pendientes.Any(p => p.PresupuestoNumero == nueva.PresupuestoNumero)))
+                || _pendientesRegistradas.Any(nueva => pendientes.Any(p => p.PresupuestoNumero == nueva.PresupuestoNumero))
+                || _observacionesRegistradas.Any(
+                    nueva => observaciones.Any(o => o.PresupuestoNumero == nueva.PresupuestoNumero)))
             {
                 throw new ConflictoAlConfirmarException("Conflicto al confirmar.", MotivoConflicto.Unicidad);
             }
 
-            Facturas.AddRange(_facturasRegistradas);
             pendientes.AddRange(_pendientesRegistradas);
+            observaciones.AddRange(_observacionesRegistradas);
+            if (observaciones.Any(o => pendientes.All(p => p.PresupuestoNumero != o.PresupuestoNumero)))
+            {
+                // La clave foránea de ObservacionEmision a EmisionPendiente (Restrict): en SQLite, un error de la base.
+                throw new InvalidOperationException("FOREIGN KEY constraint failed.");
+            }
+
+            Facturas.AddRange(_facturasRegistradas);
+            Descartes.AddRange(_descartesRegistrados);
             Pendientes.Clear();
             Pendientes.AddRange(pendientes);
+            Observaciones.Clear();
+            Observaciones.AddRange(observaciones);
         }
         finally
         {
@@ -217,13 +323,42 @@ internal sealed class AlmacenFacturacion :
     }
 
     private bool HayRegistrados =>
-        _facturasRegistradas.Count > 0 || _pendientesRegistradas.Count > 0 || _pendientesQuitadas.Count > 0;
+        _facturasRegistradas.Count > 0 || _pendientesRegistradas.Count > 0 || _pendientesQuitadas.Count > 0
+        || _observacionesRegistradas.Count > 0 || _observacionesQuitadas.Count > 0 || _descartesRegistrados.Count > 0;
 
     private void Descartar()
     {
+        _descartesRegistrados.Clear();
         _facturasRegistradas.Clear();
         _pendientesRegistradas.Clear();
         _pendientesQuitadas.Clear();
+        _observacionesRegistradas.Clear();
+        _observacionesQuitadas.Clear();
+    }
+
+    /// <summary>Guarda una observación sobre la pendiente ya guardada del presupuesto, como si existiera de antes.</summary>
+    public ObservacionEmision SembrarObservacion(EmisionPendiente pendiente)
+    {
+        var observacion = new ObservacionEmision(
+            pendiente.PresupuestoNumero, MotivoObservacionEmision.OtroEntorno, pendiente.Numero, pendiente.Total, null,
+            pendiente.Entorno, new DateTimeOffset(2026, 10, 1, 12, 5, 0, TimeSpan.Zero));
+        Observaciones.Add(observacion);
+        return observacion;
+    }
+
+    /// <summary>
+    /// Guarda una observación con <paramref name="motivo"/> sobre la pendiente ya guardada (FEAT-008): con el número de la
+    /// pendiente, otro (<paramref name="numero"/>) o ninguno (<paramref name="sinNumero"/>).
+    /// </summary>
+    public ObservacionEmision SembrarObservacion(
+        EmisionPendiente pendiente, MotivoObservacionEmision motivo, decimal? totalArca = null, long? numero = null,
+        bool sinNumero = false)
+    {
+        var observacion = new ObservacionEmision(
+            pendiente.PresupuestoNumero, motivo, sinNumero ? null : numero ?? pendiente.Numero, pendiente.Total, totalArca,
+            pendiente.Entorno, new DateTimeOffset(2026, 10, 1, 12, 5, 0, TimeSpan.Zero));
+        Observaciones.Add(observacion);
+        return observacion;
     }
 
     /// <summary>Guarda un presupuesto ya confirmado con <paramref name="totales"/> como Precio Final de sus líneas.</summary>
@@ -253,7 +388,8 @@ internal sealed class AlmacenFacturacion :
         var solicitud = ReglasEmision.Armar(presupuesto, Configuraciones.Vigente(), ConceptoFactura.Productos, Fecha)
             .Solicitud!;
         var pendiente = new EmisionPendiente(
-            presupuesto.Numero, new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), solicitud, EntornoArca.Simulado);
+            presupuesto.Numero, new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), solicitud, 7,
+            EntornoArca.Simulado);
         Pendientes.Add(pendiente);
         return pendiente;
     }
@@ -294,8 +430,10 @@ internal static class Configuraciones
 }
 
 /// <summary>
-/// Autorizador de ARCA de prueba: por defecto autoriza con números 125, 126… Anota cada solicitud, el token que
-/// recibió y si había una transacción abierta en el almacén al llamarlo. <see cref="Responder"/> permite otra respuesta.
+/// Autorizador de ARCA de prueba: por defecto el próximo número es 125, 126… y autoriza el número que recibe. Anota cada
+/// solicitud, el token que recibió y si había una transacción abierta en el almacén al llamarlo.
+/// <see cref="Responder"/> permite otra respuesta a la autorización, <see cref="ResponderProximo"/> otra al próximo
+/// número y <see cref="ResponderConsulta"/> otra a la consulta (por defecto, no autorizado).
 /// </summary>
 internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAutorizadorComprobantes
 {
@@ -307,6 +445,9 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
 
     public List<SolicitudComprobante> Solicitudes { get; } = [];
 
+    /// <summary>El número que recibió cada autorización.</summary>
+    public List<long> Numeros { get; } = [];
+
     public List<CancellationToken> Tokens { get; } = [];
 
     public List<bool> DentroDeTransaccion { get; } = [];
@@ -314,17 +455,42 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
     /// <summary>Las pendientes guardadas en el almacén en el momento de cada llamada.</summary>
     public List<int> PendientesAlLlamar { get; } = [];
 
-    /// <summary>Se completa en la primera llamada.</summary>
+    /// <summary>Cuántas veces se pidió el próximo número.</summary>
+    public int PedidosDeNumero { get; private set; }
+
+    /// <summary>Las consultas recibidas: tipo, punto de venta y número.</summary>
+    public List<(TipoComprobante Tipo, int PuntoVenta, long Numero)> Consultas { get; } = [];
+
+    /// <summary>Se completa en la primera autorización.</summary>
     public TaskCompletionSource Llamado { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Func<SolicitudComprobante, CancellationToken, Task<ResultadoAutorizacion>>? Responder { get; set; }
 
+    public Func<TipoComprobante, int, CancellationToken, Task<ResultadoProximoNumero>>? ResponderProximo { get; set; }
+
+    public Func<TipoComprobante, int, long, CancellationToken, Task<ResultadoConsulta>>? ResponderConsulta { get; set; }
+
+    /// <summary>Las autorizaciones pedidas.</summary>
     public int Llamadas => Solicitudes.Count;
 
-    public Task<ResultadoAutorizacion> AutorizarAsync(SolicitudComprobante solicitud, CancellationToken cancelacion)
+    public Task<ResultadoProximoNumero> ProximoNumeroAsync(
+        TipoComprobante tipo, int puntoVenta, CancellationToken cancelacion)
+    {
+        PedidosDeNumero++;
+        if (ResponderProximo is { } responder)
+        {
+            return responder(tipo, puntoVenta, cancelacion);
+        }
+
+        return Task.FromResult<ResultadoProximoNumero>(new ResultadoProximoNumero.Numero(_proximo));
+    }
+
+    public Task<ResultadoAutorizacion> AutorizarAsync(
+        SolicitudComprobante solicitud, long numero, CancellationToken cancelacion)
     {
         ArgumentNullException.ThrowIfNull(solicitud);
         Solicitudes.Add(solicitud);
+        Numeros.Add(numero);
         Tokens.Add(cancelacion);
         DentroDeTransaccion.Add(almacen?.EnTransaccion ?? false);
         PendientesAlLlamar.Add(almacen?.Pendientes.Count ?? 0);
@@ -334,8 +500,21 @@ internal sealed class AutorizadorDoble(AlmacenFacturacion? almacen = null) : IAu
             return responder(solicitud, cancelacion);
         }
 
+        _proximo = numero + 1;
         return Task.FromResult<ResultadoAutorizacion>(
-            new ResultadoAutorizacion.Autorizada(_proximo++, "71234567890123", solicitud.Fecha.AddDays(10)));
+            new ResultadoAutorizacion.Autorizada(numero, "71234567890123", solicitud.Fecha.AddDays(10)));
+    }
+
+    public Task<ResultadoConsulta> ConsultarAsync(
+        TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        Consultas.Add((tipo, puntoVenta, numero));
+        if (ResponderConsulta is { } responder)
+        {
+            return responder(tipo, puntoVenta, numero, cancelacion);
+        }
+
+        return Task.FromResult<ResultadoConsulta>(new ResultadoConsulta.NoAutorizado());
     }
 
     /// <summary>Espera la cancelación del token y responde "sin respuesta", como ARCA que no contesta.</summary>
@@ -411,6 +590,56 @@ internal sealed class CandadoDoble : ICandadoEmision
                 {
                     throw new ObjectDisposedException("SemaphoreSlim");
                 }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Candado de emisión que da un turno a la vez, como el real (D-10): los demás esperan a que se libere.
+/// <see cref="SegundoPedido"/> se completa cuando un segundo pedido empieza a esperar el turno.
+/// </summary>
+internal sealed class CandadoSerial : ICandadoEmision
+{
+    private readonly SemaphoreSlim _semaforo = new(1, 1);
+    private int _pedidos;
+    private int _liberados;
+
+    public TaskCompletionSource SegundoPedido { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public int Pedidos => Volatile.Read(ref _pedidos);
+
+    public int Liberados => Volatile.Read(ref _liberados);
+
+    public async Task<IDisposable?> TomarAsync(CancellationToken cancelacion)
+    {
+        if (Interlocked.Increment(ref _pedidos) == 2)
+        {
+            SegundoPedido.TrySetResult();
+        }
+
+        try
+        {
+            await _semaforo.WaitAsync(cancelacion);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+
+        return new Turno(this);
+    }
+
+    private sealed class Turno(CandadoSerial candado) : IDisposable
+    {
+        private int _liberado;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _liberado, 1) == 0)
+            {
+                Interlocked.Increment(ref candado._liberados);
+                candado._semaforo.Release();
             }
         }
     }
@@ -506,8 +735,13 @@ internal sealed class RelojControlado(DateTimeOffset utc) : TimeProvider
     }
 }
 
-/// <summary>Registro en memoria del caso de uso: el mensaje formateado y las propiedades estructuradas.</summary>
-internal sealed class RegistroEmision : ILogger<EmitirFactura>
+/// <summary>
+/// Registro en memoria de la emisión (<see cref="EmitirFactura"/>, <see cref="ProcesoEmision"/> y, desde FEAT-008,
+/// <see cref="VerificarEmision"/> y <see cref="DescartarEmision"/>, que comparten la instancia): el mensaje formateado y
+/// las propiedades estructuradas.
+/// </summary>
+internal sealed class RegistroEmision :
+    ILogger<EmitirFactura>, ILogger<ProcesoEmision>, ILogger<VerificarEmision>, ILogger<DescartarEmision>
 {
     public ConcurrentQueue<(LogLevel Nivel, string Texto)> Lineas { get; } = new();
 

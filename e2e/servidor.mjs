@@ -29,6 +29,7 @@ import {
   leerInstancias,
   leerPid,
   mensajeDeFallo,
+  revisarArcaPorArchivo,
   verificarModulosDeLaWeb,
 } from './compilacion.mjs';
 
@@ -48,6 +49,8 @@ process.on('SIGTERM', () => void terminar(0));
 process.on('SIGINT', () => void terminar(0));
 
 try {
+  // Un valor de ARCA simulada que la Api no admite detiene todo antes de compilar, nombrando el archivo de pruebas.
+  revisarArcaPorArchivo();
   verificarModulosDeLaWeb(join(repositorio, 'web'));
   const api = join(raiz, 'api');
   for (const { comando, argumentos, opciones } of comandosDeCompilacion({ repositorio, api })) {
@@ -91,7 +94,8 @@ async function levantar({ nombre, puerto }, api) {
       '<rect width="200" height="60" fill="#0903A0"/>' +
       '<text x="100" y="38" font-size="24" text-anchor="middle" fill="#FFFFFF">Prueba</text></svg>',
   );
-  // El contador del simulador de ARCA, solo donde la prueba espera un número fijo (FEAT-007, AC-30).
+  // El archivo inicial del simulador de ARCA, solo donde la prueba lo necesita (FEAT-007, AC-30). Sin archivo, el
+  // simulador numera desde 1. Desde FEAT-008 el archivo también guarda los comprobantes autorizados.
   const contador = contadorSimulado(nombre);
   if (contador !== null) {
     writeFileSync(join(datos, 'arca-simulado.json'), JSON.stringify(contador));

@@ -13,6 +13,7 @@
 
 import {
   IMPORTE_MAXIMO_SEGURO,
+  mostrarImporte,
   PUNTO_VENTA_MAXIMO,
   PUNTO_VENTA_MINIMO,
   sumarCentesimos,
@@ -106,7 +107,8 @@ export interface PaginaArticulos {
 
 /**
  * Los motivos de un 409: los de los artículos (D-19), `final` del presupuesto (FEAT-003c, D-05), `borrador` del PDF
- * del presupuesto (FEAT-006, D-11) y de la factura, y los demás de la emisión de la factura (FEAT-007, D-18, D-31).
+ * del presupuesto (FEAT-006, D-11) y de la factura, los demás de la emisión de la factura (FEAT-007, D-18, D-31) y los
+ * de la verificación y el descarte de una emisión pendiente (FEAT-008, spec Block 6).
  */
 export type MotivoConflicto =
   | 'inactivo'
@@ -121,7 +123,14 @@ export type MotivoConflicto =
   | 'rechazada'
   | 'sin_respuesta'
   | 'no_enviada'
-  | 'pendiente_verificacion';
+  | 'pendiente_verificacion'
+  | 'sin_pendiente'
+  | 'espera'
+  | 'importe_distinto'
+  | 'sin_numero'
+  | 'otro_entorno'
+  | 'sin_respuesta_emision'
+  | 'sin_observacion';
 
 const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = [
   'inactivo',
@@ -137,6 +146,13 @@ const MOTIVOS_CONFLICTO: readonly MotivoConflicto[] = [
   'sin_respuesta',
   'no_enviada',
   'pendiente_verificacion',
+  'sin_pendiente',
+  'espera',
+  'importe_distinto',
+  'sin_numero',
+  'otro_entorno',
+  'sin_respuesta_emision',
+  'sin_observacion',
 ];
 
 const esMotivoConflicto = (valor: unknown): valor is MotivoConflicto => MOTIVOS_CONFLICTO.some((m) => m === valor);
@@ -879,15 +895,86 @@ export interface FacturaDelPresupuesto {
   comprobante: string;
 }
 
+/** Los motivos de la observación de una emisión pendiente (FEAT-008, FR-08, FR-14, FR-15). */
+export const MOTIVOS_OBSERVACION = ['importe_distinto', 'sin_numero', 'otro_entorno'] as const;
+export type MotivoObservacion = (typeof MOTIVOS_OBSERVACION)[number];
+
+/** Los entornos de ARCA como los informa la Api: en minúscula y sin tildes (D-33). */
+export const ENTORNOS_ARCA = ['simulado', 'homologacion', 'produccion'] as const;
+export type EntornoArca = (typeof ENTORNOS_ARCA)[number];
+
+/** El nombre legible de cada entorno de ARCA, para los textos de la pantalla. */
+const TEXTO_ENTORNO: Record<EntornoArca, string> = {
+  simulado: 'Simulado',
+  homologacion: 'Homologación',
+  produccion: 'Producción',
+};
+
+/** Si un valor (por ejemplo, el `motivo` de un 409) es uno de los motivos de la observación. */
+export const esMotivoObservacion = (valor: unknown): valor is MotivoObservacion =>
+  MOTIVOS_OBSERVACION.some((motivo) => motivo === valor);
+
+/** Los datos que comparten los tres motivos de la observación. */
+interface DatosObservacion {
+  /** El total que registró la venta. */
+  importeRegistrado: number;
+  /** El entorno de ARCA al que se envió la emisión. */
+  entorno: EntornoArca;
+}
+
+/**
+ * La observación vigente de una emisión pendiente, como la informa el GET del presupuesto (FEAT-008): por qué no se
+ * recuperó ni se emitió y, con ella, que se puede descartar (FR-09). No lleva datos del cliente. Unión discriminada
+ * por `motivo`: un importe distinto siempre tiene el comprobante ("Factura B 0003-00000125") y el total con que ARCA
+ * lo tiene autorizado; en los otros dos motivos el comprobante puede faltar (sin número) y el importe de ARCA no se
+ * conoce.
+ */
+export type ObservacionEmision =
+  | (DatosObservacion & { motivo: 'importe_distinto'; comprobante: string; importeArca: number })
+  | (DatosObservacion & { motivo: 'sin_numero' | 'otro_entorno'; comprobante: string | null; importeArca: number | null });
+
 /**
  * Lo que devuelve `GET /api/presupuestos/{numero}`: el presupuesto grabado más su estado de facturación (FEAT-007,
- * FR-20, FR-24, D-19). El alta y los PUT no llevan estos dos datos.
+ * FR-20, FR-24, D-19) y la observación de la emisión pendiente (FEAT-008). El alta y los PUT no llevan estos datos.
  */
 export interface PresupuestoConsultado extends PresupuestoGrabado {
   /** La factura emitida desde el presupuesto, o `null`. */
   factura: FacturaDelPresupuesto | null;
-  /** Si hay una emisión pendiente de verificación (FR-24): mientras la haya, no se factura. */
+  /** Si hay una emisión pendiente de verificación (FR-24): mientras la haya, no se factura; se verifica (FEAT-008). */
   emisionPendiente: boolean;
+  /** La observación vigente de la emisión pendiente (FEAT-008), o `null`: con ella se ofrece descartar. */
+  observacionEmision: ObservacionEmision | null;
+}
+
+/** El texto que pide revisar el punto de venta: el mismo comienzo para los tres motivos de la observación. */
+const REVISAR_EN_ARCA = 'Revisá el punto de venta en ARCA:';
+
+/** FR-08, AC-07: el comprobante y los dos importes, en pesos. */
+const mensajeImporteDistinto = (comprobante: string, importeRegistrado: number, importeArca: number) =>
+  `${REVISAR_EN_ARCA} la ${comprobante} figura autorizada por $ ${mostrarImporte(importeArca)} y esta venta ` +
+  `registró $ ${mostrarImporte(importeRegistrado)}.`;
+
+/** FR-14, AC-15. */
+export const MENSAJE_EMISION_SIN_NUMERO = `${REVISAR_EN_ARCA} esta emisión no tiene número de comprobante registrado.`;
+
+/** FR-15, AC-16: el entorno de la emisión, con su nombre legible. */
+const mensajeOtroEntorno = (entorno: EntornoArca) =>
+  `${REVISAR_EN_ARCA} esta emisión se envió al entorno ${TEXTO_ENTORNO[entorno]} y el sistema está configurado en ` +
+  'otro entorno.';
+
+/**
+ * El texto de una observación (FR-08, FR-14, FR-15): el mismo que muestra la verificación que la dejó, para que el
+ * presupuesto lo siga explicando al volver a abrirlo.
+ */
+export function mensajeObservacion(observacion: ObservacionEmision): string {
+  switch (observacion.motivo) {
+    case 'importe_distinto':
+      return mensajeImporteDistinto(observacion.comprobante, observacion.importeRegistrado, observacion.importeArca);
+    case 'sin_numero':
+      return MENSAJE_EMISION_SIN_NUMERO;
+    case 'otro_entorno':
+      return mensajeOtroEntorno(observacion.entorno);
+  }
 }
 
 /**
@@ -908,9 +995,40 @@ const leerFacturaDelPresupuesto: Lector<FacturaDelPresupuesto | null> = (cuerpo)
   return esObjeto(cuerpo) && esComprobante(cuerpo.comprobante) ? { comprobante: cuerpo.comprobante } : undefined;
 };
 
+const esEntornoArca = (valor: unknown): valor is EntornoArca => ENTORNOS_ARCA.some((entorno) => entorno === valor);
+
 /**
- * El GET de un presupuesto: lo que lee {@link leerPresupuesto} más `factura` y `emisionPendiente`, obligatorios. Sin
- * ellos, o con otra forma, la respuesta es ilegible: la pantalla no puede decidir si ofrece Facturar.
+ * La observación del GET (FEAT-008): `null` o los cinco datos, y solo ellos. El motivo y el entorno son uno de los
+ * previstos; el comprobante, `null` o con el formato de D-19; los importes, dentro del límite del navegador. Un importe
+ * distinto exige el comprobante y el importe de ARCA (sin ellos no hay qué mostrar). Cualquier otra forma, ilegible.
+ */
+const leerObservacion: Lector<ObservacionEmision | null> = (cuerpo) => {
+  if (cuerpo === null) {
+    return null;
+  }
+  if (
+    !esObjeto(cuerpo) ||
+    !esMotivoObservacion(cuerpo.motivo) ||
+    !(cuerpo.comprobante === null || esComprobante(cuerpo.comprobante)) ||
+    !esImporte(cuerpo.importeRegistrado) ||
+    !(cuerpo.importeArca === null || esImporte(cuerpo.importeArca)) ||
+    !esEntornoArca(cuerpo.entorno)
+  ) {
+    return undefined;
+  }
+  const { comprobante, importeRegistrado, importeArca, entorno } = cuerpo;
+  if (cuerpo.motivo === 'importe_distinto') {
+    return comprobante === null || importeArca === null
+      ? undefined
+      : { motivo: 'importe_distinto', comprobante, importeRegistrado, importeArca, entorno };
+  }
+  return { motivo: cuerpo.motivo, comprobante, importeRegistrado, importeArca, entorno };
+};
+
+/**
+ * El GET de un presupuesto: lo que lee {@link leerPresupuesto} más `factura`, `emisionPendiente` y
+ * `observacionEmision` (FEAT-008), obligatorios. Sin ellos, o con otra forma, la respuesta es ilegible: la pantalla no
+ * puede decidir si ofrece Facturar, Verificar o Descartar. Una observación sin emisión pendiente también es ilegible.
  */
 const leerPresupuestoConsultado: Lector<PresupuestoConsultado> = (cuerpo) => {
   const presupuesto = leerPresupuesto(cuerpo);
@@ -918,7 +1036,15 @@ const leerPresupuestoConsultado: Lector<PresupuestoConsultado> = (cuerpo) => {
     return undefined;
   }
   const factura = leerFacturaDelPresupuesto(cuerpo.factura);
-  return factura === undefined ? undefined : { ...presupuesto, factura, emisionPendiente: cuerpo.emisionPendiente };
+  const observacionEmision = leerObservacion(cuerpo.observacionEmision);
+  if (
+    factura === undefined ||
+    observacionEmision === undefined ||
+    (observacionEmision !== null && !cuerpo.emisionPendiente)
+  ) {
+    return undefined;
+  }
+  return { ...presupuesto, factura, emisionPendiente: cuerpo.emisionPendiente, observacionEmision };
 };
 
 /**
@@ -1070,7 +1196,15 @@ const DESCRIPCION_ARCA_MAXIMA = 500;
  * o una descripción vacía, que no es texto o de más de 500 caracteres, hacen ilegible la respuesta.
  */
 function mensajeRechazoArca(cuerpo: Record<string, unknown>): string | undefined {
-  const { codigo, descripcion } = cuerpo;
+  return textoRechazoArca(cuerpo.codigo, cuerpo.descripcion);
+}
+
+/**
+ * El texto de un rechazo de ARCA con su código y su descripción, como lo arma {@link mensajeRechazoArca}; `undefined`
+ * si alguno es ilegible. Lo comparten la emisión (`codigo`, `descripcion`) y la verificación (`codigoArca`,
+ * `descripcionArca`, FEAT-008). La descripción solo se muestra: no se guarda.
+ */
+function textoRechazoArca(codigo: unknown, descripcion: unknown): string | undefined {
   if (
     !esEnteroEntre(codigo, 0) ||
     typeof descripcion !== 'string' ||
@@ -1179,6 +1313,126 @@ export const emitirFactura = (numero: number, concepto: ConceptoFactura): Promis
         resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado,
       )
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/*
+ * Verificación y descarte de una emisión pendiente, y lista de pendientes (FEAT-008, ADR-025, ADR-026).
+ */
+
+/** La confirmación de una factura recuperada (FR-05, AC-05). */
+export const mensajeFacturaRecuperada = (comprobante: string) =>
+  `Se recuperó la ${comprobante} que ARCA ya había autorizado.`;
+
+/** FR-16, AC-17: los segundos que faltan para poder verificar. */
+export const mensajeEspera = (segundos: number) =>
+  `Esperá ${segundos} ${segundos === 1 ? 'segundo' : 'segundos'} para verificar con ARCA.`;
+
+/** Textos propios de los 409 de la verificación y del descarte según su `motivo`: nunca el `detail` del servidor. */
+export const MENSAJE_VERIFICACION_SIN_RESPUESTA = 'ARCA no respondió. La emisión sigue pendiente de verificación.';
+export const MENSAJE_VERIFICACION_SIN_RESPUESTA_EMISION =
+  'ARCA no respondió a la nueva emisión. La emisión quedó pendiente de verificación.';
+export const MENSAJE_VERIFICACION_NO_ENVIADA =
+  'No se pudo completar la verificación con ARCA. Intentá de nuevo en unos minutos.';
+export const MENSAJE_SIN_EMISION_PENDIENTE = 'El presupuesto no tiene una emisión pendiente de verificación.';
+export const MENSAJE_DESCARTE_SIN_OBSERVACION =
+  'La emisión pendiente no tiene una observación que permita descartarla. Verificala con ARCA.';
+
+/** Los textos de los 409 de la verificación (spec FEAT-008, Block 6 y Block 7); los que llevan datos los leen del cuerpo. */
+const MOTIVOS_409_VERIFICACION: Partial<Record<MotivoConflicto, TextoDelMotivo>> = {
+  sin_pendiente: MENSAJE_SIN_EMISION_PENDIENTE,
+  espera: (cuerpo) =>
+    esEnteroEntre(cuerpo.segundosRestantes, 1) ? mensajeEspera(cuerpo.segundosRestantes) : undefined,
+  importe_distinto: (cuerpo) =>
+    esComprobante(cuerpo.comprobante) && esImporte(cuerpo.importeRegistrado) && esImporte(cuerpo.importeArca)
+      ? mensajeImporteDistinto(cuerpo.comprobante, cuerpo.importeRegistrado, cuerpo.importeArca)
+      : undefined,
+  sin_numero: MENSAJE_EMISION_SIN_NUMERO,
+  otro_entorno: (cuerpo) => (esEntornoArca(cuerpo.entorno) ? mensajeOtroEntorno(cuerpo.entorno) : undefined),
+  sin_respuesta: MENSAJE_VERIFICACION_SIN_RESPUESTA,
+  sin_respuesta_emision: MENSAJE_VERIFICACION_SIN_RESPUESTA_EMISION,
+  rechazada: (cuerpo) => textoRechazoArca(cuerpo.codigoArca, cuerpo.descripcionArca),
+  no_enviada: MENSAJE_VERIFICACION_NO_ENVIADA,
+  facturado: MENSAJE_FACTURA_FACTURADO,
+};
+
+/** Los textos de los 409 del descarte. */
+const MOTIVOS_409_DESCARTE: Partial<Record<MotivoConflicto, TextoDelMotivo>> = {
+  sin_pendiente: MENSAJE_SIN_EMISION_PENDIENTE,
+  sin_observacion: MENSAJE_DESCARTE_SIN_OBSERVACION,
+};
+
+/** Lo que devuelve la verificación con 200: si la factura se recuperó (FR-05) o se emitió (FR-06), y la factura. */
+export interface VerificacionEmision {
+  resultado: 'recuperada' | 'emitida';
+  factura: FacturaEmitida;
+}
+
+const leerVerificacion: Lector<VerificacionEmision> = (cuerpo) => {
+  if (!esObjeto(cuerpo) || (cuerpo.resultado !== 'recuperada' && cuerpo.resultado !== 'emitida')) {
+    return undefined;
+  }
+  const factura = leerFacturaEmitida(cuerpo.factura);
+  return factura === undefined ? undefined : { resultado: cuerpo.resultado, factura };
+};
+
+/** Un POST sin cuerpo a una ruta de la emisión pendiente: `Content-Type: application/json` igual (D-33). */
+const opcionesEmisionPendiente = (
+  numero: number,
+  accion: 'verificacion' | 'descarte',
+  motivos409: Partial<Record<MotivoConflicto, TextoDelMotivo>>,
+): Opciones => ({
+  metodo: 'POST',
+  ruta: `/api/presupuestos/${numero}/factura/${accion}`,
+  motivos409,
+  mensaje404: MENSAJE_PRESUPUESTO_NO_ENCONTRADO,
+  mensaje413: MENSAJE_PEDIDO_RECHAZADO,
+});
+
+/** Un 400 de un pedido sin cuerpo no tiene un campo en la pantalla. */
+const sinCampo = <T>(resultado: Resultado<T>): Resultado<T> =>
+  resultado.tipo === 'campo' ? { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO } : resultado;
+
+/**
+ * Verifica con ARCA la emisión pendiente de un presupuesto (FEAT-008, FR-04 a FR-08, FR-12 a FR-16) con
+ * `POST /api/presupuestos/{numero}/factura/verificacion`, sin cuerpo. Con 200, la factura recuperada o emitida. Un 409
+ * trae su motivo con el texto propio de {@link MOTIVOS_409_VERIFICACION}, armado con los datos del cuerpo cuando los
+ * lleva; un motivo ajeno o datos ilegibles son {@link MENSAJE_SIN_CONEXION}. La descripción de un rechazo de ARCA solo
+ * va en el texto: no se guarda. Un 404, "No se encontró el presupuesto."; un 401 sin cuerpo avisa a
+ * {@link alPerderLaSesion}. Sin reintentos (FR-12). Un número que no puede existir no se envía.
+ */
+export const verificarEmision = (numero: number): Promise<Resultado<VerificacionEmision>> =>
+  esEnteroEntre(numero, 1)
+    ? pedir(opcionesEmisionPendiente(numero, 'verificacion', MOTIVOS_409_VERIFICACION), leerVerificacion).then(sinCampo)
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/**
+ * Descarta la emisión pendiente de un presupuesto con una observación vigente (FEAT-008, FR-09, FR-11) con
+ * `POST /api/presupuestos/{numero}/factura/descarte`, sin cuerpo: 204 sin datos. Un 409 `sin_pendiente` o
+ * `sin_observacion` trae su texto propio; los demás errores, como {@link verificarEmision}.
+ */
+export const descartarEmision = (numero: number): Promise<Resultado<void>> =>
+  esEnteroEntre(numero, 1)
+    ? pedirSinDatos(opcionesEmisionPendiente(numero, 'descarte', MOTIVOS_409_DESCARTE)).then(sinCampo)
+    : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
+
+/**
+ * La lista de pendientes: un arreglo de números de presupuesto (enteros positivos, sin repetidos); cualquier otra
+ * forma, ilegible.
+ */
+const leerEmisionesPendientes: Lector<number[]> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  Array.isArray(cuerpo.presupuestos) &&
+  (cuerpo.presupuestos as unknown[]).every((numero) => esEnteroEntre(numero, 1)) &&
+  // Un presupuesto tiene una sola emisión pendiente: un número repetido hace ilegible la lista.
+  new Set(cuerpo.presupuestos).size === cuerpo.presupuestos.length
+    ? [...(cuerpo.presupuestos as number[])]
+    : undefined;
+
+/**
+ * Los presupuestos con una emisión pendiente de verificación (FEAT-008, FR-03) con
+ * `GET /api/facturacion/emisiones-pendientes`: solo sus números. Lo pide la pantalla de inicio una vez al cargar.
+ */
+export const listarEmisionesPendientes = (): Promise<Resultado<number[]>> =>
+  pedir({ metodo: 'GET', ruta: '/api/facturacion/emisiones-pendientes' }, leerEmisionesPendientes);
 
 /*
  * Búsqueda de presupuestos (FEAT-006, ADR-019).

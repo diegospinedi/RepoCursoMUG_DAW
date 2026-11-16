@@ -631,7 +631,7 @@ const RUTAS_W3 = new Set(['/2000/svg', '/1999/xhtml', '/1999/xlink', '/Graphics/
  */
 const RUTAS_ARCA = new Map([
   ['schemas.xmlsoap.org', new Set(['/soap/envelope/'])],
-  ['ar.gov.afip.dif.fev1', new Set(['/', '/FECAESolicitar', '/FECompUltimoAutorizado'])],
+  ['ar.gov.afip.dif.fev1', new Set(['/', '/FECAESolicitar', '/FECompUltimoAutorizado', '/FECompConsultar'])],
   ['wsaahomo.afip.gov.ar', new Set(['/ws/services/LoginCms'])],
   ['wswhomo.afip.gov.ar', new Set(['/wsfev1/service.asmx'])],
 ]);

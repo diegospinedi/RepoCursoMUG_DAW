@@ -8,11 +8,12 @@ using Optica.Domain.Facturacion;
 namespace Optica.Infrastructure.Arca;
 
 /// <summary>
-/// Las dos operaciones de WSFEv1 que usa la factura a consumidor final (D-12, D-20): <c>FECompUltimoAutorizado</c> y
-/// <c>FECAESolicitar</c>, en SOAP 1.1 armado con <see cref="System.Xml.Linq"/> (escapa todos los valores). Los códigos
-/// salen de <see cref="CodigosWsfe"/>; los importes van con punto decimal y 2 decimales (NFR-04). El cuerpo lleva el
-/// token, la firma, el CUIT y, sobre el tope, el DNI del receptor: nunca se registra (R-02, R-07); el log lleva tipo,
-/// punto de venta, número, resultado y códigos de error.
+/// Las tres operaciones de WSFEv1 que usa la factura a consumidor final (D-12, D-20, ADR-025):
+/// <c>FECompUltimoAutorizado</c>, <c>FECAESolicitar</c> y <c>FECompConsultar</c>, en SOAP 1.1 armado con
+/// <see cref="System.Xml.Linq"/> (escapa todos los valores). Los códigos salen de <see cref="CodigosWsfe"/>; los
+/// importes van con punto decimal y 2 decimales (NFR-04). El cuerpo lleva el token, la firma, el CUIT y, sobre el tope,
+/// el DNI del receptor: nunca se registra (R-02, R-07); el log lleva tipo, punto de venta, número, resultado y códigos
+/// de error.
 /// </summary>
 internal sealed class ClienteWsfe
 {
@@ -172,6 +173,145 @@ internal sealed class ClienteWsfe
             return new ResultadoAutorizacion.SinRespuesta();
         }
     }
+
+    /// <summary>
+    /// Envía <c>FECompConsultar</c> del tipo, punto de venta y número, y clasifica la respuesta (FR-04, FR-05):
+    /// autorizado con <c>ImpTotal</c>, <c>CodAutorizacion</c>, <c>FchVto</c> y <c>CbteFch</c> si <c>Resultado</c> es
+    /// <c>A</c>; no autorizado con el error <see cref="CodigosWsfe.SinDatos"/>; sin respuesta ante cualquier otra cosa
+    /// (otro error de ARCA, una respuesta ilegible o sin esos nodos, una falla de la red, la cancelación o una falla no
+    /// prevista). Solo lee esos nodos: <c>DocTipo</c> y <c>DocNro</c> (el documento del receptor) se ignoran, y del error
+    /// va al log el código, nunca el texto (D-14). Si el pedido no se pudo armar, no consultada. No lanza.
+    /// </summary>
+    public async Task<ResultadoConsulta> ConsultarComprobanteAsync(
+        TicketAcceso ticket, TipoComprobante tipo, int puntoVenta, long numero, CancellationToken cancelacion)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+        string comprobante;
+        XElement operacion;
+        try
+        {
+            comprobante = new NumeroComprobante(tipo, puntoVenta, numero).ToString();
+            operacion = new XElement(
+                Fev1 + "FECompConsultar",
+                Autenticacion(ticket),
+                new XElement(
+                    Fev1 + "FeCompConsReq",
+                    new XElement(Fev1 + "CbteTipo", Entero(CodigosWsfe.Tipo(tipo))),
+                    new XElement(Fev1 + "CbteNro", Entero(numero)),
+                    new XElement(Fev1 + "PtoVta", Entero(puntoVenta))));
+        }
+        catch (Exception error)
+        {
+            // Todavía no se envió nada.
+            _registro.LogError(
+                "ARCA ({Entorno}): no se pudo armar la consulta del comprobante ({TipoFalla}). No se consultó.",
+                _entorno,
+                error.GetType().Name);
+            return new ResultadoConsulta.NoConsultada(AutorizadorWsfe.MotivoInesperado);
+        }
+
+        try
+        {
+            var respuesta = await EnviarAsync("FECompConsultar", operacion, cancelacion);
+            return ClasificarConsulta(respuesta, tipo, puntoVenta, numero, comprobante);
+        }
+        catch (Exception error)
+        {
+            // Solo el tipo: el texto de la excepción puede traer datos (R-02, R-07).
+            _registro.LogError(
+                "ARCA ({Entorno}): sin respuesta legible a la consulta de {Comprobante} ({TipoFalla}).",
+                _entorno,
+                comprobante,
+                error is OperationCanceledException ? "plazo vencido" : error.GetType().Name);
+            return new ResultadoConsulta.SinRespuesta();
+        }
+    }
+
+    private ResultadoConsulta ClasificarConsulta(
+        RespuestaSoap respuesta, TipoComprobante tipo, int puntoVenta, long numero, string comprobante)
+    {
+        var resultado = respuesta.Documento.Descendants(Fev1 + "FECompConsultarResult").FirstOrDefault();
+        var errores = resultado?.Element(Fev1 + "Errors")?.Elements(Fev1 + "Err").ToList() ?? [];
+        var codigos = errores.Select(Codigo).ToList();
+        var detalle = resultado?.Element(Fev1 + "ResultGet");
+        if (resultado is not null && errores.Count > 0)
+        {
+            // "No autorizado" solo con una respuesta sin contradicciones: HTTP de éxito, sin datos del comprobante y solo
+            // el código "sin datos". Cualquier otra combinación no permite afirmar que ARCA no lo tiene.
+            if (respuesta.Exito && detalle is null && codigos.All(codigo => codigo == Entero(CodigosWsfe.SinDatos)))
+            {
+                _registro.LogInformation(
+                    "ARCA ({Entorno}) no tiene autorizado {Comprobante} (código {Codigo}).",
+                    _entorno,
+                    comprobante,
+                    CodigosWsfe.SinDatos);
+                return new ResultadoConsulta.NoAutorizado();
+            }
+
+            // Solo los códigos: el texto de ARCA puede repetir el documento del receptor (D-14).
+            _registro.LogError(
+                "ARCA ({Entorno}): la consulta de {Comprobante} vino con errores (códigos {Codigos}). Sin respuesta.",
+                _entorno,
+                comprobante,
+                string.Join(", ", codigos));
+            return new ResultadoConsulta.SinRespuesta();
+        }
+
+        // Solo los nodos que se usan (D-14): ni DocTipo ni DocNro. Número, punto de venta y tipo, si vienen, tienen que
+        // ser los pedidos.
+        var estado = detalle?.Element(Fev1 + "Resultado")?.Value.Trim();
+        var desde = detalle?.Element(Fev1 + "CbteDesde")?.Value.Trim();
+        var puntoVentaRespuesta = detalle?.Element(Fev1 + "PtoVta")?.Value.Trim();
+        var tipoRespuesta = detalle?.Element(Fev1 + "CbteTipo")?.Value.Trim();
+        if (respuesta.Exito && detalle is not null && estado == "A"
+            && LeerImporte(detalle.Element(Fev1 + "ImpTotal")?.Value) is { } total
+            && detalle.Element(Fev1 + "CodAutorizacion")?.Value.Trim() is { Length: ResultadoAutorizacion.Autorizada.LargoCae } cae
+            && cae.All(char.IsAsciiDigit)
+            && LeerFecha(detalle.Element(Fev1 + "FchVto")?.Value) is { } vencimiento
+            && LeerFecha(detalle.Element(Fev1 + "CbteFch")?.Value) is { } fecha
+            && (desde is null || desde == Entero(numero))
+            && (puntoVentaRespuesta is null || puntoVentaRespuesta == Entero(puntoVenta))
+            && (tipoRespuesta is null || tipoRespuesta == Entero(CodigosWsfe.Tipo(tipo))))
+        {
+            _registro.LogInformation("ARCA ({Entorno}) informó autorizado {Comprobante}.", _entorno, comprobante);
+            return new ResultadoConsulta.Autorizado(total, cae, vencimiento, fecha);
+        }
+
+        _registro.LogError(
+            "ARCA ({Entorno}): la respuesta a la consulta de {Comprobante} no trae un resultado, un total, un CAE o fechas " +
+            "legibles. Sin respuesta.",
+            _entorno,
+            comprobante);
+        return new ResultadoConsulta.SinRespuesta();
+    }
+
+    /// <summary>Un importe no negativo con punto decimal y hasta 2 decimales (NFR-04); null si no tiene ese formato.</summary>
+    private static decimal? LeerImporte(string? texto)
+    {
+        texto = texto?.Trim();
+        if (string.IsNullOrEmpty(texto) || texto.Length > 20)
+        {
+            return null;
+        }
+
+        var punto = texto.IndexOf('.', StringComparison.Ordinal);
+        var decimales = punto < 0 ? 0 : texto.Length - punto - 1;
+        if (decimales > 2 || punto == 0 || (punto > 0 && decimales == 0)
+            || !texto.All(caracter => char.IsAsciiDigit(caracter) || caracter == '.'))
+        {
+            return null;
+        }
+
+        return decimal.TryParse(texto, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var valor)
+            ? valor
+            : null;
+    }
+
+    /// <summary>Una fecha <c>yyyyMMdd</c>; null si no tiene ese formato.</summary>
+    private static DateOnly? LeerFecha(string? texto) =>
+        DateOnly.TryParseExact(texto?.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var fecha)
+            ? fecha
+            : null;
 
     private ResultadoAutorizacion Clasificar(RespuestaSoap respuesta, long numero, string comprobante)
     {

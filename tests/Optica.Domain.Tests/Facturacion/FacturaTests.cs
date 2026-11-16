@@ -175,6 +175,77 @@ public class FacturaTests
         Assert.Equal(Fecha, Factura.Emitida(presupuesto, solicitud, 8, Cae, Fecha, EntornoArca.Simulado).VencimientoCae);
     }
 
+    private static EmisionPendiente PendienteC1900(
+        bool identificado, long presupuestoNumero = 41, EntornoArca entorno = EntornoArca.Homologacion,
+        decimal total = 1900m) =>
+        EmisionPendiente.Registrada(
+            presupuestoNumero, new DateTimeOffset(2026, 10, 30, 15, 0, 0, TimeSpan.Zero), TipoComprobante.FacturaC, 3,
+            Fecha, 125, ConceptoFactura.ProductosYServicios, ImportesFactura.ParaFacturaC(total), identificado, entorno);
+
+    /// <summary>
+    /// FEAT-008, FR-05 y D-18: la factura recuperada toma de la pendiente el tipo, el punto de venta, el número, la fecha,
+    /// el concepto, los importes y el entorno; el CAE y su vencimiento de ARCA; las líneas del presupuesto; y el receptor
+    /// con el DNI del cliente del presupuesto si la pendiente dice que se identificó.
+    /// </summary>
+    [Fact]
+    public void Factura_Recuperada_CopiaLaPendienteYElPresupuesto()
+    {
+        var presupuesto = PresupuestoFinal1900();
+
+        var identificada = Factura.Recuperada(
+            presupuesto, PendienteC1900(identificado: true), Cae, VencimientoCae, EntornoArca.Homologacion);
+        var anonima = Factura.Recuperada(
+            presupuesto, PendienteC1900(identificado: false), Cae, VencimientoCae, EntornoArca.Homologacion);
+
+        Assert.Equal("Factura C 0003-00000125", identificada.Comprobante.ToString());
+        Assert.Equal(
+            (41L, Fecha, ConceptoFactura.ProductosYServicios, 1900m, Cae, VencimientoCae, EntornoArca.Homologacion),
+            (identificada.PresupuestoNumero, identificada.Fecha, identificada.Concepto, identificada.Importes.Total,
+                identificada.Cae, identificada.VencimientoCae, identificada.Entorno));
+        Assert.Equal(Dni, identificada.Receptor.Dni);
+        Assert.False(anonima.Receptor.EstaIdentificado);
+        Assert.Equal([1, 2], identificada.Lineas.Select(linea => linea.Orden));
+        Assert.Equal(Fecha, Factura.Recuperada(
+            presupuesto, PendienteC1900(identificado: false), Cae, Fecha, EntornoArca.Homologacion).VencimientoCae);
+    }
+
+    /// <summary>
+    /// D-18 (sad path): no se recupera una pendiente de otro entorno que el configurado, con el vencimiento del CAE anterior
+    /// a la fecha, sin número, de otro presupuesto o de otro total, ni sobre un Borrador. Los mensajes no llevan valores.
+    /// </summary>
+    [Fact]
+    public void Factura_Recuperada_DatosQueNoCorresponden_Rechazado()
+    {
+        var presupuesto = PresupuestoFinal1900();
+        var pendiente = PendienteC1900(identificado: true);
+
+        var otroEntorno = Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(presupuesto, pendiente, Cae, VencimientoCae, EntornoArca.Simulado));
+        Assert.Equal("entornoConfigurado", otroEntorno.ParamName);
+        Assert.Equal("vencimientoCae", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(presupuesto, pendiente, Cae, Fecha.AddDays(-1), EntornoArca.Homologacion)).ParamName);
+        var sinNumero = EmisionPendiente.SinNumero(
+            41, new DateTimeOffset(2026, 10, 30, 15, 0, 0, TimeSpan.Zero), TipoComprobante.FacturaC, 3, Fecha, 1900m,
+            EntornoArca.Homologacion);
+        Assert.Equal("pendiente", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(presupuesto, sinNumero, Cae, VencimientoCae, EntornoArca.Homologacion)).ParamName);
+        Assert.Equal("pendiente", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(
+                presupuesto, PendienteC1900(true, presupuestoNumero: 42), Cae, VencimientoCae,
+                EntornoArca.Homologacion)).ParamName);
+        Assert.Equal("pendiente", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(
+                presupuesto, PendienteC1900(true, total: 1901m), Cae, VencimientoCae, EntornoArca.Homologacion)).ParamName);
+        var borrador = Presupuesto.Nuevo(41, new DateOnly(2026, 10, 1), presupuesto.Cliente, presupuesto.Lineas);
+        Assert.Equal("presupuesto", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(borrador, pendiente, Cae, VencimientoCae, EntornoArca.Homologacion)).ParamName);
+        Assert.Equal("cae", Assert.Throws<ArgumentException>(() =>
+            Factura.Recuperada(presupuesto, pendiente, "123", VencimientoCae, EntornoArca.Homologacion)).ParamName);
+        Assert.Throws<ArgumentNullException>(() =>
+            Factura.Recuperada(presupuesto, null!, Cae, VencimientoCae, EntornoArca.Homologacion));
+        Assert.DoesNotContain(Dni, otroEntorno.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void LineaFactura_OrdenMenorA1_Rechazado()
     {
@@ -311,7 +382,7 @@ public class FacturaTests
             TipoComprobante.FacturaB, 3, Fecha, ConceptoFactura.Productos, receptor, ImportesFactura.ParaFacturaB(2000m, 21m));
         Assert.DoesNotContain(Dni, solicitud.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(
-            Dni, new EmisionPendiente(41, DateTimeOffset.UnixEpoch, solicitud, EntornoArca.Simulado).ToString(),
+            Dni, new EmisionPendiente(41, DateTimeOffset.UnixEpoch, solicitud, 125, EntornoArca.Simulado).ToString(),
             StringComparison.Ordinal);
     }
 
@@ -348,27 +419,31 @@ public class FacturaTests
     }
 
     [Fact]
-    public void EmisionPendiente_GuardaPresupuestoMomentoUtcYSolicitud()
+    public void EmisionPendiente_GuardaPresupuestoMomentoUtcYDatosDeLaSolicitud()
     {
         var solicitud = new SolicitudComprobante(
             TipoComprobante.FacturaC, 3, Fecha, ConceptoFactura.Productos, ReceptorFactura.SinIdentificar,
             ImportesFactura.ParaFacturaC(1815m));
         var momento = new DateTimeOffset(2026, 10, 30, 11, 15, 0, TimeSpan.FromHours(-3));
 
-        var pendiente = new EmisionPendiente(41, momento, solicitud, EntornoArca.Homologacion);
+        // FEAT-008 (Block 1): la pendiente guarda los datos de la solicitud y el número, no la solicitud (sin DNI).
+        var pendiente = new EmisionPendiente(41, momento, solicitud, 125, EntornoArca.Homologacion);
 
         Assert.Equal(41, pendiente.PresupuestoNumero);
         Assert.Equal(TimeSpan.Zero, pendiente.Momento.Offset);
         Assert.Equal(momento, pendiente.Momento);
-        Assert.Same(solicitud, pendiente.Solicitud);
+        Assert.Equal(TipoComprobante.FacturaC, pendiente.Tipo);
+        Assert.Equal(3, pendiente.PuntoVenta);
+        Assert.Equal(Fecha, pendiente.Fecha);
+        Assert.Same(solicitud.Importes, pendiente.Importes);
         Assert.Equal(EntornoArca.Homologacion, pendiente.Entorno);
 
         Assert.Equal("presupuestoNumero", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(0, momento, solicitud, EntornoArca.Simulado)).ParamName);
+            new EmisionPendiente(0, momento, solicitud, 125, EntornoArca.Simulado)).ParamName);
         Assert.Equal("momento", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(41, default, solicitud, EntornoArca.Simulado)).ParamName);
+            new EmisionPendiente(41, default, solicitud, 125, EntornoArca.Simulado)).ParamName);
         Assert.Equal("entorno", Assert.Throws<ArgumentException>(() =>
-            new EmisionPendiente(41, momento, solicitud, (EntornoArca)9)).ParamName);
-        Assert.Throws<ArgumentNullException>(() => new EmisionPendiente(41, momento, null!, EntornoArca.Simulado));
+            new EmisionPendiente(41, momento, solicitud, 125, (EntornoArca)9)).ParamName);
+        Assert.Throws<ArgumentNullException>(() => new EmisionPendiente(41, momento, null!, 125, EntornoArca.Simulado));
     }
 }

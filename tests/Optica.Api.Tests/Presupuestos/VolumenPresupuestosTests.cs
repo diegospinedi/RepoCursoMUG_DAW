@@ -28,8 +28,12 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
     private static readonly string[] CamposRespuesta =
         ["numero", "fecha", "estado", "cliente", "lineas", "total", "version"];
 
-    /// <summary>FEAT-007 (FR-20, D-28): el GET suma la factura y la emisión pendiente; el alta y los PUT no.</summary>
-    private static readonly string[] CamposLectura = [.. CamposRespuesta, "factura", "emisionPendiente"];
+    /// <summary>
+    /// FEAT-007 (FR-20, D-28): el GET suma la factura y la emisión pendiente; el alta y los PUT no. FEAT-008: también la
+    /// observación de la emisión pendiente.
+    /// </summary>
+    private static readonly string[] CamposLectura =
+        [.. CamposRespuesta, "factura", "emisionPendiente", "observacionEmision"];
 
     private static readonly string[] CamposCliente = ["apellido", "nombre", "dni", "domicilio", "email", "telefono"];
 
@@ -371,8 +375,8 @@ public sealed class VolumenPresupuestosTests(ITestOutputHelper salida)
         Http.EnviarAsync(cliente, HttpMethod.Put, ruta, new StringContent(cuerpo, Encoding.UTF8, "application/json"), cookie);
 
     /// <summary>
-    /// El GET del presupuesto: con 10.000 presupuestos también suma <c>factura</c> y <c>emisionPendiente</c> (FEAT-007,
-    /// D-28), vacías; devuelve el resto, que se compara con las respuestas del alta y de los PUT.
+    /// El GET del presupuesto: con 10.000 presupuestos también suma <c>factura</c>, <c>emisionPendiente</c> y
+    /// <c>observacionEmision</c> (FEAT-007, D-28; FEAT-008), vacías; devuelve el resto, que se compara con las respuestas del alta y de los PUT.
     /// </summary>
     private static async Task<JsonElement> LeerAsync(HttpClient cliente, string cookie, long numero)
     {

@@ -493,10 +493,14 @@ public partial class FacturasTriggersTests
         Assert.Contains("registro_cerrado", error.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>El esquema de todo lo que no es de facturación, para ver que la migración no lo toca.</summary>
+    /// <summary>
+    /// El esquema de todo lo que no es de facturación, para ver que la migración no lo toca. Excluye también las tablas de
+    /// RecuperacionEmisiones (FEAT-008), que volver a ConfiguracionPuntoVenta revierte antes que Facturas.
+    /// </summary>
     private static List<string[]> SqlExistentes(string cadena) =>
         FacturasPrueba.Filas(cadena,
             "SELECT type, name, IFNULL(sql, '') FROM sqlite_master " +
-            "WHERE tbl_name NOT IN ('Factura', 'LineaFactura', 'EmisionPendiente', '__EFMigrationsHistory') " +
+            "WHERE tbl_name NOT IN ('Factura', 'LineaFactura', 'EmisionPendiente', 'ObservacionEmision', " +
+            "'DescarteEmision', '__EFMigrationsHistory') " +
             "ORDER BY type, name");
 }

@@ -54,16 +54,26 @@ import {
   MENSAJE_FACTURA_SIN_RESPUESTA,
   MENSAJE_FACTURA_SIN_TOPE,
 } from './cliente';
+import {
+  descartarEmision,
+  esMotivoObservacion,
+  listarEmisionesPendientes,
+  mensajeObservacion,
+  verificarEmision,
+  type ObservacionEmision,
+} from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
 afterEach(() => alPerderLaSesion(null));
 
 /**
- * El GET de un presupuesto suma `factura` y `emisionPendiente` (FEAT-007, D-19); el alta y los PUT no los llevan. Un
- * cuerpo que no es objeto queda igual.
+ * El GET de un presupuesto suma `factura` y `emisionPendiente` (FEAT-007, D-19) y `observacionEmision` (FEAT-008); el
+ * alta y los PUT no los llevan. Un cuerpo que no es objeto queda igual.
  */
 const conFacturacion = <T,>(cuerpo: T): T =>
-  typeof cuerpo === 'object' && cuerpo !== null ? { ...cuerpo, factura: null, emisionPendiente: false } : cuerpo;
+  typeof cuerpo === 'object' && cuerpo !== null
+    ? { ...cuerpo, factura: null, emisionPendiente: false, observacionEmision: null }
+    : cuerpo;
 
 describe('cliente de la Api', () => {
   it('Cliente_401Vacio_AvisaSinSesion', async () => {
@@ -1660,6 +1670,7 @@ describe('cliente de la Api: factura del presupuesto (FEAT-007)', () => {
     version: 4,
     factura: null,
     emisionPendiente: false,
+    observacionEmision: null,
   };
   /** La respuesta 201 de la emisión (D-18). */
   const EMITIDA = {
@@ -1885,5 +1896,314 @@ describe('cliente de la Api: factura del presupuesto (FEAT-007)', () => {
 
   it('mensajeFacturaEmitida_ConElComprobante', () => {
     expect(mensajeFacturaEmitida('Factura B 0003-00000125')).toBe('Se emitió la Factura B 0003-00000125.');
+  });
+});
+
+describe('cliente de la Api: verificación y descarte de emisiones pendientes (FEAT-008)', () => {
+  const RUTA_VERIFICACION = '/api/presupuestos/155/factura/verificacion';
+  const RUTA_DESCARTE = '/api/presupuestos/155/factura/descarte';
+  const RUTA_PENDIENTES = '/api/facturacion/emisiones-pendientes';
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const NO_ENCONTRADO = { tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO };
+  const COMPROBANTE = 'Factura B 0003-00000125';
+  const FACTURA = {
+    comprobante: COMPROBANTE,
+    tipo: 'b',
+    numero: 125,
+    cae: '12345678901234',
+    vencimientoCae: '2026-11-24',
+    fecha: '2026-11-14',
+    total: 1815,
+    neto: 1500,
+    iva: 315,
+  };
+  /** El 409 de la verificación: título fijo y un `detail` que la pantalla nunca muestra. */
+  const conflictoVerificacion = (motivo: unknown, extra: Record<string, unknown> = {}) =>
+    json(409, { status: 409, title: 'No se pudo verificar la emisión.', detail: 'Texto del servidor.', motivo, ...extra });
+  const conflictoDescarte = (motivo: unknown) =>
+    json(409, { status: 409, title: 'No se pudo descartar la emisión.', detail: 'Texto del servidor.', motivo });
+  const IMPORTE_DISTINTO = {
+    comprobante: COMPROBANTE,
+    importeRegistrado: 1815,
+    importeArca: 2000,
+  };
+  /** Datos ficticios: un DNI que empieza con 00 y un email de example.com. */
+  const CONSULTADO = {
+    numero: 155,
+    fecha: '2026-11-14',
+    estado: 'final',
+    cliente: {
+      apellido: 'Ficticio',
+      nombre: 'Cliente',
+      dni: '00718294',
+      domicilio: null,
+      email: 'cliente@example.com',
+      telefono: null,
+    },
+    lineas: [
+      {
+        codigoArticulo: 7,
+        descripcion: 'Armazón metálico',
+        precioUnitario: 1815,
+        cantidad: 1,
+        porcentajeDescuento: 0,
+        precioConDescuento: 1815,
+        precioFinal: 1815,
+        orden: 1,
+      },
+    ],
+    total: 1815,
+    version: 4,
+    factura: null,
+    emisionPendiente: true,
+    observacionEmision: null,
+  };
+  const OBSERVACION: ObservacionEmision = {
+    motivo: 'importe_distinto',
+    comprobante: COMPROBANTE,
+    importeRegistrado: 1815,
+    importeArca: 2000,
+    entorno: 'simulado',
+  };
+
+  it('verificarEmision_200Recuperada_PostJsonSinCuerpoYDevuelveLaFactura', async () => {
+    // D-33: la Api exige Content-Type: application/json aunque el cuerpo vaya vacío.
+    const servidor = servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: json(200, { resultado: 'recuperada', factura: FACTURA }) });
+
+    expect(await verificarEmision(155)).toEqual({ tipo: 'ok', datos: { resultado: 'recuperada', factura: FACTURA } });
+    const [pedido] = servidor.pedidosA('POST', RUTA_VERIFICACION);
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+    expect(pedido?.init?.body).toBeUndefined();
+    expect(pedido?.init?.credentials).toBe('same-origin');
+  });
+
+  it('verificarEmision_200Emitida_DevuelveLaFactura', async () => {
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: json(200, { resultado: 'emitida', factura: FACTURA }) });
+
+    expect(await verificarEmision(155)).toEqual({ tipo: 'ok', datos: { resultado: 'emitida', factura: FACTURA } });
+  });
+
+  it.each([
+    ['resultado desconocido', { resultado: 'otro', factura: FACTURA }],
+    ['sin resultado', { factura: FACTURA }],
+    ['sin factura', { resultado: 'recuperada' }],
+    ['factura ilegible', { resultado: 'recuperada', factura: { ...FACTURA, cae: 'no' } }],
+    ['cuerpo que no es objeto', 'recuperada'],
+  ])('verificarEmision_200Ilegible_%s_SinConexion', async (_caso, cuerpo) => {
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: json(200, cuerpo) });
+
+    expect(await verificarEmision(155)).toEqual(ILEGIBLE);
+  });
+
+  it.each([
+    [
+      'importe_distinto',
+      IMPORTE_DISTINTO,
+      'Revisá el punto de venta en ARCA: la Factura B 0003-00000125 figura autorizada por $ 2.000,00 y esta venta registró $ 1.815,00.',
+    ],
+    ['sin_numero', {}, 'Revisá el punto de venta en ARCA: esta emisión no tiene número de comprobante registrado.'],
+    [
+      'otro_entorno',
+      { entorno: 'simulado' },
+      'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Simulado y el sistema está configurado en otro entorno.',
+    ],
+    [
+      'otro_entorno',
+      { entorno: 'homologacion' },
+      'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Homologación y el sistema está configurado en otro entorno.',
+    ],
+    [
+      'otro_entorno',
+      { entorno: 'produccion' },
+      'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Producción y el sistema está configurado en otro entorno.',
+    ],
+    ['espera', { segundosRestantes: 40 }, 'Esperá 40 segundos para verificar con ARCA.'],
+    ['espera', { segundosRestantes: 1 }, 'Esperá 1 segundo para verificar con ARCA.'],
+    ['sin_respuesta', {}, 'ARCA no respondió. La emisión sigue pendiente de verificación.'],
+    [
+      'sin_respuesta_emision',
+      {},
+      'ARCA no respondió a la nueva emisión. La emisión quedó pendiente de verificación.',
+    ],
+    ['no_enviada', {}, 'No se pudo completar la verificación con ARCA. Intentá de nuevo en unos minutos.'],
+    ['sin_pendiente', {}, 'El presupuesto no tiene una emisión pendiente de verificación.'],
+    ['facturado', {}, 'El presupuesto ya tiene una factura.'],
+    [
+      'rechazada',
+      { codigoArca: 10016, descripcionArca: 'Rechazo simulado.' },
+      'ARCA rechazó la factura: 10016 – Rechazo simulado.',
+    ],
+  ])('verificarEmision_409 %s: texto propio, nunca el detail', async (motivo, extra, mensaje) => {
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: conflictoVerificacion(motivo, extra) });
+
+    expect(await verificarEmision(155)).toEqual({ tipo: 'conflicto', motivo, mensaje });
+  });
+
+  it.each([
+    ['importe_distinto sin importe de ARCA', 'importe_distinto', { ...IMPORTE_DISTINTO, importeArca: undefined }],
+    ['importe_distinto con importe de texto', 'importe_distinto', { ...IMPORTE_DISTINTO, importeRegistrado: '1815' }],
+    ['importe_distinto con comprobante mal formado', 'importe_distinto', { ...IMPORTE_DISTINTO, comprobante: 'B 125' }],
+    ['otro_entorno con entorno desconocido', 'otro_entorno', { entorno: 'Simulado' }],
+    ['otro_entorno sin entorno', 'otro_entorno', {}],
+    ['espera de 0 segundos', 'espera', { segundosRestantes: 0 }],
+    ['espera de texto', 'espera', { segundosRestantes: '40' }],
+    ['rechazada sin código', 'rechazada', { descripcionArca: 'Rechazo simulado.' }],
+    ['rechazada con la forma de la emisión', 'rechazada', { codigo: 10016, descripcion: 'Rechazo simulado.' }],
+    ['motivo de la emisión', 'pendiente', {}],
+    ['motivo desconocido', 'otro', {}],
+  ])('verificarEmision_409Ilegible_%s_SinConexion', async (_caso, motivo, extra) => {
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: conflictoVerificacion(motivo, extra) });
+
+    expect(await verificarEmision(155)).toEqual(ILEGIBLE);
+  });
+
+  it('verificarEmision_401_SinSesionYAvisa', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: vacia(401) });
+
+    expect(await verificarEmision(155)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['404', vacia(404), NO_ENCONTRADO],
+    ['413', vacia(413), { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO }],
+    ['400', problema(400, 'cuerpo', 'No.'), { tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO }],
+    ['500', vacia(500), ILEGIBLE],
+    ['falla de red', sinRed, ILEGIBLE],
+  ])('verificarEmision_%s_MensajeGeneral', async (_caso, respuesta, esperado) => {
+    servidorFalso({ [`POST ${RUTA_VERIFICACION}`]: respuesta });
+
+    expect(await verificarEmision(155)).toEqual(esperado);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('verificarYDescartar_NumeroInvalido_%s_NoSeEnvia', async (numero) => {
+    const servidor = servidorFalso({});
+
+    expect(await verificarEmision(numero)).toEqual(NO_ENCONTRADO);
+    expect(await descartarEmision(numero)).toEqual(NO_ENCONTRADO);
+    expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+  });
+
+  it('descartarEmision_204_PostJsonSinCuerpo', async () => {
+    const servidor = servidorFalso({ [`POST ${RUTA_DESCARTE}`]: vacia(204) });
+
+    expect(await descartarEmision(155)).toEqual({ tipo: 'ok', datos: undefined });
+    const [pedido] = servidor.pedidosA('POST', RUTA_DESCARTE);
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+    expect(pedido?.init?.body).toBeUndefined();
+  });
+
+  it.each([
+    ['sin_pendiente', 'El presupuesto no tiene una emisión pendiente de verificación.'],
+    [
+      'sin_observacion',
+      'La emisión pendiente no tiene una observación que permita descartarla. Verificala con ARCA.',
+    ],
+  ])('descartarEmision_409 %s: texto propio', async (motivo, mensaje) => {
+    servidorFalso({ [`POST ${RUTA_DESCARTE}`]: conflictoDescarte(motivo) });
+
+    expect(await descartarEmision(155)).toEqual({ tipo: 'conflicto', motivo, mensaje });
+  });
+
+  it.each([
+    ['409 con motivo ajeno', conflictoDescarte('espera'), ILEGIBLE],
+    ['404', vacia(404), NO_ENCONTRADO],
+    ['falla de red', sinRed, ILEGIBLE],
+  ])('descartarEmision_%s_MensajeGeneral', async (_caso, respuesta, esperado) => {
+    servidorFalso({ [`POST ${RUTA_DESCARTE}`]: respuesta });
+
+    expect(await descartarEmision(155)).toEqual(esperado);
+  });
+
+  it('descartarEmision_401_SinSesion', async () => {
+    servidorFalso({ [`POST ${RUTA_DESCARTE}`]: vacia(401) });
+
+    expect(await descartarEmision(155)).toEqual({ tipo: 'sinSesion' });
+  });
+
+  it('listarEmisionesPendientes_200_LosNumeros', async () => {
+    const servidor = servidorFalso({ [`GET ${RUTA_PENDIENTES}`]: json(200, { presupuestos: [155, 160] }) });
+
+    expect(await listarEmisionesPendientes()).toEqual({ tipo: 'ok', datos: [155, 160] });
+    expect(await listarEmisionesPendientes()).toEqual({ tipo: 'ok', datos: [155, 160] });
+    expect(servidor.pedidosA('GET', RUTA_PENDIENTES)).toHaveLength(2);
+  });
+
+  it.each([
+    ['sin lista', {}],
+    ['lista que no es arreglo', { presupuestos: '155' }],
+    ['número de texto', { presupuestos: ['155'] }],
+    ['número cero', { presupuestos: [0] }],
+    ['número con decimales', { presupuestos: [155.5] }],
+    ['número repetido', { presupuestos: [155, 160, 155] }],
+  ])('listarEmisionesPendientes_Ilegible_%s', async (_caso, cuerpo) => {
+    servidorFalso({ [`GET ${RUTA_PENDIENTES}`]: json(200, cuerpo) });
+
+    expect(await listarEmisionesPendientes()).toEqual(ILEGIBLE);
+  });
+
+  it('consultarPresupuesto_LeeLaObservacionDeLaEmision', async () => {
+    const sinNumero = { ...OBSERVACION, motivo: 'sin_numero', comprobante: null, importeArca: null };
+    const otroEntorno = { ...OBSERVACION, motivo: 'otro_entorno', importeArca: null, entorno: 'homologacion' };
+    servidorFalso({
+      'GET /api/presupuestos/155': [
+        json(200, CONSULTADO),
+        json(200, { ...CONSULTADO, observacionEmision: OBSERVACION }),
+        json(200, { ...CONSULTADO, observacionEmision: sinNumero }),
+        json(200, { ...CONSULTADO, observacionEmision: { ...otroEntorno, otroDato: 'x' } }),
+      ],
+    });
+
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: CONSULTADO });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: { ...CONSULTADO, observacionEmision: OBSERVACION } });
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: { ...CONSULTADO, observacionEmision: sinNumero } });
+    // Solo se copian los cinco datos de la observación.
+    expect(await consultarPresupuesto(155)).toEqual({ tipo: 'ok', datos: { ...CONSULTADO, observacionEmision: otroEntorno } });
+  });
+
+  it.each([
+    ['sin observación', { ...CONSULTADO, observacionEmision: undefined }],
+    ['observación que no es objeto', { ...CONSULTADO, observacionEmision: 'importe_distinto' }],
+    ['motivo desconocido', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, motivo: 'espera' } }],
+    ['entorno desconocido', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, entorno: 'Simulado' } }],
+    ['importe registrado de texto', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, importeRegistrado: '1815' } }],
+    ['importe distinto sin importe de ARCA', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, importeArca: null } }],
+    ['importe distinto sin comprobante', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, comprobante: null } }],
+    ['comprobante mal formado', { ...CONSULTADO, observacionEmision: { ...OBSERVACION, comprobante: 'B 125' } }],
+    ['observación sin emisión pendiente', { ...CONSULTADO, emisionPendiente: false, observacionEmision: OBSERVACION }],
+  ])('consultarPresupuesto_ObservacionIlegible_%s', async (_caso, cuerpo) => {
+    servidorFalso({ 'GET /api/presupuestos/155': json(200, cuerpo) });
+
+    expect(await consultarPresupuesto(155)).toEqual(ILEGIBLE);
+  });
+
+  it('ObservacionEmision_ImporteDistintoSinComprobanteNiImporteDeArca_NoCompila', () => {
+    // La unión discriminada exige el comprobante y el importe de ARCA en `importe_distinto`: sin ellos no hay texto
+    // que mostrar (nunca un "$ 0,00" falso). Lo verifica `tsc` (npm run build); en ejecución, el chequeo de motivo.
+    // @ts-expect-error: `importe_distinto` exige el comprobante (string, no null).
+    const incompleta: ObservacionEmision = {
+      motivo: 'importe_distinto',
+      comprobante: null,
+      importeRegistrado: 1815,
+      importeArca: 2000,
+      entorno: 'simulado',
+    };
+    expect(esMotivoObservacion(incompleta.motivo)).toBe(true);
+    expect(esMotivoObservacion('espera')).toBe(false);
+    expect(esMotivoObservacion(undefined)).toBe(false);
+  });
+
+  it('mensajeObservacion_UnTextoPorMotivo', () => {
+    expect(mensajeObservacion(OBSERVACION)).toBe(
+      'Revisá el punto de venta en ARCA: la Factura B 0003-00000125 figura autorizada por $ 2.000,00 y esta venta registró $ 1.815,00.',
+    );
+    expect(mensajeObservacion({ ...OBSERVACION, motivo: 'sin_numero', comprobante: null, importeArca: null })).toBe(
+      'Revisá el punto de venta en ARCA: esta emisión no tiene número de comprobante registrado.',
+    );
+    expect(mensajeObservacion({ ...OBSERVACION, motivo: 'otro_entorno', importeArca: null })).toBe(
+      'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Simulado y el sistema está configurado en otro entorno.',
+    );
   });
 });

@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { json, renderizarApp, servidorFalso, vacia } from '../pruebas/servidorFalso';
+import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
 afterEach(cleanup);
 
@@ -167,6 +167,90 @@ describe('Inicio', () => {
     const pantalla = (await screen.findByRole('heading', { name: 'Sesión iniciada' })).closest('section');
     // Dentro de la pantalla: la sonda de ubicación de las pruebas también tiene el rol status.
     expect(within(pantalla!).queryByRole('status')).toBeNull();
+  });
+
+  describe('aviso de emisiones pendientes (FEAT-008)', () => {
+    const RUTA_PENDIENTES = '/api/facturacion/emisiones-pendientes';
+    const INICIO_AVISO = 'Hay emisiones pendientes de verificación';
+
+    /** Abre el inicio con la lista indicada y espera a que la pantalla haya procesado la respuesta. */
+    async function abrirInicio(lista: Parameters<typeof servidorFalso>[0][string]) {
+      const servidor = servidorFalso({ ...conSesion, [`GET ${RUTA_PENDIENTES}`]: lista });
+      renderizarApp('/');
+      await screen.findByRole('heading', { name: 'Sesión iniciada' });
+      await waitFor(() => expect(servidor.pedidosA('GET', RUTA_PENDIENTES)).toHaveLength(1));
+      // La respuesta se procesa después del pedido: un ciclo más para que un aviso que no debe estar tampoco llegue.
+      await act(async () => {
+        await new Promise((resolver) => setTimeout(resolver, 0));
+      });
+      return servidor;
+    }
+
+    it('Inicio_ConPendientes_Aviso155y160', async () => {
+      // AC-03: un solo pedido al cargar; el aviso con los números y un enlace a cada presupuesto.
+      const servidor = await abrirInicio(json(200, { presupuestos: [155, 160] }));
+
+      const aviso = await screen.findByText((_texto, elemento) =>
+        elemento?.tagName === 'P' && (elemento.textContent ?? '').startsWith(INICIO_AVISO),
+      );
+      expect(aviso.textContent).toBe('Hay emisiones pendientes de verificación en los presupuestos 155 y 160.');
+      expect(within(aviso).getByRole('link', { name: '155' }).getAttribute('href')).toBe('/presupuestos/155');
+      expect(within(aviso).getByRole('link', { name: '160' }).getAttribute('href')).toBe('/presupuestos/160');
+      expect(servidor.pedidosA('GET', RUTA_PENDIENTES)).toHaveLength(1);
+      const [pedido] = servidor.pedidosA('GET', RUTA_PENDIENTES);
+      expect(pedido?.init?.credentials).toBe('same-origin');
+    });
+
+    it.each([
+      [[155], 'Hay emisiones pendientes de verificación en el presupuesto 155.'],
+      [[155, 160, 170], 'Hay emisiones pendientes de verificación en los presupuestos 155, 160 y 170.'],
+    ])('Inicio_ConPendientes_ListaEnCastellano (%j)', async (presupuestos, texto) => {
+      await abrirInicio(json(200, { presupuestos }));
+
+      const aviso = await screen.findByText((_texto, elemento) =>
+        elemento?.tagName === 'P' && (elemento.textContent ?? '').startsWith(INICIO_AVISO),
+      );
+      expect(aviso.textContent).toBe(texto);
+      expect(within(aviso).getAllByRole('link')).toHaveLength(presupuestos.length);
+    });
+
+    it('Inicio_ConPendientes_EnlaceAbreElPresupuesto', async () => {
+      servidorFalso({
+        ...conSesion,
+        [`GET ${RUTA_PENDIENTES}`]: json(200, { presupuestos: [155, 160] }),
+        'GET /api/presupuestos/160': vacia(404),
+      });
+      renderizarApp('/');
+
+      fireEvent.click(await screen.findByRole('link', { name: '160' }));
+
+      expect(await screen.findByRole('heading', { name: 'Presupuesto' })).toBeTruthy();
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/160');
+    });
+
+    it('Inicio_SinPendientes_SinAviso', async () => {
+      // AC-04.
+      await abrirInicio(json(200, { presupuestos: [] }));
+
+      expect(screen.queryByText(INICIO_AVISO, { exact: false })).toBeNull();
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      expect(within(pantalla!).queryByRole('status')).toBeNull();
+    });
+
+    it.each([
+      ['404', vacia(404)],
+      ['500', vacia(500)],
+      ['falla de red', sinRed],
+      ['respuesta ilegible', json(200, { presupuestos: ['155'] })],
+    ])('Inicio_FallaAlListar_SinAvisoNiError (%s)', async (_caso, respuesta) => {
+      await abrirInicio(respuesta);
+
+      expect(screen.queryByText(INICIO_AVISO, { exact: false })).toBeNull();
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      expect(within(pantalla!).queryByRole('alert')).toBeNull();
+      expect(within(pantalla!).queryByRole('status')).toBeNull();
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/');
+    });
   });
 
   describe('con reloj falso', () => {
