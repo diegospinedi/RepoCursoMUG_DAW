@@ -120,7 +120,7 @@ public sealed class DocumentoFactura
         }
 
         // La B lleva el IVA contenido (FR-11) y la C no (FR-12).
-        if ((tipo == TipoComprobante.FacturaB) != ivaContenidoCentavos.HasValue
+        if (ReglasComprobanteImpreso.LlevaIvaContenido(tipo) != ivaContenidoCentavos.HasValue
             || ivaContenidoCentavos is < 0
             || ivaContenidoCentavos > totalCentavos)
         {
@@ -243,7 +243,9 @@ public sealed class DocumentoFactura
         var lineas = factura.Lineas
             .Select(linea => new LineaDocumentoFactura(linea.Descripcion, linea.Cantidad, Centavos(linea.PrecioFinal)))
             .ToList();
-        long? ivaContenido = factura.Tipo == TipoComprobante.FacturaB ? Centavos(factura.Importes.Iva) : null;
+        long? ivaContenido = ReglasComprobanteImpreso.LlevaIvaContenido(factura.Tipo)
+            ? Centavos(factura.Importes.Iva)
+            : null;
 
         return new DocumentoFactura(
             emisor.RazonSocial, emisor.DomicilioComercial, emisor.Cuit.Valor, emisor.IngresosBrutos,

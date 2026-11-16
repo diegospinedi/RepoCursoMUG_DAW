@@ -124,3 +124,8 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   0003", "Número: 00000125", "Fecha de emisión:", "CAE:", "Vencimiento del CAE:", "IVA contenido: $ 315,00"), CUIT del
   emisor mostrado con guiones, título del documento solo con el comprobante y sin autor ni asunto; la falla interna se
   prueba con una URL demasiado larga para QRCoder. — agente (D-06) — 2026-11-16 — Block 4.
+- **D-41 (del agente, Block 5).** Un solo título de 404 ("No se encontró la factura.") para presupuesto inexistente o
+  sin factura, en el detalle y en el PDF, sin revelar si el presupuesto existe; "faltan datos del emisor" es "no hay
+  fila" (la entidad no admite filas incompletas, D-19), y una fila corrupta da 500; los importes del detalle van en
+  pesos decimales como `FacturaEmitida`. — agente (D-06), aceptado por el verificador y el auditor — 2026-11-16 —
+  Block 5.

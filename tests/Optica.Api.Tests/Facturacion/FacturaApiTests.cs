@@ -2,11 +2,17 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Optica.Api.Acceso;
+using Optica.Application.Comun;
 using Optica.Application.Facturacion;
+using Optica.Domain.Catalogo;
 using Optica.Domain.Facturacion;
+using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Arca;
 using Optica.Infrastructure.Persistencia;
 
@@ -364,6 +370,270 @@ public sealed class FacturaApiTests
             await escenario.EmitirAsync(numero), "pendiente", "La emisión anterior está pendiente de verificación.");
     }
 
+    // Spec FEAT-009, Block 5: el detalle y el PDF de la factura (FR-04, FR-05, FR-24, FR-25). Datos ficticios: "Pérez,
+    // Ana" del PRD con un DNI que empieza con 00 (D-08), CUIT del emisor 20-00000000-1 (D-33) y razón social inventada.
+
+    private const string TituloFacturaNoEncontrada = "No se encontró la factura.";
+
+    private static readonly string[] CamposDetalle =
+    [
+        "comprobante", "fecha", "presupuesto", "apellido", "nombre", "dni", "receptor", "lineas", "total",
+        "ivaContenido", "cae", "vencimientoCae", "simulada",
+    ];
+
+    /// <summary>
+    /// AC-24 (FR-24, FR-25, D-03, D-15): la factura emitida sin identificar al receptor desde el presupuesto 155 de
+    /// "Pérez, Ana" responde 200 con sus datos y el presupuesto 155: el comprobante como texto, Apellido, Nombre y DNI del
+    /// cliente del presupuesto y el receptor "Consumidor Final". No hay acciones de edición ni de eliminación: PUT, PATCH
+    /// y DELETE del detalle y del PDF no existen (405), y la factura queda igual.
+    /// </summary>
+    [Fact]
+    public async Task GetFactura_Detalle_Presupuesto155SinAcciones()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        await escenario.GrabarBorradorDirectoAsync(154);
+        var numero = await escenario.FinalDeAsync(
+            EscenarioFacturacion.ApellidoPrd, EscenarioFacturacion.NombrePrd, EscenarioFacturacion.DniPrd, 1815m);
+        Assert.Equal(155, numero);
+        await escenario.SimularUltimoNumeroAsync(124);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+
+        var respuesta = await Http.GetAsync(escenario.Cliente, $"{EscenarioFacturacion.Ruta}/155/factura", escenario.Cookie);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("application/json", respuesta.Content.Headers.ContentType?.MediaType);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(CamposDetalle, json.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
+        Assert.Equal("Factura B 0003-00000125", json.GetProperty("comprobante").GetString());
+        var hoy = DateOnly.FromDateTime(fabrica.Reloj.GetLocalNow().DateTime);
+        Assert.Equal(Texto(hoy), json.GetProperty("fecha").GetString());
+        Assert.Equal(155, json.GetProperty("presupuesto").GetInt64());
+        Assert.Equal("Pérez", json.GetProperty("apellido").GetString());
+        Assert.Equal("Ana", json.GetProperty("nombre").GetString());
+        Assert.Equal("00123456", json.GetProperty("dni").GetString());
+        Assert.Equal("Consumidor Final", json.GetProperty("receptor").GetString());
+        var linea = Assert.Single(json.GetProperty("lineas").EnumerateArray().ToList());
+        Assert.Equal(
+            ["descripcion", "cantidad", "importe"], linea.EnumerateObject().Select(propiedad => propiedad.Name).ToArray());
+        // El artículo 1 es el del presupuesto 154; el 155 lleva el artículo 2.
+        Assert.Equal("Artículo 2", linea.GetProperty("descripcion").GetString());
+        Assert.Equal(1, linea.GetProperty("cantidad").GetInt32());
+        Assert.Equal(1815m, linea.GetProperty("importe").GetDecimal());
+        Assert.Equal(1815m, json.GetProperty("total").GetDecimal());
+        Assert.Equal(315m, json.GetProperty("ivaContenido").GetDecimal());
+        Assert.Matches("^[0-9]{14}$", json.GetProperty("cae").GetString());
+        Assert.Equal(
+            Texto(hoy.AddDays(SimuladorArca.DiasVencimientoCae)), json.GetProperty("vencimientoCae").GetString());
+        Assert.True(json.GetProperty("simulada").GetBoolean());
+
+        // Sin acciones: solo lectura (FR-24, RF-32).
+        var antes = json.GetRawText();
+        foreach (var ruta in new[] { "/api/presupuestos/155/factura", "/api/presupuestos/155/factura/pdf" })
+        {
+            foreach (var metodo in new[] { HttpMethod.Put, HttpMethod.Patch, HttpMethod.Delete })
+            {
+                var contenido = metodo == HttpMethod.Delete
+                    ? null
+                    : new StringContent("{}", Encoding.UTF8, "application/json");
+                var rechazo = await Http.EnviarAsync(escenario.Cliente, metodo, ruta, contenido, escenario.Cookie);
+                Assert.True(
+                    rechazo.StatusCode == HttpStatusCode.MethodNotAllowed,
+                    $"{metodo} {ruta} respondió {(int)rechazo.StatusCode}; se esperaba 405.");
+            }
+        }
+
+        var despues = await Http.GetAsync(escenario.Cliente, $"{EscenarioFacturacion.Ruta}/155/factura", escenario.Cookie);
+        Assert.Equal(antes, (await Http.JsonAsync(despues)).GetRawText());
+    }
+
+    /// <summary>
+    /// Sad path: un presupuesto en Final sin factura y un número sin presupuesto responden 404 con el título fijo, sin
+    /// detalles, en el detalle y en el PDF; un número que no es un <c>long</c> no coincide con la ruta.
+    /// </summary>
+    [Fact]
+    public async Task GetFactura_SinFactura_404()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        await escenario.CargarEmisorAsync();
+        var sinFactura = await escenario.FinalAsync(1000m);
+
+        foreach (var ruta in new[]
+                 {
+                     $"{EscenarioFacturacion.Ruta}/{sinFactura}/factura",
+                     $"{EscenarioFacturacion.Ruta}/{sinFactura}/factura/pdf",
+                     $"{EscenarioFacturacion.Ruta}/999/factura",
+                     $"{EscenarioFacturacion.Ruta}/999/factura/pdf",
+                 })
+        {
+            var respuesta = await Http.GetAsync(escenario.Cliente, ruta, escenario.Cookie);
+
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+            Assert.Null(respuesta.Content.Headers.ContentDisposition);
+            var json = await Http.JsonAsync(respuesta);
+            Assert.Equal(TituloFacturaNoEncontrada, json.GetProperty("title").GetString());
+            Assert.False(json.TryGetProperty("detail", out _));
+            Assert.DoesNotContain(EscenarioFacturacion.Apellido, json.GetRawText(), StringComparison.Ordinal);
+        }
+
+        var noEsNumero = await Http.GetAsync(escenario.Cliente, $"{EscenarioFacturacion.Ruta}/abc/factura", escenario.Cookie);
+        Assert.Equal(HttpStatusCode.NotFound, noEsNumero.StatusCode);
+    }
+
+    /// <summary>
+    /// AC-06 (FR-05): con los datos del emisor cargados, el PDF de la factura se descarga como adjunto
+    /// <c>factura-B-0003-00000125.pdf</c>, sin datos del cliente en el nombre; es un PDF legible con el comprobante, el
+    /// emisor y la leyenda de comprobante simulado.
+    /// </summary>
+    [Fact]
+    public async Task GetFacturaPdf_Descarga_NombreSinDatos()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        await escenario.CargarEmisorAsync();
+        var numero = await escenario.FinalDeAsync(
+            EscenarioFacturacion.ApellidoPrd, EscenarioFacturacion.NombrePrd, EscenarioFacturacion.DniPrd, 1815m);
+        await escenario.SimularUltimoNumeroAsync(124);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+
+        using var respuesta = await Http.GetAsync(
+            escenario.Cliente, $"{EscenarioFacturacion.Ruta}/{numero}/factura/pdf", escenario.Cookie);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("application/pdf", respuesta.Content.Headers.ContentType?.MediaType);
+        var disposicion = Assert.IsType<System.Net.Http.Headers.ContentDispositionHeaderValue>(
+            respuesta.Content.Headers.ContentDisposition);
+        Assert.Equal("attachment", disposicion.DispositionType);
+        Assert.Equal("factura-B-0003-00000125.pdf", disposicion.FileName?.Trim('"'));
+        foreach (var dato in new[] { "Pérez", "Perez", "Ana", EscenarioFacturacion.DniPrd })
+        {
+            Assert.DoesNotContain(dato, disposicion.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        var bytes = await respuesta.Content.ReadAsByteArrayAsync();
+        Assert.Equal("%PDF"u8.ToArray(), bytes[..4]);
+        using var documento = UglyToad.PdfPig.PdfDocument.Open(bytes);
+        var texto = string.Join(' ', documento.GetPage(1).GetWords().Select(palabra => palabra.Text));
+        Assert.Contains("Factura B", texto, StringComparison.Ordinal);
+        Assert.Contains("00000125", texto, StringComparison.Ordinal);
+        Assert.Contains("Zq7Óptica", texto, StringComparison.Ordinal);
+        Assert.Contains("COMPROBANTE SIMULADO", texto, StringComparison.Ordinal);
+
+        // R-02 y FR-08 de punta a punta: emitida a Consumidor Final, el PDF no lleva el Apellido, el Nombre ni el DNI del
+        // cliente del presupuesto.
+        Assert.Contains("Consumidor Final", texto, StringComparison.Ordinal);
+        Assert.DoesNotContain(EscenarioFacturacion.ApellidoPrd, texto, StringComparison.Ordinal);
+        Assert.DoesNotContain(EscenarioFacturacion.DniPrd, texto, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nombre:", texto, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AC-05 (FR-04, sad path): sin los datos del emisor, el PDF responde 409 <c>sin_datos_emisor</c> con el título y el
+    /// detalle fijos, que piden completarlos en la configuración; no hay adjunto ni datos del cliente.
+    /// </summary>
+    [Fact]
+    public async Task GetFacturaPdf_SinDatosEmisor_409()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        var numero = await escenario.FinalAsync(1000m);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+
+        var respuesta = await Http.GetAsync(
+            escenario.Cliente, $"{EscenarioFacturacion.Ruta}/{numero}/factura/pdf", escenario.Cookie);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("application/problem+json", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Null(respuesta.Content.Headers.ContentDisposition);
+        var json = await Http.JsonAsync(respuesta);
+        Assert.Equal(409, json.GetProperty("status").GetInt32());
+        Assert.Equal("No se pudo generar el PDF de la factura.", json.GetProperty("title").GetString());
+        Assert.Equal(
+            "Completá los datos del emisor en la configuración para generar el PDF de la factura.",
+            json.GetProperty("detail").GetString());
+        Assert.Equal("sin_datos_emisor", json.GetProperty("motivo").GetString());
+        Assert.False(json.TryGetProperty("errors", out _));
+        Assert.DoesNotContain(EscenarioFacturacion.Apellido, json.GetRawText(), StringComparison.Ordinal);
+
+        // El detalle sí responde: los datos del emisor solo hacen falta para el PDF.
+        var detalle = await Http.GetAsync(escenario.Cliente, $"{EscenarioFacturacion.Ruta}/{numero}/factura", escenario.Cookie);
+        Assert.Equal(HttpStatusCode.OK, detalle.StatusCode);
+    }
+
+    /// <summary>
+    /// Sad path: si el generador del PDF lanza, la Api responde el 500 genérico, sin el texto de la excepción ni
+    /// adjunto.
+    /// </summary>
+    [Fact]
+    public async Task GetFacturaPdf_GeneradorLanza_500SinTexto()
+    {
+        using var fabrica = new FabricaApi(servicios =>
+        {
+            servicios.RemoveAll<IGeneradorPdfFactura>();
+            servicios.AddSingleton<IGeneradorPdfFactura>(new GeneradorPdfQueLanza());
+        });
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        await escenario.CargarEmisorAsync();
+        var numero = await escenario.FinalAsync(1000m);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+
+        var respuesta = await Http.GetAsync(
+            escenario.Cliente, $"{EscenarioFacturacion.Ruta}/{numero}/factura/pdf", escenario.Cookie);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        Assert.Null(respuesta.Content.Headers.ContentDisposition);
+        Assert.NotEqual("application/pdf", respuesta.Content.Headers.ContentType?.MediaType);
+        var texto = await respuesta.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(GeneradorPdfQueLanza.Texto, texto, StringComparison.Ordinal);
+        Assert.DoesNotContain(EscenarioFacturacion.Apellido, texto, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Sad path: sin sesión, el detalle y el PDF de la factura responden 401 sin cuerpo. Las dos rutas existen como GET y
+    /// no son anónimas.
+    /// </summary>
+    [Fact]
+    public async Task RutasFactura_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await EscenarioFacturacion.CrearAsync(fabrica);
+        await escenario.CargarEmisorAsync();
+        var numero = await escenario.FinalAsync(1000m);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+        var registradas = fabrica.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint =>
+                endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(HttpMethods.Get) ?? false)
+            .Select(endpoint => "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/'))
+            .ToList();
+
+        foreach (var (plantilla, ruta) in new[]
+                 {
+                     ("/api/presupuestos/{numero:long}/factura", $"{EscenarioFacturacion.Ruta}/{numero}/factura"),
+                     ("/api/presupuestos/{numero:long}/factura/pdf", $"{EscenarioFacturacion.Ruta}/{numero}/factura/pdf"),
+                 })
+        {
+            Assert.Contains(plantilla, registradas);
+            Assert.False(RutasAnonimas.Contiene(HttpMethods.Get, ruta), $"GET {ruta} no puede ser anónima.");
+
+            var respuesta = await Http.GetAsync(escenario.Cliente, ruta);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+            Assert.Null(respuesta.Content.Headers.ContentDisposition);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>Un generador del PDF de la factura que lanza con un texto marcado.</summary>
+    private sealed class GeneradorPdfQueLanza : IGeneradorPdfFactura
+    {
+        public const string Texto = "Zq7-falla-pdf-factura";
+
+        public byte[] Generar(DocumentoFactura documento) => throw new InvalidOperationException(Texto);
+    }
+
     /// <summary>La emisión pendiente guardada del presupuesto, leída en un alcance propio.</summary>
     private static async Task<EmisionPendiente?> PendienteAsync(FabricaApi fabrica, long numero)
     {
@@ -517,6 +787,16 @@ internal sealed class EscenarioFacturacion
     public const string Email = "zq7@example.com";
     public const string Telefono = "011-5555-0199";
 
+    /// <summary>El cliente "Pérez, Ana" del PRD de FEAT-009, con un DNI ficticio que empieza con 00 (D-08).</summary>
+    public const string ApellidoPrd = "Pérez";
+    public const string NombrePrd = "Ana";
+    public const string DniPrd = "00123456";
+
+    /// <summary>Los cinco datos del emisor, inventados, con el CUIT ficticio 20-00000000-1 (D-33).</summary>
+    public const string CuerpoEmisor =
+        "{\"razonSocial\":\"Zq7Óptica Inventada SA\",\"domicilioComercial\":\"Calle Inventada 123\","
+        + "\"cuit\":\"20-00000000-1\",\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}";
+
     private readonly FabricaApi _fabrica;
     private int _articulos;
 
@@ -573,7 +853,13 @@ internal sealed class EscenarioFacturacion
     }
 
     /// <summary>Un presupuesto en Borrador con una línea por precio (cantidad 1, sin descuento); devuelve su número.</summary>
-    public async Task<long> BorradorAsync(params decimal[] precios)
+    public Task<long> BorradorAsync(params decimal[] precios) => BorradorDeAsync(Apellido, Nombre, Dni, precios);
+
+    /// <summary>
+    /// Un presupuesto en Borrador del cliente recibido, con una línea por precio (cantidad 1, sin descuento); devuelve su
+    /// número.
+    /// </summary>
+    public async Task<long> BorradorDeAsync(string apellido, string nombre, string dni, params decimal[] precios)
     {
         var lineas = new List<object>();
         foreach (var precio in precios)
@@ -583,7 +869,7 @@ internal sealed class EscenarioFacturacion
 
         var cuerpo = JsonSerializer.Serialize(new
         {
-            cliente = new { apellido = Apellido, nombre = Nombre, dni = Dni, email = Email, telefono = Telefono },
+            cliente = new { apellido, nombre, dni, email = Email, telefono = Telefono },
             lineas,
         });
         var respuesta = await Http.PostJsonAsync(Cliente, Ruta, cuerpo, Cookie);
@@ -592,9 +878,12 @@ internal sealed class EscenarioFacturacion
     }
 
     /// <summary>Un presupuesto grabado en Borrador y pasado a Final, como en la app (AGENTS.md).</summary>
-    public async Task<long> FinalAsync(params decimal[] precios)
+    public Task<long> FinalAsync(params decimal[] precios) => FinalDeAsync(Apellido, Nombre, Dni, precios);
+
+    /// <summary>Un presupuesto del cliente recibido, grabado en Borrador y pasado a Final, como en la app (AGENTS.md).</summary>
+    public async Task<long> FinalDeAsync(string apellido, string nombre, string dni, params decimal[] precios)
     {
-        var numero = await BorradorAsync(precios);
+        var numero = await BorradorDeAsync(apellido, nombre, dni, precios);
         var respuesta = await Http.EnviarAsync(
             Cliente,
             HttpMethod.Put,
@@ -603,6 +892,40 @@ internal sealed class EscenarioFacturacion
             Cookie);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         return numero;
+    }
+
+    /// <summary>
+    /// Graba en Borrador por el repositorio el presupuesto <paramref name="numero"/>, como lo dejaría la aplicación, para
+    /// que el alta siguiente tome el número que sigue (FEAT-009: el presupuesto 155 del PRD).
+    /// </summary>
+    public async Task GrabarBorradorDirectoAsync(long numero)
+    {
+        var codigo = await ArticuloAsync(1000m);
+        using var alcance = _fabrica.Services.CreateScope();
+        var servicios = alcance.ServiceProvider;
+        var articulo = await servicios.GetRequiredService<IArticuloRepository>().ObtenerAsync(codigo)
+            ?? throw new InvalidOperationException("No se encontró el artículo de la prueba.");
+        var linea = LineaPresupuesto.DesdeArticulo(articulo, cantidad: 1, porcentajeDescuento: 0m).Linea
+            ?? throw new InvalidOperationException("El artículo de la prueba no da una línea válida.");
+        servicios.GetRequiredService<IPresupuestoRepository>().Agregar(Presupuesto.Nuevo(
+            numero, new DateOnly(2026, 10, 30), new ClientePresupuesto(Apellido, Nombre, Dni, null, null, null), [linea]));
+        await servicios.GetRequiredService<IUnidadDeTrabajo>().ConfirmarAsync();
+    }
+
+    /// <summary>
+    /// Deja el contador del simulador de ARCA para la Factura B del punto de venta 3 en <paramref name="ultimo"/>: la
+    /// próxima factura lleva el número siguiente.
+    /// </summary>
+    public Task SimularUltimoNumeroAsync(long ultimo) =>
+        File.WriteAllTextAsync(
+            Path.Combine(_fabrica.DirectorioDatos, SimuladorArca.NombreArchivo),
+            "{\"contadores\":{\"B-3\":" + ultimo.ToString(CultureInfo.InvariantCulture) + "}}");
+
+    /// <summary>Graba los cinco datos del emisor (<see cref="CuerpoEmisor"/>).</summary>
+    public async Task CargarEmisorAsync()
+    {
+        var respuesta = await Http.PostJsonAsync(Cliente, "/api/configuracion/emisor", CuerpoEmisor, Cookie);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
     /// <summary>Pide la factura del presupuesto con el concepto Productos, o con <paramref name="cuerpo"/>.</summary>

@@ -198,7 +198,7 @@ public sealed class GeneradorPdfFactura : IGeneradorPdfFactura
     {
         if (documento.EsConsumidorFinalSinIdentificar)
         {
-            DibujarDatos(celda, [("Receptor", "Consumidor Final")]);
+            DibujarDatos(celda, [("Receptor", Domain.Facturacion.ReglasComprobanteImpreso.ReceptorConsumidorFinal)]);
             return;
         }
 

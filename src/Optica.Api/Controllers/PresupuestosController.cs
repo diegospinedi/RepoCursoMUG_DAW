@@ -200,7 +200,8 @@ public sealed record ListadoPresupuestos(
 /// (FEAT-003c), con 409 <c>cambiado</c> o <c>final</c>; búsqueda y PDF de un Final (FEAT-006), con 409 <c>borrador</c>
 /// para el PDF de un Borrador; emisión de la factura y estado de facturación en el GET (FEAT-007), con 409 y su
 /// <c>motivo</c> para los rechazos y los desenlaces de ARCA; verificación y descarte de la emisión pendiente y su
-/// observación en el GET (FEAT-008), con 409 y su <c>motivo</c>. Solo traduce HTTP: delega en los casos de uso, que validan, leen
+/// observación en el GET (FEAT-008), con 409 y su <c>motivo</c>; detalle y PDF de la factura (FEAT-009), con 409
+/// <c>sin_datos_emisor</c> para el PDF sin los datos del emisor. Solo traduce HTTP: delega en los casos de uso, que validan, leen
 /// los artículos, numeran y graban. Exige sesión por la política por defecto (no está en
 /// <see cref="RutasAnonimas"/>): las respuestas traen datos personales del cliente (D-17). Sin sesión, 401 antes del 415
 /// y del 413; el Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (D-16). No registra el
@@ -226,7 +227,9 @@ public sealed class PresupuestosController(
     EmitirFactura emitirFactura,
     ObtenerEstadoFacturacion obtenerEstadoFacturacion,
     VerificarEmision verificarEmision,
-    DescartarEmision descartarEmision) : ControllerBase
+    DescartarEmision descartarEmision,
+    ObtenerFactura obtenerFactura,
+    GenerarPdfFactura generarPdfFactura) : ControllerBase
 {
     /// <summary>
     /// Verifica en ARCA la emisión pendiente del presupuesto (FEAT-008, FR-04 a FR-16): 200 con <c>resultado</c>
@@ -386,7 +389,7 @@ public sealed class PresupuestosController(
         _ => throw new InvalidOperationException("Motivo del conflicto de la emisión no previsto."),
     };
 
-    /// <summary>El tipo de contenido del PDF del presupuesto (FEAT-006).</summary>
+    /// <summary>El tipo de contenido del PDF del presupuesto (FEAT-006) y del de la factura (FEAT-009).</summary>
     private const string TipoPdf = "application/pdf";
 
     /// <summary>Tamaño máximo del cuerpo del POST y de los dos PUT (D-16); más grande, 413.</summary>
@@ -408,6 +411,12 @@ public sealed class PresupuestosController(
 
     /// <summary>El <c>title</c> fijo del 404 de un presupuesto inexistente (D-24).</summary>
     private const string TituloNoEncontrado = "No se encontró el presupuesto.";
+
+    /// <summary>
+    /// El <c>title</c> fijo del 404 del detalle y del PDF de la factura (FEAT-009): el presupuesto no existe o no tiene
+    /// factura. El mismo texto en los dos casos, sin detalles.
+    /// </summary>
+    private const string TituloFacturaNoEncontrada = "No se encontró la factura.";
 
     /// <summary>El prefijo del cliente en la clave de un error de lectura (<c>$.cliente.dni</c>).</summary>
     private const string PrefijoCliente = "cliente.";
@@ -584,6 +593,43 @@ public sealed class PresupuestosController(
         { Tipo: TipoPdfPresupuesto.Borrador, Detalle: { } detalle } =>
             this.ConflictoPresupuesto(RespuestasValidacion.MotivoBorrador, detalle),
         _ => throw new InvalidOperationException("Resultado del PDF de un presupuesto no previsto."),
+    };
+
+    /// <summary>
+    /// El detalle de la factura emitida desde el presupuesto (FEAT-009, FR-24, FR-25, D-14): 200 con
+    /// <see cref="FacturaDetalle"/> (el comprobante como texto, sin punto de venta como dato, D-15; Apellido, Nombre y DNI
+    /// del cliente del presupuesto; el receptor de la factura). Inexistente o sin factura, 404 con el título fijo y sin
+    /// detalles. Solo lectura: la factura no tiene rutas de modificación ni de eliminación (FR-24, RF-32). Sin sesión,
+    /// 401; la respuesta lleva <c>no-store</c> como todo <c>/api</c>.
+    /// </summary>
+    [HttpGet("{numero:long}/factura")]
+    public async Task<IActionResult> ObtenerFacturaDelPresupuesto(long numero, CancellationToken cancelacion) =>
+        await obtenerFactura.EjecutarAsync(numero, cancelacion) is { } detalle
+            ? Ok(detalle)
+            : Problem(statusCode: StatusCodes.Status404NotFound, title: TituloFacturaNoEncontrada);
+
+    /// <summary>
+    /// El PDF de la factura emitida desde el presupuesto (FEAT-009, FR-04, FR-05): 200 <c>application/pdf</c> como
+    /// adjunto <c>factura-B-0003-00000125.pdf</c>, sin datos del cliente en el nombre. Inexistente o sin factura, 404;
+    /// sin los datos del emisor, 409 <c>sin_datos_emisor</c> sin generar el PDF (AC-05). Una falla del generador llega al
+    /// manejador de errores, que responde el 500 genérico. Sin sesión, 401; la respuesta lleva <c>no-store</c>.
+    /// </summary>
+    [HttpGet("{numero:long}/factura/pdf")]
+    public async Task<IActionResult> DescargarPdfFactura(long numero, CancellationToken cancelacion) =>
+        ResponderPdfFactura(await generarPdfFactura.EjecutarAsync(numero, cancelacion));
+
+    /// <summary>
+    /// Traduce el resultado del PDF de la factura. Cerrado por defecto: generado, 200 con el archivo; no encontrado, 404;
+    /// sin datos del emisor, 409 <c>sin_datos_emisor</c>. Cualquier otro resultado lanza, y el manejador de errores
+    /// responde 500 genérico.
+    /// </summary>
+    internal IActionResult ResponderPdfFactura(ResultadoPdfFactura? resultado) => resultado switch
+    {
+        { EsGenerado: true, Contenido: var contenido, NombreArchivo: var nombre } => File(contenido, TipoPdf, nombre),
+        { Tipo: TipoPdfFactura.NoEncontrado } =>
+            Problem(statusCode: StatusCodes.Status404NotFound, title: TituloFacturaNoEncontrada),
+        { Tipo: TipoPdfFactura.SinDatosEmisor } => this.ConflictoPdfFactura(RespuestasValidacion.MotivoSinDatosEmisor),
+        _ => throw new InvalidOperationException("Resultado del PDF de una factura no previsto."),
     };
 
     /// <summary>

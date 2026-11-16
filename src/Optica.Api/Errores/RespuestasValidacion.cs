@@ -428,6 +428,36 @@ public static class RespuestasValidacion
         return controller.Conflicto409(TituloConflictoDescarte, motivo, detalle);
     }
 
+    // El 409 del PDF de la factura (FEAT-009, D-26): su título fijo y un conjunto cerrado de motivos con su detalle fijo,
+    // como sin_tope y sin_punto_venta. Hoy el único es sin_datos_emisor (FR-04, AC-05).
+
+    /// <summary>El <c>title</c> fijo del 409 del PDF de una factura (FEAT-009).</summary>
+    public const string TituloConflictoPdfFactura = "No se pudo generar el PDF de la factura.";
+
+    /// <summary>Valor de la extensión <c>motivo</c>: faltan los datos del emisor y no se genera el PDF (FR-04).</summary>
+    public const string MotivoSinDatosEmisor = "sin_datos_emisor";
+
+    private static readonly Dictionary<string, string> DetallesPdfFactura = new(StringComparer.Ordinal)
+    {
+        [MotivoSinDatosEmisor] = "Completá los datos del emisor en la configuración para generar el PDF de la factura.",
+    };
+
+    /// <summary>
+    /// 409 con ProblemDetails para el PDF de una factura que no se pudo generar (FEAT-009, D-26): <c>title</c> fijo
+    /// (<see cref="TituloConflictoPdfFactura"/>), el <c>detail</c> fijo del motivo, que no repite datos del pedido, y
+    /// <paramref name="motivo"/> en la extensión <c>motivo</c>. Sin <c>errors</c>: no es un error de un campo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El motivo no es uno de los previstos (<see cref="MotivoSinDatosEmisor"/>).</exception>
+    public static ActionResult ConflictoPdfFactura(this ControllerBase controller, string motivo)
+    {
+        if (!DetallesPdfFactura.TryGetValue(motivo, out var detalle))
+        {
+            throw new ArgumentException("El motivo del conflicto no es válido.", nameof(motivo));
+        }
+
+        return controller.Conflicto409(TituloConflictoPdfFactura, motivo, detalle);
+    }
+
     /// <summary>Los primeros <paramref name="maximo"/> caracteres, sin dejar un sustituto alto suelto al final.</summary>
     private static string Recortar(string texto, int maximo)
     {

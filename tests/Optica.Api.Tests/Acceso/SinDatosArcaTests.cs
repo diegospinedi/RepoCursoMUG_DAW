@@ -64,6 +64,25 @@ public sealed class SinDatosArcaTests
                 "{\"estado\":\"final\",\"version\":0}", System.Text.Encoding.UTF8, "application/json"),
             cookie);
         Assert.Equal(System.Net.HttpStatusCode.OK, final.StatusCode);
+        // FEAT-009: el presupuesto se factura con ARCA simulada y se cargan los datos del emisor (inventados, CUIT
+        // ficticio, D-33), así el detalle y el PDF de su factura responden con éxito y se revisan.
+        var configuracion = await Http.PostJsonAsync(
+            cliente,
+            RutaConfiguracion,
+            "{\"alicuotaIva\":21,\"condicionFiscal\":\"responsable_inscripto\",\"multiploRedondeo\":0.01,"
+            + "\"topeIdentificacion\":100000,\"puntoVenta\":3}",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, configuracion.StatusCode);
+        var emitida = await Http.PostJsonAsync(
+            cliente, $"{RutaPresupuestos}/{numero}/factura", "{\"concepto\":\"productos\"}", cookie);
+        Assert.Equal(System.Net.HttpStatusCode.Created, emitida.StatusCode);
+        var emisor = await Http.PostJsonAsync(
+            cliente,
+            RutaEmisor,
+            "{\"razonSocial\":\"Zq7Óptica Inventada SA\",\"domicilioComercial\":\"Calle Inventada 123\","
+            + "\"cuit\":\"20-00000000-1\",\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}",
+            cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, emisor.StatusCode);
         // Cada ruta con parámetros, con los valores con los que se la pide. Una ruta con parámetros que no esté acá
         // hace fallar la prueba: hay que agregarla, no excluirla.
         var valores = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -71,6 +90,8 @@ public sealed class SinDatosArcaTests
             [RutaArticulo] = $"{RutaArticulos}/{codigoArticulo}",
             [RutaPresupuesto] = $"{RutaPresupuestos}/{numero}",
             [RutaPdf] = $"{RutaPresupuestos}/{numero}/pdf",
+            [RutaFactura] = $"{RutaPresupuestos}/{numero}/factura",
+            [RutaPdfFactura] = $"{RutaPresupuestos}/{numero}/factura/pdf",
         };
 
         // Lo realmente registrado en la Api, no una lista escrita a mano: un GET nuevo entra solo en la revisión.
@@ -118,7 +139,8 @@ public sealed class SinDatosArcaTests
 
             if (string.Equals(tipo, "application/pdf", StringComparison.OrdinalIgnoreCase))
             {
-                // FEAT-006: el PDF del presupuesto es un documento, no JSON; se acepta su cuerpo sin revisar claves.
+                // FEAT-006 y FEAT-009: los PDF del presupuesto y de la factura son documentos, no JSON; se acepta su
+                // cuerpo sin revisar claves.
                 conPdf.Add(ruta);
                 continue;
             }
@@ -149,10 +171,13 @@ public sealed class SinDatosArcaTests
         Assert.Contains(RutaPresupuesto, conJson);
         // La configuración, con la excepción del punto de venta (D-08 de FEAT-007).
         Assert.Contains(RutaConfiguracion, conJson);
-        // FEAT-009: los datos del emisor, sin cargar, responden 200 con los cinco en null (D-22) y se revisan igual.
+        // FEAT-009: los datos del emisor, cargados, responden 200 y se revisan.
         Assert.Contains(RutaEmisor, conJson);
-        // El PDF del presupuesto en Final (FEAT-006) se pidió y respondió application/pdf.
-        Assert.Equal([RutaPdf], conPdf);
+        // FEAT-009: el detalle de la factura, con el comprobante como texto y sin clave de punto de venta (D-15).
+        Assert.Contains(RutaFactura, conJson);
+        // El PDF del presupuesto en Final (FEAT-006) y el de su factura (FEAT-009) se pidieron y respondieron
+        // application/pdf.
+        Assert.Equal([RutaPdfFactura, RutaPdf], conPdf);
         Assert.Contains("/api/sesion", sinCuerpo);
     }
 
@@ -236,6 +261,7 @@ public sealed class SinDatosArcaTests
     private const string RutaPresupuestos = "/api/presupuestos";
     private const string RutaPresupuesto = "/api/presupuestos/{numero:long}";
     private const string RutaPdf = "/api/presupuestos/{numero:long}/pdf";
+    private const string RutaPdfFactura = "/api/presupuestos/{numero:long}/factura/pdf";
     private const string RutaConfiguracion = "/api/configuracion";
     private const string RutaEmisor = "/api/configuracion/emisor";
 

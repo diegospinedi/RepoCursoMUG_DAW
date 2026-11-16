@@ -439,6 +439,51 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-009, Block 5: el detalle y el PDF de la factura llevan el DNI, el Apellido y el Nombre del cliente; responden
+    /// con <c>no-store</c> en el 200 del detalle y del PDF, el 409 <c>sin_datos_emisor</c>, el 404 y el 401 sin sesión.
+    /// Datos ficticios.
+    /// </summary>
+    [Fact]
+    public async Task RutasFactura_NoStore()
+    {
+        using var fabrica = new FabricaApi();
+        var escenario = await Facturacion.EscenarioFacturacion.CrearAsync(fabrica);
+        var numero = await escenario.FinalAsync(1000m);
+        Assert.Equal(HttpStatusCode.Created, (await escenario.EmitirAsync(numero)).StatusCode);
+        var detalle = $"{RutaPresupuestos}/{numero}/factura";
+        var pdf = $"{RutaPresupuestos}/{numero}/factura/pdf";
+
+        var sinSesion = await Http.GetAsync(escenario.Cliente, detalle);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del detalle de la factura");
+
+        var pdfSinSesion = await Http.GetAsync(escenario.Cliente, pdf);
+        Assert.Equal(HttpStatusCode.Unauthorized, pdfSinSesion.StatusCode);
+        AfirmarNoStore(pdfSinSesion, "401 del PDF de la factura");
+
+        var leido = await Http.GetAsync(escenario.Cliente, detalle, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.OK, leido.StatusCode);
+        AfirmarNoStore(leido, "200 del detalle de la factura");
+
+        var sinEmisor = await Http.GetAsync(escenario.Cliente, pdf, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.Conflict, sinEmisor.StatusCode);
+        AfirmarNoStore(sinEmisor, "409 del PDF de la factura");
+
+        await escenario.CargarEmisorAsync();
+        var descargado = await Http.GetAsync(escenario.Cliente, pdf, escenario.Cookie);
+        Assert.Equal(HttpStatusCode.OK, descargado.StatusCode);
+        Assert.Equal("application/pdf", descargado.Content.Headers.ContentType?.MediaType);
+        AfirmarNoStore(descargado, "200 del PDF de la factura");
+
+        foreach (var inexistente in new[] { $"{RutaPresupuestos}/999/factura", $"{RutaPresupuestos}/999/factura/pdf" })
+        {
+            var respuesta = await Http.GetAsync(escenario.Cliente, inexistente, escenario.Cookie);
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+            AfirmarNoStore(respuesta, $"404 de {inexistente}");
+        }
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

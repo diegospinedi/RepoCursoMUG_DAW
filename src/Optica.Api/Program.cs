@@ -187,6 +187,12 @@ public partial class Program
         builder.Services.AddScoped<DescartarEmision>();
         builder.Services.AddScoped<ListarEmisionesPendientes>();
 
+        // FEAT-009 (Block 5): el detalle y el PDF de la factura de un presupuesto, dos lecturas sin transacción de
+        // escritura. El PDF usa los datos del emisor vigentes (ADR-028) y el generador que registra Infrastructure
+        // (QuestPDF y QRCoder, ADR-027).
+        builder.Services.AddScoped<ObtenerFactura>();
+        builder.Services.AddScoped<GenerarPdfFactura>();
+
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de
         // Windows solo se usa en pruebas, con el directorio de datos temporal.
