@@ -1,3 +1,4 @@
+using Optica.Application.Facturacion;
 using Optica.Domain.Configuracion;
 using Optica.Domain.Facturacion;
 using Optica.Infrastructure.Arca;
@@ -51,5 +52,24 @@ public sealed class CodigosWsfeTests
     {
         Assert.Throws<ArgumentException>(
             () => CodigosWsfe.Alicuota(decimal.Parse(alicuota, System.Globalization.CultureInfo.InvariantCulture)));
+    }
+
+    /// <summary>
+    /// D-24 (ADR-027): <see cref="QrArca"/> repite en Application los códigos de ARCA del comprobante impreso; tienen que
+    /// ser los mismos que los de WSFEv1, así el QR describe el comprobante que se autorizó.
+    /// </summary>
+    [Fact]
+    public void QrArca_CodigosCoincidenConCodigosWsfe()
+    {
+        foreach (var tipo in Enum.GetValues<TipoComprobante>())
+        {
+            Assert.Equal(CodigosWsfe.Tipo(tipo), QrArca.CodigoTipo(tipo));
+        }
+
+        Assert.Equal(CodigosWsfe.DocTipoDni, QrArca.DocTipoDni);
+        Assert.Equal(CodigosWsfe.DocTipoSinIdentificar, QrArca.DocTipoSinIdentificar);
+        Assert.Equal(CodigosWsfe.DocNroSinIdentificar, QrArca.DocNroSinIdentificar);
+        Assert.Equal(CodigosWsfe.MonedaPesos, QrArca.MonedaPesos);
+        Assert.Equal(CodigosWsfe.CotizacionPesos, QrArca.CotizacionPesos);
     }
 }

@@ -1053,6 +1053,46 @@ public sealed class ProteccionTests
         Assert.Empty(usos);
     }
 
+    /// <summary>
+    /// ADR-027: la biblioteca de QR (QRCoder) es un detalle de Infrastructure, como QuestPDF. La Api no compila contra
+    /// ella ni la declara en su proyecto: el QR le llega dibujado dentro del PDF por <c>IGeneradorPdfFactura</c>. Ningún
+    /// tipo de la Api usa un tipo de QRCoder en su firma.
+    /// </summary>
+    [Fact]
+    public void Api_NoReferenciaQrCoder()
+    {
+        var api = typeof(Program).Assembly;
+
+        var referencias = api.GetReferencedAssemblies().Select(r => r.Name).ToList();
+        Assert.DoesNotContain(referencias, r => r!.StartsWith("QRCoder", StringComparison.OrdinalIgnoreCase));
+
+        // Control: la enumeración ve las referencias reales de la Api.
+        Assert.Contains("Optica.Application", referencias);
+
+        var proyecto = File.ReadAllText(Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "Optica.Api.csproj"));
+        Assert.DoesNotContain("QRCoder", proyecto, StringComparison.OrdinalIgnoreCase);
+
+        // Control: QRCoder sí es una dependencia de Infrastructure, que es quien dibuja el QR; si no lo fuera, su
+        // ausencia en la Api no probaría nada.
+        var infraestructura = typeof(Optica.Infrastructure.ConfiguracionInfraestructura).Assembly;
+        Assert.Contains(
+            infraestructura.GetReferencedAssemblies(),
+            r => string.Equals(r.Name, "QRCoder", StringComparison.OrdinalIgnoreCase));
+
+        var usos = api.GetTypes()
+            .SelectMany(t => t.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.DeclaredOnly)
+                .SelectMany(m => m.GetParameters().Select(p => p.ParameterType).Append(m.ReturnType))
+                .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
+                .Select(usado => (Tipo: t, Usado: usado)))
+            .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith("QRCoder", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
+            .ToList();
+        Assert.Empty(usos);
+    }
+
     [Fact]
     public async Task DataProtection_ClavesEnElDirectorioDeDatos()
     {

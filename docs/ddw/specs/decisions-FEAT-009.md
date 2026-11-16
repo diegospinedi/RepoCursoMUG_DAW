@@ -112,3 +112,15 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   de fechas de presupuestos y facturas de `cliente.ts` (FEAT-003 a FEAT-008), que antes leían los años 0 a 99 como 19xx.
   La Api nunca envía esas fechas; ninguna prueba cambió de resultado. — agente (D-06), revisado por el auditor —
   2026-11-16 — Block 3.
+- **D-38 (del agente, Block 4).** Con un logo que no se puede decodificar, el PDF de la factura sale sin logo (lo que
+  pide el Error handling del Block 4 y su prueba requerida). La spec decía "como en `GeneradorPdfPresupuesto`", pero ese
+  generador relanza la falla: los dos quedan con criterios distintos y alinearlos va en otro ticket (sería un refactor
+  ajeno a este). — agente (D-06), señalado por el verificador y el auditor — 2026-11-16 — Block 4.
+- **D-39 (del agente, Block 4).** QR de ARCA: base64 estándar sin codificar para URL en `?p=`, como la especificación
+  y el ejemplo oficial de ARCA (con este JSON solo puede aparecer `=`); `cuit`, `nroDocRec` y `codAut` como números e
+  `importe` decimal con 2 decimales; corrección M. El escaneo con teléfono sigue manual (D-16). — agente (D-06) —
+  2026-11-16 — Block 4.
+- **D-40 (del agente, Block 4).** Rótulos del PDF elegidos por el implementador ("Razón social:", "Punto de venta:
+  0003", "Número: 00000125", "Fecha de emisión:", "CAE:", "Vencimiento del CAE:", "IVA contenido: $ 315,00"), CUIT del
+  emisor mostrado con guiones, título del documento solo con el comprobante y sin autor ni asunto; la falla interna se
+  prueba con una URL demasiado larga para QRCoder. — agente (D-06) — 2026-11-16 — Block 4.
