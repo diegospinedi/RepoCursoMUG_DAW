@@ -258,11 +258,14 @@ const PANTALLAS: Pantalla[] = [
           ingresosBrutos: null,
           inicioActividades: null,
         }),
+        // FEAT-010: la ubicación del backup nunca elegida.
+        'GET /api/configuracion/backup': json(200, { ruta: null }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
     interactuar: async () => {
       await screen.findByRole('button', { name: 'Grabar datos del emisor' });
+      await screen.findByRole('button', { name: 'Grabar ubicación del backup' });
     },
   },
   {
@@ -287,11 +290,14 @@ const PANTALLAS: Pantalla[] = [
           ingresosBrutos: '901-000000-1',
           inicioActividades: '2020-03-01',
         }),
+        // FEAT-010: la ubicación del backup elegida, con una ruta ficticia.
+        'GET /api/configuracion/backup': json(200, { ruta: 'E:\\Backups\\Optica' }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
     interactuar: async () => {
       await screen.findByRole('button', { name: 'Grabar datos del emisor' });
+      await screen.findByRole('button', { name: 'Grabar ubicación del backup' });
       // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía.
       await screen.findByLabelText('Alícuota de IVA (%)');
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));

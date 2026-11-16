@@ -96,3 +96,9 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   se descarta. Limitaciones documentadas: unidades `subst`, uniones, enlaces simbólicos y nombres cortos 8.3. Las
   reglas de Windows se prueban como funciones puras desde Linux; su comportamiento en Windows queda para la verificación
   manual. — agente (D-05), señalado por el verificador y el auditor — 2026-11-16 — Block 2.
+- **D-32 (del agente, Block 3).** `SeccionBackup.tsx` repite la estructura de `SeccionDatosEmisor.tsx` (consulta con
+  guarda, resultado de grabar, mensaje general): se acepta en este ticket y queda como deuda junto con D-43 de FEAT-009
+  (extraer un hook de sección de configuración en un ticket aparte). La regla espejo de la ruta vive en
+  `configuracion/reglas.ts`; el POST tiene guarda de desmontaje; el mensaje de éxito se borra al editar. AC-17 en la web
+  es equivalente a AC-01 (la nube la decide el servidor) y se cuenta en .NET (Block 2). — agente (D-05) — 2026-11-16 —
+  Block 3.

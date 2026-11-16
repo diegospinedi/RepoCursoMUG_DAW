@@ -13,6 +13,7 @@
 
 import {
   IMPORTE_MAXIMO_SEGURO,
+  LARGO_MAXIMO_RUTA_BACKUP,
   mostrarImporte,
   PUNTO_VENTA_MAXIMO,
   PUNTO_VENTA_MINIMO,
@@ -690,6 +691,55 @@ export const grabarDatosEmisor = (datos: DatosEmisor): Promise<ResultadoGrabacio
   grabarConCampos(
     { metodo: 'POST', ruta: '/api/configuracion/emisor', cuerpo: datos, mensaje413: MENSAJE_EMISOR_GRANDE },
     leerDatosEmisorCargados,
+  );
+
+// ---- Ubicación del backup (FEAT-010): GET y POST /api/configuracion/backup ----
+
+/** El único campo del cuerpo de la ubicación del backup. */
+export const CAMPO_RUTA_BACKUP = 'ruta';
+
+/** Mensaje general de un 413 al grabar la ubicación: el navegador limita la ruta y nunca envía un cuerpo así. */
+export const MENSAJE_BACKUP_GRANDE = 'La ruta enviada es demasiado larga. Revisala y grabá de nuevo.';
+
+/** El resultado de grabar la ubicación del backup: un 400 trae el error del campo `ruta`. */
+export type ResultadoGrabacionBackup = Resultado<string> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+/** Una ruta grabada: un texto de 1 a {@link LARGO_MAXIMO_RUTA_BACKUP} caracteres. */
+const esRutaBackup = (valor: unknown): valor is string =>
+  typeof valor === 'string' && valor.length > 0 && valor.length <= LARGO_MAXIMO_RUTA_BACKUP;
+
+/** La ubicación grabada (respuesta del POST): `{ ruta }` con una ruta válida; solo copia ese campo. */
+const leerUbicacionBackupGrabada: Lector<string> = (cuerpo) =>
+  esObjeto(cuerpo) && esRutaBackup(cuerpo.ruta) ? cuerpo.ruta : undefined;
+
+/**
+ * La ubicación vigente (respuesta del GET): la ruta, o `null` si nunca se eligió. `ruta` ausente o de otra forma es una
+ * respuesta ilegible.
+ */
+const leerUbicacionBackupVigente: Lector<string | null> = (cuerpo) =>
+  esObjeto(cuerpo) && cuerpo.ruta === null ? null : leerUbicacionBackupGrabada(cuerpo);
+
+/**
+ * La ubicación del backup grabada (FR-01); `null` mientras nunca se eligió. La ruta puede llevar el nombre de una
+ * persona (D-12): quien la consulta la guarda solo en el estado de su componente.
+ */
+export const consultarUbicacionBackup = (): Promise<Resultado<string | null>> =>
+  pedir({ metodo: 'GET', ruta: '/api/configuracion/backup' }, leerUbicacionBackupVigente);
+
+/**
+ * Graba la ubicación del backup (FR-01 a FR-03) y devuelve la ruta que quedó grabada (normalizada por la Api). Como
+ * {@link grabarConfiguracion}: un 400 devuelve los errores de `errors` (el de `ruta`, con el texto de la Api) y un 413
+ * es un mensaje general propio.
+ */
+export const grabarUbicacionBackup = (ruta: string): Promise<ResultadoGrabacionBackup> =>
+  grabarConCampos(
+    {
+      metodo: 'POST',
+      ruta: '/api/configuracion/backup',
+      cuerpo: { [CAMPO_RUTA_BACKUP]: ruta },
+      mensaje413: MENSAJE_BACKUP_GRANDE,
+    },
+    leerUbicacionBackupGrabada,
   );
 
 /**

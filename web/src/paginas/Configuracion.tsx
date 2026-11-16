@@ -22,6 +22,7 @@ import {
 } from '../configuracion/reglas';
 import { Campo } from '../componentes/Campo';
 import { repartirErrores } from '../componentes/repartirErrores';
+import { SeccionBackup } from './SeccionBackup';
 import { SeccionDatosEmisor } from './SeccionDatosEmisor';
 
 export const MENSAJE_FALTA_TOPE = 'Falta cargar el tope de identificación del receptor.';
@@ -326,6 +327,7 @@ export function Configuracion() {
         </form>
       )}
       <SeccionDatosEmisor />
+      <SeccionBackup />
       <p>
         <Link to="/">Volver al inicio</Link>
       </p>

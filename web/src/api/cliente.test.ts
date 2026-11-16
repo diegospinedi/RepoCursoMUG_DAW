@@ -23,6 +23,9 @@ import {
   consultarDatosEmisor,
   grabarDatosEmisor,
   MENSAJE_EMISOR_GRANDE,
+  consultarUbicacionBackup,
+  grabarUbicacionBackup,
+  MENSAJE_BACKUP_GRANDE,
   consultarEstado,
   consultarMarca,
   consultarSesion,
@@ -611,6 +614,119 @@ describe('cliente de la Api: datos del emisor', () => {
 
     expect(await grabarDatosEmisor(CARGADOS)).toEqual(ILEGIBLE);
     expect(await grabarDatosEmisor(CARGADOS)).toEqual(ILEGIBLE);
+  });
+});
+
+describe('cliente de la Api: ubicación del backup', () => {
+  const RUTA = '/api/configuracion/backup';
+  /** Una ruta ficticia, sin nombres de personas. */
+  const CARPETA = 'E:\\Backups\\Optica';
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+
+  it('consultarUbicacionBackup_200ConRuta_LaDevuelve', async () => {
+    const servidor = servidorFalso({ [`GET ${RUTA}`]: json(200, { ruta: CARPETA, otro: 'se descarta' }) });
+
+    expect(await consultarUbicacionBackup()).toEqual({ tipo: 'ok', datos: CARPETA });
+    const [pedido] = servidor.pedidosA('GET', RUTA);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it('consultarUbicacionBackup_200ConNull_NuncaElegida', async () => {
+    servidorFalso({ [`GET ${RUTA}`]: json(200, { ruta: null }) });
+
+    expect(await consultarUbicacionBackup()).toEqual({ tipo: 'ok', datos: null });
+  });
+
+  it('consultarUbicacionBackup_RutaDe260_SeLee', async () => {
+    const larga = `E:\\${'a'.repeat(257)}`;
+    servidorFalso({ [`GET ${RUTA}`]: json(200, { ruta: larga }) });
+
+    expect(await consultarUbicacionBackup()).toEqual({ tipo: 'ok', datos: larga });
+  });
+
+  it.each([
+    ['cuerpo que no es objeto', 'texto'],
+    ['cuerpo null', null],
+    ['ruta ausente', {}],
+    ['ruta numérica', { ruta: 5 }],
+    ['ruta vacía', { ruta: '' }],
+    ['ruta de 261 caracteres', { ruta: `E:\\${'a'.repeat(258)}` }],
+  ])('consultarUbicacionBackup_%s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ [`GET ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await consultarUbicacionBackup()).toEqual(ILEGIBLE);
+  });
+
+  it('consultarUbicacionBackup_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`GET ${RUTA}`]: vacia(401) });
+
+    expect(await consultarUbicacionBackup()).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('consultarUbicacionBackup_500_MensajeGeneral', async () => {
+    servidorFalso({ [`GET ${RUTA}`]: vacia(500) });
+
+    expect(await consultarUbicacionBackup()).toEqual(ILEGIBLE);
+  });
+
+  it('grabarUbicacionBackup_200_EnviaLaRutaYDevuelveLaGrabada', async () => {
+    const servidor = servidorFalso({ [`POST ${RUTA}`]: json(200, { ruta: CARPETA }) });
+
+    expect(await grabarUbicacionBackup(`${CARPETA}\\`)).toEqual({ tipo: 'ok', datos: CARPETA });
+    const [pedido] = servidor.pedidosA('POST', RUTA);
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual({ ruta: `${CARPETA}\\` });
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it.each([
+    ['con ruta null', { ruta: null }],
+    ['con ruta vacía', { ruta: '' }],
+    ['otra cosa', { otro: 1 }],
+  ])('grabarUbicacionBackup_200 %s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ [`POST ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual(ILEGIBLE);
+  });
+
+  it('grabarUbicacionBackup_400_DevuelveElErrorDelCampo', async () => {
+    servidorFalso({
+      [`POST ${RUTA}`]: json(400, {
+        status: 400,
+        errors: { ruta: ['No se puede escribir en la carpeta elegida. Revisá sus permisos o elegí otra.'] },
+      }),
+    });
+
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual({
+      tipo: 'campos',
+      errores: [{ campo: 'ruta', mensaje: 'No se puede escribir en la carpeta elegida. Revisá sus permisos o elegí otra.' }],
+    });
+  });
+
+  it('grabarUbicacionBackup_413_MensajeGeneralPropio', async () => {
+    servidorFalso({ [`POST ${RUTA}`]: vacia(413) });
+
+    expect(MENSAJE_BACKUP_GRANDE).toBe('La ruta enviada es demasiado larga. Revisala y grabá de nuevo.');
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual({ tipo: 'general', mensaje: MENSAJE_BACKUP_GRANDE });
+  });
+
+  it('grabarUbicacionBackup_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`POST ${RUTA}`]: vacia(401) });
+
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('grabarUbicacionBackup_500YSinRed_MensajeGeneral', async () => {
+    servidorFalso({ [`POST ${RUTA}`]: [vacia(500), sinRed] });
+
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual(ILEGIBLE);
+    expect(await grabarUbicacionBackup(CARPETA)).toEqual(ILEGIBLE);
   });
 });
 

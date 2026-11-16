@@ -99,6 +99,8 @@ describe('Inicio', () => {
         ingresosBrutos: null,
         inicioActividades: null,
       }),
+      // FEAT-010: la sección del backup, con la ubicación nunca elegida.
+      'GET /api/configuracion/backup': json(200, { ruta: null }),
     });
     renderizarApp('/');
     const enlace = await screen.findByRole('link', { name: 'Configuración' });

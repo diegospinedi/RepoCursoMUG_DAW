@@ -29,6 +29,12 @@ export const IMPORTE_MAXIMO_SEGURO_CENTESIMOS = BigInt(Number.MAX_SAFE_INTEGER);
 export const PUNTO_VENTA_MINIMO = 1;
 export const PUNTO_VENTA_MAXIMO = 99999;
 
+/**
+ * El largo máximo de la ruta de la carpeta del backup, recortada (`UbicacionBackup.LargoMaximoRuta`, FEAT-010). Vive acá
+ * por la misma razón que el punto de venta; `configuracion/reglas.ts` lo vuelve a exportar junto a su regla.
+ */
+export const LARGO_MAXIMO_RUTA_BACKUP = 260;
+
 /** El resultado de leer un texto: un número con sus decimales significativos, sin valor (vacío) o inválido. */
 export type LecturaDecimal = { tipo: 'numero'; valor: number; decimales: number } | { tipo: 'vacio' } | { tipo: 'invalido' };
 

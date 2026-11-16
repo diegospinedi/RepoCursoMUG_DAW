@@ -63,10 +63,14 @@ const EMISOR_SIN_CARGAR = {
 /**
  * El servidor falso de esta pantalla: la sección de los datos del emisor (FEAT-009) consulta su ruta al abrir, y el
  * servidor falso responde 404 a lo que no está en su tabla. Por defecto, los datos sin cargar; una prueba puede
- * reemplazar la respuesta.
+ * reemplazar la respuesta. Desde FEAT-010 también la sección del backup, con la ubicación nunca elegida.
  */
 const servidorConEmisor = (rutas: Parameters<typeof servidorFalso>[0]) =>
-  servidorFalso({ 'GET /api/configuracion/emisor': json(200, EMISOR_SIN_CARGAR), ...rutas });
+  servidorFalso({
+    'GET /api/configuracion/emisor': json(200, EMISOR_SIN_CARGAR),
+    'GET /api/configuracion/backup': json(200, { ruta: null }),
+    ...rutas,
+  });
 
 /** Abre la pantalla y espera el formulario con los valores consultados. */
 async function abrir() {

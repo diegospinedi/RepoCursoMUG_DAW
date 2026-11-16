@@ -30,6 +30,10 @@ import {
   MENSAJE_RAZON_SOCIAL_LARGA,
   validarDatosEmisor,
   type TextosDatosEmisor,
+  LARGO_MAXIMO_RUTA_BACKUP,
+  MENSAJE_RUTA_BACKUP_FALTANTE,
+  MENSAJE_RUTA_BACKUP_LARGA,
+  validarRutaBackup,
 } from './reglas';
 
 const INICIALES: TextosConfiguracion = {
@@ -373,5 +377,36 @@ describe('reglas de los datos del emisor', () => {
   it('hoyLocal_FormatoDeFecha', () => {
     expect(hoyLocal(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05');
     expect(hoyLocal(new Date(2026, 10, 16, 0, 0))).toBe('2026-11-16');
+  });
+});
+
+describe('reglas de la ubicación del backup', () => {
+  /** Rutas ficticias, sin nombres de personas. */
+  const PENDRIVE = 'E:\\Backups\\Optica';
+
+  it('reglasBackup_TextosYLargoComoLaApi', () => {
+    // Los mismos textos que `ValidacionUbicacionBackup` y el largo de `UbicacionBackup.LargoMaximoRuta`.
+    expect(MENSAJE_RUTA_BACKUP_FALTANTE).toBe('Ingresá la carpeta del backup.');
+    expect(MENSAJE_RUTA_BACKUP_LARGA).toBe('La ruta de la carpeta del backup puede tener hasta 260 caracteres.');
+    expect(LARGO_MAXIMO_RUTA_BACKUP).toBe(260);
+  });
+
+  it('reglasBackup_RutaValida_DevuelveLaRecortada', () => {
+    expect(validarRutaBackup(PENDRIVE)).toEqual({ tipo: 'ok', ruta: PENDRIVE });
+    expect(validarRutaBackup(`  ${PENDRIVE}\t`)).toEqual({ tipo: 'ok', ruta: PENDRIVE });
+    // El recorte del servidor (`RecorteTexto`) también quita U+0085 y la marca de orden de bytes.
+    expect(validarRutaBackup(`\uFEFF/media/pendrive/Backups\u0085`)).toEqual({ tipo: 'ok', ruta: '/media/pendrive/Backups' });
+  });
+
+  it.each(['', '   ', '\t\n', '\u0085'])('reglasBackup_Faltante_Error (%j)', (escrita) => {
+    expect(validarRutaBackup(escrita)).toEqual({ tipo: 'error', mensaje: MENSAJE_RUTA_BACKUP_FALTANTE });
+  });
+
+  it('reglasBackup_Largo_HastaElMaximoRecortado', () => {
+    const de260 = `E:\\${'a'.repeat(257)}`;
+    expect(validarRutaBackup(de260)).toEqual({ tipo: 'ok', ruta: de260 });
+    // Los espacios de los extremos no cuentan: se recortan antes de medir.
+    expect(validarRutaBackup(`   ${de260}   `)).toEqual({ tipo: 'ok', ruta: de260 });
+    expect(validarRutaBackup(`${de260}a`)).toEqual({ tipo: 'error', mensaje: MENSAJE_RUTA_BACKUP_LARGA });
   });
 });
