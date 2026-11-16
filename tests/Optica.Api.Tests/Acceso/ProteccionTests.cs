@@ -424,6 +424,65 @@ public sealed class ProteccionTests
         return cuerpo;
     }
 
+    // FEAT-010: la ubicación del backup.
+
+    private const string RutaBackup = "/api/configuracion/backup";
+
+    /// <summary>Una ubicación ficticia, absoluta en Windows y en Linux.</summary>
+    private static readonly string CuerpoBackup =
+        "{\"ruta\":" + System.Text.Json.JsonSerializer.Serialize(Path.Combine(Path.GetTempPath(), "Zq7Pendrive", "Backups")) + "}";
+
+    /// <summary>
+    /// Sad path (D-12): sin sesión, el GET y el POST de <c>/api/configuracion/backup</c> responden 401 sin cuerpo; el POST,
+    /// antes de leer el cuerpo y antes del 415 y del 413. Las rutas existen, no son anónimas y no se grabó nada. Con
+    /// sesión, el POST sin JSON es 415 sin cuerpo.
+    /// </summary>
+    [Fact]
+    public async Task RutasBackup_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        foreach (var metodo in new[] { HttpMethods.Get, HttpMethods.Post })
+        {
+            Assert.Contains((metodo, RutaBackup), endpoints);
+            Assert.False(RutasAnonimas.Contiene(metodo, RutaBackup), $"{metodo} {RutaBackup} no puede ser anónima.");
+        }
+
+        var pedidos = new List<(string Descripcion, HttpMethod Metodo, HttpContent? Contenido)>
+        {
+            ("GET", HttpMethod.Get, null),
+            ("POST", HttpMethod.Post, new StringContent(CuerpoBackup, Encoding.UTF8, "application/json")),
+            ("POST ilegible", HttpMethod.Post, new StringContent("esto no es json", Encoding.UTF8, "application/json")),
+            ("POST texto plano", HttpMethod.Post, new StringContent(CuerpoBackup, Encoding.UTF8, "text/plain")),
+            ("POST grande", HttpMethod.Post, new StringContent(
+                CuerpoBackup[..^1] + ",\"relleno\":\"" + new string('a', 2 * 1024) + "\"}", Encoding.UTF8, "application/json")),
+            ("POST sin cuerpo", HttpMethod.Post, null),
+        };
+        foreach (var (descripcion, metodo, contenido) in pedidos)
+        {
+            var respuesta = await Http.EnviarAsync(cliente, metodo, RutaBackup, contenido);
+
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.Unauthorized,
+                $"{descripcion} respondió {(int)respuesta.StatusCode} sin sesión; se esperaba 401.");
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        // Nada se grabó: con sesión, el GET sigue sin ubicación.
+        var leido = await Http.JsonAsync(await Http.GetAsync(cliente, RutaBackup, cookie));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("ruta").ValueKind);
+
+        // Con sesión, sin Content-Type JSON: 415 sin cuerpo.
+        var sinJson = await Http.EnviarAsync(
+            cliente, HttpMethod.Post, RutaBackup, new StringContent(CuerpoBackup, Encoding.UTF8, "text/plain"), cookie);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, sinJson.StatusCode);
+        Assert.Equal(string.Empty, await sinJson.Content.ReadAsStringAsync());
+    }
+
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";

@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Optica.Api.Acceso;
 using Optica.Api.Errores;
+using Optica.Application.Backup;
 using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
@@ -84,6 +85,20 @@ public sealed record SolicitudDatosEmisor(
 }
 
 /// <summary>
+/// Cuerpo de <c>POST /api/configuracion/backup</c> (FEAT-010): la ruta de la carpeta como texto. Un número, un arreglo o
+/// un objeto en su lugar no se convierte: el cuerpo es ilegible y el error va en <c>ruta</c>.
+/// </summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra la ruta (<c>SolicitudUbicacionBackup { }</c>): MVC registra en Trace los
+/// argumentos de la acción con su <c>ToString()</c>, y la ruta puede llevar el nombre de una persona (D-12, R-05).
+/// </remarks>
+[JsonNumberHandling(JsonNumberHandling.Strict)]
+public sealed record SolicitudUbicacionBackup(string? Ruta)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
 /// Consulta y graba los parámetros de negocio (FEAT-001c). Solo traduce HTTP: delega en
 /// <see cref="ObtenerConfiguracionNegocio"/> y <see cref="GrabarConfiguracionConRecalculo"/>, que validan y registran cada
 /// grabación. Exige sesión por la política por defecto (no está en <see cref="RutasAnonimas"/>, R-01): sin sesión, 401
@@ -91,7 +106,9 @@ public sealed record SolicitudDatosEmisor(
 /// R-05). Sin fila de configuración (D-04), la excepción termina en el 500 genérico de
 /// <see cref="ManejadorErroresNoControlados"/>. Desde FEAT-009 también consulta y graba los datos del emisor
 /// (<c>/api/configuracion/emisor</c>, ADR-028) con <see cref="ObtenerDatosEmisor"/> y <see cref="GrabarDatosEmisor"/>,
-/// con la misma sesión y los mismos controles del cuerpo.
+/// con la misma sesión y los mismos controles del cuerpo. Desde FEAT-010, la ubicación del backup
+/// (<c>/api/configuracion/backup</c>) con <see cref="ObtenerUbicacionBackup"/> y <see cref="GrabarUbicacionBackup"/>, también
+/// con sesión y con un tope de 2 KB.
 /// </summary>
 [ApiController]
 [Route("api/configuracion")]
@@ -99,8 +116,16 @@ public sealed class ConfiguracionController(
     ObtenerConfiguracionNegocio obtenerConfiguracion,
     GrabarConfiguracionConRecalculo grabarConfiguracion,
     ObtenerDatosEmisor obtenerDatosEmisor,
-    GrabarDatosEmisor grabarDatosEmisor) : ControllerBase
+    GrabarDatosEmisor grabarDatosEmisor,
+    ObtenerUbicacionBackup obtenerUbicacionBackup,
+    GrabarUbicacionBackup grabarUbicacionBackup) : ControllerBase
 {
+    /// <summary>Tamaño máximo del cuerpo del POST de la ubicación del backup; más grande, 413.</summary>
+    public const long CuerpoMaximoBackup = 2 * 1024;
+
+    /// <summary>El único campo del cuerpo de la ubicación del backup.</summary>
+    private static readonly IReadOnlyList<string> CamposBackup = [ValidacionUbicacionBackup.CampoRuta];
+
     /// <summary>Tamaño máximo del cuerpo del POST; más grande, 413.</summary>
     public const long CuerpoMaximo = 1024;
 
@@ -211,6 +236,45 @@ public sealed class ConfiguracionController(
         }
 
         throw new InvalidOperationException("Resultado de grabar los datos del emisor no previsto.");
+    }
+
+    /// <summary>
+    /// La ubicación del backup vigente: 200 con <c>{ ruta }</c>, null mientras nunca se eligió. Una fila corrupta termina
+    /// en el 500 genérico de <see cref="ManejadorErroresNoControlados"/>.
+    /// </summary>
+    [HttpGet("backup")]
+    public async Task<ActionResult<UbicacionBackupVigente>> ObtenerBackup(CancellationToken cancelacion) =>
+        await obtenerUbicacionBackup.EjecutarAsync(cancelacion);
+
+    /// <summary>
+    /// Graba la ubicación del backup y responde 200 con <c>{ ruta }</c> grabada (FR-01). Un cuerpo ilegible responde 400
+    /// en <c>ruta</c> con una acción fija; una ruta que no sirve (relativa, UNC o de red, inexistente, sin escritura, en la
+    /// misma unidad fuera de una nube conocida, la carpeta de datos o dentro de ella), 400 en <c>ruta</c> sin repetirla.
+    /// Un cuerpo vacío llega como solicitud null: 400 por ruta faltante.
+    /// </summary>
+    [HttpPost("backup")]
+    [RequestSizeLimit(CuerpoMaximoBackup)]
+    public async Task<IActionResult> GrabarBackup(
+        [FromBody] SolicitudUbicacionBackup? solicitud, CancellationToken cancelacion)
+    {
+        if (!ModelState.IsValid)
+        {
+            return this.CuerpoIlegible(
+                RespuestasValidacion.AccionCuerpoIlegibleBackup, ValidacionUbicacionBackup.CampoRuta, CamposBackup);
+        }
+
+        var resultado = await grabarUbicacionBackup.EjecutarAsync(solicitud?.Ruta, cancelacion);
+        if (resultado.EsGrabado)
+        {
+            return Ok(resultado.Ubicacion);
+        }
+
+        if (resultado.Errores.Count > 0)
+        {
+            return this.Invalido([.. resultado.Errores]);
+        }
+
+        throw new InvalidOperationException("Resultado de grabar la ubicación del backup no previsto.");
     }
 
     /// <summary>

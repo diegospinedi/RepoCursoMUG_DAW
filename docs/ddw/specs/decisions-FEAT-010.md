@@ -89,3 +89,10 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   momentoUtc)` y no `AgregarAsync` como dice la spec, y `HacerBackup` (Block 4) confirma después del renombre verificado; `HuboCopiaProgramadaAsync` cuenta solo
   las filas de ese día local desde las 20:00. Rutas de prueba sobre la carpeta temporal porque `C:\…` no es absoluta en
   Linux. — agente (D-05) — 2026-11-16 — Block 1.
+- **D-31 (del agente, Block 2).** `IInspectorUbicaciones` suma `EsLocal` (rechazo de UNC, red y dispositivo con su
+  propio mensaje, D-17), `Superpuestas` (carpeta de datos, sin lógica de rutas en Application) y `Normalizar` (se graba
+  la ruta normalizada); los métodos que no pueden evaluar responden el valor que rechaza. Google Drive espejo se acepta
+  solo con el indicio de instalación `%LOCALAPPDATA%\Google\DriveFS`, y una carpeta de nube que es la raíz de una unidad
+  se descarta. Limitaciones documentadas: unidades `subst`, uniones, enlaces simbólicos y nombres cortos 8.3. Las
+  reglas de Windows se prueban como funciones puras desde Linux; su comportamiento en Windows queda para la verificación
+  manual. — agente (D-05), señalado por el verificador y el auditor — 2026-11-16 — Block 2.

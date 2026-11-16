@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Optica.Application.Acceso;
+using Optica.Application.Backup;
 using Optica.Application.Comun;
 using Optica.Application.Facturacion;
 using Optica.Application.Marca;
@@ -17,6 +18,7 @@ using Optica.Domain.Configuracion;
 using Optica.Domain.Facturacion;
 using Optica.Domain.Presupuestos;
 using Optica.Infrastructure.Arca;
+using Optica.Infrastructure.Backup;
 using Optica.Infrastructure.Facturacion;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Pdf;
@@ -77,6 +79,13 @@ public static class ConfiguracionInfraestructura
         // historial toma la zona local del TimeProvider registrado (D-08, ADR-029).
         servicios.AddScoped<IUbicacionBackupRepository, UbicacionBackupRepository>();
         servicios.AddScoped<IHistorialBackupRepository, HistorialBackupRepository>();
+
+        // Ubicación del backup (FEAT-010, Block 2): las carpetas de nube de la cuenta que corre la Api, con las variables
+        // del proceso (D-18), y el inspector del sistema de archivos (D-07, D-17). Singletons sin estado: leen el disco y
+        // las variables en cada llamada.
+        servicios.AddSingleton<IFuenteCarpetasNube>(_ => new FuenteCarpetasNube());
+        servicios.AddSingleton<IInspectorUbicaciones>(proveedor =>
+            new InspectorUbicaciones(proveedor.GetRequiredService<IFuenteCarpetasNube>()));
 
         // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
         // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.

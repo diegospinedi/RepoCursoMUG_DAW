@@ -10,6 +10,7 @@ using Optica.Api.Controllers;
 using Optica.Api.Errores;
 using Optica.Api.Web;
 using Optica.Application.Acceso;
+using Optica.Application.Backup;
 using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Configuracion;
@@ -144,6 +145,12 @@ public partial class Program
         // R-06).
         builder.Services.AddScoped<ObtenerDatosEmisor>();
         builder.Services.AddScoped<GrabarDatosEmisor>();
+
+        // Ubicación del backup (FEAT-010), con sesión: se lee de la base en cada pedido; cada grabación comprueba la
+        // carpeta con el inspector de Infrastructure y queda en el log con la fecha UTC y sin la ruta (categoría
+        // Optica.Application.Configuracion.UbicacionBackup, D-12).
+        builder.Services.AddScoped<ObtenerUbicacionBackup>();
+        builder.Services.AddScoped<GrabarUbicacionBackup>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
