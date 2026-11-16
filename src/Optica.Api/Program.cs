@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.AspNetCore.RateLimiting;
 using Optica.Api.Acceso;
+using Optica.Api.Backup;
 using Optica.Api.Controllers;
 using Optica.Api.Errores;
 using Optica.Api.Web;
@@ -51,7 +52,7 @@ if (Program.EsComandoRestablecer(args))
 }
 
 var builder = WebApplication.CreateBuilder(args);
-Program.ConfigurarServicios(builder);
+Program.ConfigurarServidor(builder);
 var app = builder.Build();
 
 // Toma el candado de instancia única del directorio de datos (si otra instancia lo tiene, la Api no arranca) y aplica
@@ -106,6 +107,19 @@ public partial class Program
     /// </summary>
     public static WebApplicationOptions OpcionesDelComando() => new() { ContentRootPath = AppContext.BaseDirectory };
 
+    /// <summary>
+    /// La composición de la rama del servidor: <see cref="ConfigurarServicios"/> más lo que solo corre con la Api en marcha,
+    /// el programador del backup (FEAT-010, Block 5, ADR-030). Los comandos de consola no lo arrancan.
+    /// </summary>
+    public static void ConfigurarServidor(WebApplicationBuilder builder)
+    {
+        ConfigurarServicios(builder);
+
+        // Backup al arrancar si falta el de ayer y todos los días desde las 20:00 (FR-04, FR-08): despierta cada 5 minutos
+        // con el TimeProvider, compara con el historial (D-24) y pide HacerBackup en un alcance propio por ejecución.
+        builder.Services.AddHostedService<ProgramadorBackup>();
+    }
+
     /// <summary>Registra todos los servicios de la aplicación; la misma composición para la Api y para el comando.</summary>
     public static void ConfigurarServicios(WebApplicationBuilder builder)
     {
@@ -156,6 +170,9 @@ public partial class Program
         // de Infrastructure (D-22). Scoped: comparte el contexto (y la unidad de trabajo) del alcance con el historial; el
         // programador del Block 5 lo pide en un alcance propio por ejecución. Log en Optica.Application.Backup, sin rutas.
         builder.Services.AddScoped<HacerBackup>();
+        // Block 5: si toca el backup programado de hoy (20:00 locales, sin la copia programada en el historial, D-24); lo
+        // consulta el programador en un alcance propio en cada despertar.
+        builder.Services.AddScoped<ConsultarBackupProgramado>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el

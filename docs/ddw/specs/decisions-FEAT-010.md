@@ -111,3 +111,16 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   durante el reemplazo en FAT/exFAT) se recupera en lugar de borrarse. La prueba de AC-06 y las de concurrencia de
   presupuestos corren sin paralelismo. La copia recuperada no se anota en el historial (no se sabe cuándo se hizo y falsearía la regla de las 20:00); con la carpeta inaccesible o una cancelación antes de copiar no se borran temporales; después del renombre la retención corre sin cancelación y el resultado es Hecho; un candidato con `-journal` caliente no pasa la verificación y se borra. — agente (D-05), señalado por el verificador y el auditor — 2026-11-16 —
   Block 4.
+- **D-34 (del agente, Block 5).** La consulta "toca el backup de las 20:00" vive en Application
+  (`ConsultarBackupProgramado`), no en el programador de la Api como dice la spec, porque la prueba de arquitectura
+  prohíbe que la Api use Domain (`CopiaBackup.HoraProgramada`, `IHistorialBackupRepository`). `Program.ConfigurarServidor`
+  registra el programador solo en la rama del servidor y sirve de costura de prueba. El intento al arrancar se reintenta
+  también si falla (no solo con el candado tomado), con espaciado: tras una falla o excepción (también de la consulta
+  del historial) espera 15, 30 y después 60 minutos, y vuelve al ritmo de 5 con un éxito o al cambiar de día; el
+  programado usa el mismo espaciado y durante la espera no consulta el historial; candado tomado y "sin ubicación"
+  no se espacian. Así una falla persistente (pendrive desconectado,
+  historial que no graba) no llena el Registro de eventos ni recopia la base cada 5 minutos, y la copia sale sin
+  esperar a las 20:00 si el problema se resuelve. "Sin ubicación" cuenta como pendiente y se consulta cada 5 minutos en
+  Debug, para que la primera copia salga apenas se elige la carpeta. ADR-030 dice que las pruebas de la Api arrancan el
+  programador con el reloj falso: vale D-25 (`FabricaApi` lo quita) y el ADR queda leído así. — agente (D-05),
+  señalado por el verificador y el auditor — 2026-11-16 — Block 5.
