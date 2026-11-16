@@ -131,7 +131,7 @@ async function configurarAlicuota21YMultiplo001(page: Page) {
   await page.getByLabel(ETIQUETA_MULTIPLO, { exact: true }).fill('0,01');
   const [respuesta] = await Promise.all([
     page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/configuracion'),
-    page.getByRole('button', { name: 'Grabar' }).click(),
+    page.getByRole('button', { name: 'Grabar', exact: true }).click(),
   ]);
   expect(respuesta.status()).toBe(200);
   await expect(page.getByRole('status').filter({ hasText: MENSAJE_CONFIGURACION_GRABADA })).toBeVisible();

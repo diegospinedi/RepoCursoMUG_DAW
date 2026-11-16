@@ -613,7 +613,7 @@ test('AC-09 y AC-10: las líneas conservan precio tras recalcular y desactivar',
   await campo(page, 'Múltiplo de redondeo comercial ($)').fill('50');
   const [configuracion] = await Promise.all([
     page.waitForResponse((r) => r.request().method() === 'POST' && ruta(r.url()) === '/api/configuracion'),
-    page.getByRole('button', { name: 'Grabar' }).click(),
+    page.getByRole('button', { name: 'Grabar', exact: true }).click(),
   ]);
   expect(configuracion.status()).toBe(200);
   const recalculado = await page.request.get(`/api/articulos/${articulo.codigo}`);

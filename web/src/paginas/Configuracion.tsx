@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
   CAMPO_ALICUOTA,
@@ -20,6 +20,9 @@ import {
   type ErroresConfiguracion,
   type TextosConfiguracion,
 } from '../configuracion/reglas';
+import { Campo } from '../componentes/Campo';
+import { repartirErrores } from '../componentes/repartirErrores';
+import { SeccionDatosEmisor } from './SeccionDatosEmisor';
 
 export const MENSAJE_FALTA_TOPE = 'Falta cargar el tope de identificación del receptor.';
 /** D-06 de FEAT-007: la alícuota guardada antes de FR-26 no es una de la lista. */
@@ -83,30 +86,6 @@ function textosDe(configuracion: ConfiguracionNegocio): TextosConfiguracion {
     topeIdentificacion: mostrarDecimal(configuracion.topeIdentificacion),
     puntoVenta: configuracion.puntoVenta === null ? '' : String(configuracion.puntoVenta),
   };
-}
-
-interface PropsCampo {
-  etiqueta: string;
-  error: string | undefined;
-  /** El control, con el id y los atributos de accesibilidad que recibe. */
-  children: (atributos: { id: string; 'aria-invalid': boolean; 'aria-describedby': string | undefined }) => ReactNode;
-}
-
-/** Un campo con su etiqueta y su mensaje de error al lado, vinculado por `aria-describedby`. */
-function Campo({ etiqueta, error, children }: PropsCampo) {
-  const id = useId();
-  const idError = `${id}-error`;
-  return (
-    <div className="campo">
-      <label htmlFor={id}>{etiqueta}</label>
-      {children({ id, 'aria-invalid': error !== undefined, 'aria-describedby': error !== undefined ? idError : undefined })}
-      {error !== undefined && (
-        <p id={idError} className="campo__error" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
-  );
 }
 
 interface PropsNumero {
@@ -223,18 +202,13 @@ export function Configuracion() {
         break;
       case 'campos':
       case 'campo': {
-        const recibidos = resultado.tipo === 'campos' ? resultado.errores : [resultado];
-        const delFormulario: ErroresConfiguracion = {};
-        const otros: string[] = [];
-        for (const { campo, mensaje } of recibidos) {
-          if (esCampo(campo)) {
-            delFormulario[campo] = MENSAJES_FIJOS[campo] ?? mensaje;
-          } else {
-            otros.push(mensaje);
-          }
-        }
-        setErrores(delFormulario);
-        setGeneral(otros.length > 0 ? otros.join(' ') : null);
+        const repartidos = repartirErrores(
+          resultado.tipo === 'campos' ? resultado.errores : [resultado],
+          esCampo,
+          (campo, mensaje) => MENSAJES_FIJOS[campo] ?? mensaje,
+        );
+        setErrores(repartidos.campos);
+        setGeneral(repartidos.general);
         break;
       }
       case 'conflicto':
@@ -351,6 +325,7 @@ export function Configuracion() {
           </button>
         </form>
       )}
+      <SeccionDatosEmisor />
       <p>
         <Link to="/">Volver al inicio</Link>
       </p>

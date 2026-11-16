@@ -91,6 +91,14 @@ describe('Inicio', () => {
         puntoVenta: null,
         alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
       }),
+      // FEAT-009: la sección de los datos del emisor, sin cargar (D-22).
+      'GET /api/configuracion/emisor': json(200, {
+        razonSocial: null,
+        domicilioComercial: null,
+        cuit: null,
+        ingresosBrutos: null,
+        inicioActividades: null,
+      }),
     });
     renderizarApp('/');
     const enlace = await screen.findByRole('link', { name: 'Configuración' });

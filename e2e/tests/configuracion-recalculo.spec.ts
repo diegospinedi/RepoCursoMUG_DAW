@@ -198,7 +198,7 @@ async function abrirConfiguracion(page: Page) {
 async function grabarConfiguracion(page: Page) {
   const [respuesta] = await Promise.all([
     page.waitForResponse((r) => r.request().method() === 'POST' && esConfiguracion(r.url())),
-    page.getByRole('button', { name: 'Grabar' }).click(),
+    page.getByRole('button', { name: 'Grabar', exact: true }).click(),
   ]);
   return { estado: respuesta.status(), texto: await respuesta.text() };
 }

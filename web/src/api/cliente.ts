@@ -18,6 +18,7 @@ import {
   PUNTO_VENTA_MINIMO,
   sumarCentesimos,
 } from '../configuracion/numeros';
+import { esFecha } from './fechas';
 
 export const MENSAJE_SIN_CONEXION = 'No se pudo conectar con el sistema. Reintentá.';
 export const MENSAJE_OCUPADO = 'El sistema está ocupado. Intentá de nuevo en un momento.';
@@ -608,6 +609,86 @@ export const grabarConfiguracion = (datos: DatosConfiguracion): Promise<Resultad
     leerConfiguracionGrabada,
   );
 
+// ---- Datos del emisor (FEAT-009, ADR-028): GET y POST /api/configuracion/emisor ----
+
+export const CAMPO_RAZON_SOCIAL = 'razonSocial';
+export const CAMPO_DOMICILIO_COMERCIAL = 'domicilioComercial';
+export const CAMPO_CUIT = 'cuit';
+export const CAMPO_INGRESOS_BRUTOS = 'ingresosBrutos';
+export const CAMPO_INICIO_ACTIVIDADES = 'inicioActividades';
+
+/** Mensaje general de un 413 al grabar los datos del emisor: el navegador nunca envía un cuerpo de ese tamaño. */
+export const MENSAJE_EMISOR_GRANDE = 'Los datos del emisor enviados son demasiado largos. Revisalos y grabá de nuevo.';
+
+/**
+ * Los cinco datos del emisor, como los graba y los devuelve la Api: el CUIT con 11 dígitos, sin guiones, y la fecha de
+ * inicio de actividades como `yyyy-MM-dd`.
+ */
+export interface DatosEmisor {
+  razonSocial: string;
+  domicilioComercial: string;
+  cuit: string;
+  ingresosBrutos: string;
+  inicioActividades: string;
+}
+
+/** El resultado de grabar los datos del emisor: un 400 trae todos los campos inválidos juntos. */
+export type ResultadoGrabacionEmisor = Resultado<DatosEmisor> | { tipo: 'campos'; errores: ErrorDeCampo[] };
+
+/** El CUIT en forma canónica: 11 dígitos ASCII, sin guiones (sin el dígito verificador, que valida `reglas.ts`). */
+export const CUIT_CANONICO = /^\d{11}$/;
+
+/** Los cinco datos cargados: textos, el CUIT en forma canónica y la fecha existente. Solo copia los cinco campos. */
+const leerDatosEmisorCargados: Lector<DatosEmisor> = (cuerpo) =>
+  esObjeto(cuerpo) &&
+  typeof cuerpo.razonSocial === 'string' &&
+  typeof cuerpo.domicilioComercial === 'string' &&
+  typeof cuerpo.cuit === 'string' &&
+  CUIT_CANONICO.test(cuerpo.cuit) &&
+  typeof cuerpo.ingresosBrutos === 'string' &&
+  esFecha(cuerpo.inicioActividades)
+    ? {
+        razonSocial: cuerpo.razonSocial,
+        domicilioComercial: cuerpo.domicilioComercial,
+        cuit: cuerpo.cuit,
+        ingresosBrutos: cuerpo.ingresosBrutos,
+        inicioActividades: cuerpo.inicioActividades,
+      }
+    : undefined;
+
+/** Los cinco campos de los datos del emisor, en el orden del formulario y del contrato. */
+export const CAMPOS_EMISOR = [
+  CAMPO_RAZON_SOCIAL,
+  CAMPO_DOMICILIO_COMERCIAL,
+  CAMPO_CUIT,
+  CAMPO_INGRESOS_BRUTOS,
+  CAMPO_INICIO_ACTIVIDADES,
+] as const;
+
+/**
+ * Los datos del emisor vigentes: los cinco cargados, o `null` si la Api devolvió los cinco en null (nunca se cargaron,
+ * D-22). Una mezcla de null y textos, o cualquier otra forma, es una respuesta ilegible.
+ */
+const leerDatosEmisorVigentes: Lector<DatosEmisor | null> = (cuerpo) =>
+  esObjeto(cuerpo) && CAMPOS_EMISOR.every((campo) => cuerpo[campo] === null) ? null : leerDatosEmisorCargados(cuerpo);
+
+/**
+ * Los datos del emisor guardados (FR-01); `null` mientras no se cargaron. "Sin cargar" es el 200 con los cinco en null
+ * del contrato: un 404 no se toma como tal, es el mensaje general de pedido rechazado (D-22).
+ */
+export const consultarDatosEmisor = (): Promise<Resultado<DatosEmisor | null>> =>
+  pedir({ metodo: 'GET', ruta: '/api/configuracion/emisor' }, leerDatosEmisorVigentes);
+
+/**
+ * Graba los cinco datos del emisor juntos (FR-02) y devuelve lo que quedó guardado (el CUIT sin guiones, AC-03). Como
+ * {@link grabarConfiguracion}: un 400 devuelve TODOS los campos de `errors` y un 413 es un mensaje general propio.
+ */
+export const grabarDatosEmisor = (datos: DatosEmisor): Promise<ResultadoGrabacionEmisor> =>
+  grabarConCampos(
+    { metodo: 'POST', ruta: '/api/configuracion/emisor', cuerpo: datos, mensaje413: MENSAJE_EMISOR_GRANDE },
+    leerDatosEmisorCargados,
+  );
+
 /**
  * Graba un artículo y devuelve lo que quedó guardado, con su código y su precio de venta (FR-01, FR-11). Como
  * {@link grabarConfiguracion}: un 400 devuelve TODOS los campos de `errors` (incluido el código duplicado, D-07) y un
@@ -748,22 +829,6 @@ const esTextoONulo = (valor: unknown): valor is string | null => valor === null 
 
 const esEstadoPresupuesto = (valor: unknown): valor is EstadoPresupuesto =>
   ESTADOS_PRESUPUESTO.some((estado) => estado === valor);
-
-const FORMATO_FECHA = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** Una fecha `yyyy-MM-dd` que existe en el calendario ("2026-02-30" no). Se compara en UTC: sin zona horaria. */
-function esFecha(valor: unknown): valor is string {
-  if (typeof valor !== 'string') {
-    return false;
-  }
-  const partes = FORMATO_FECHA.exec(valor);
-  if (partes === null) {
-    return false;
-  }
-  const [anio, mes, dia] = [Number(partes[1]), Number(partes[2]), Number(partes[3])];
-  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
-  return fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia;
-}
 
 /** El cliente: solo los seis campos; un dato ausente o de otro tipo hace ilegible la respuesta. */
 const leerCliente: Lector<DatosCliente> = (cuerpo) =>

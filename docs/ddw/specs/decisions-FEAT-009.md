@@ -99,3 +99,16 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   transacción (la validación no depende de la base, como en `GrabarConfiguracionConRecalculo`, y un pedido inválido no
   toma el lock de escritura); la lectura de los vigentes, el reemplazo y la confirmación van dentro. La spec decía
   "dentro: lee, valida, reemplaza". — agente (D-06), aceptado por el verificador y el auditor — 2026-11-16 — Block 2.
+- **D-35 (del agente, Block 3).** El botón de la sección se llama "Grabar datos del emisor" (dos "Grabar" en la misma
+  pantalla rompían las pruebas que lo buscan por nombre); los e2e existentes que buscan "Grabar" en la configuración
+  (`configuracion.spec.ts`, `configuracion-recalculo.spec.ts`, `articulos-edicion.spec.ts`,
+  `presupuestos-edicion.spec.ts`) pasan a `exact: true`, fuera de la lista de archivos del Block 3 (FAIL 1 de la
+  auditoría). La sección se separa en `SeccionDatosEmisor.tsx`. — agente (D-06) — 2026-11-16 — Block 3.
+- **D-36 (del agente, Block 3).** La web envía los textos recortados y el CUIT canónico, toma "hoy" del navegador
+  (decide el servidor cerca de la medianoche) y no usa `maxLength` en los campos del emisor, para que un texto largo
+  muestre el error del largo en lugar de cortarse. — agente (D-06) — 2026-11-16 — Block 3.
+- **D-37 (del agente, Block 3).** `web/src/api/fechas.ts` unifica `FORMATO_FECHA` y `esFecha` (con
+  `setUTCFullYear`, años 1 a 99 aceptados y año 0 rechazado, como `DateOnly`); el cambio alcanza también los lectores
+  de fechas de presupuestos y facturas de `cliente.ts` (FEAT-003 a FEAT-008), que antes leían los años 0 a 99 como 19xx.
+  La Api nunca envía esas fechas; ninguna prueba cambió de resultado. — agente (D-06), revisado por el auditor —
+  2026-11-16 — Block 3.

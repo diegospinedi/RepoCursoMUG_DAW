@@ -222,9 +222,20 @@ const PANTALLAS: Pantalla[] = [
           puntoVenta: null,
           alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
+        // FEAT-009: los datos del emisor sin cargar (D-22).
+        'GET /api/configuracion/emisor': json(200, {
+          razonSocial: null,
+          domicilioComercial: null,
+          cuit: null,
+          ingresosBrutos: null,
+          inicioActividades: null,
+        }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
+    interactuar: async () => {
+      await screen.findByRole('button', { name: 'Grabar datos del emisor' });
+    },
   },
   {
     ruta: '/configuracion',
@@ -240,10 +251,19 @@ const PANTALLAS: Pantalla[] = [
           puntoVenta: 3,
           alicuotasAdmitidas: [0, 2.5, 5, 10.5, 21, 27],
         }),
+        // FEAT-009: los datos del emisor cargados, con datos ficticios (D-33).
+        'GET /api/configuracion/emisor': json(200, {
+          razonSocial: 'Óptica de Prueba S.A.',
+          domicilioComercial: 'Calle Falsa 123, Ciudad',
+          cuit: '20000000001',
+          ingresosBrutos: '901-000000-1',
+          inicioActividades: '2020-03-01',
+        }),
       }),
     titulo: 'Configuración',
     conPuntoVenta: true,
     interactuar: async () => {
+      await screen.findByRole('button', { name: 'Grabar datos del emisor' });
       // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía.
       await screen.findByLabelText('Alícuota de IVA (%)');
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));

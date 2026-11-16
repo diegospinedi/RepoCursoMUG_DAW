@@ -20,6 +20,9 @@ import {
   MENSAJE_LISTADO_CAMBIADO,
   modificarArticulo,
   consultarConfiguracion,
+  consultarDatosEmisor,
+  grabarDatosEmisor,
+  MENSAJE_EMISOR_GRANDE,
   consultarEstado,
   consultarMarca,
   consultarSesion,
@@ -452,6 +455,155 @@ describe('cliente de la Api: configuración', () => {
     servidorFalso({ 'POST /api/configuracion': json(200, { otro: 1 }) });
 
     expect(await grabarConfiguracion(DATOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+});
+
+describe('cliente de la Api: datos del emisor', () => {
+  const RUTA = '/api/configuracion/emisor';
+  /** Datos ficticios (D-33). */
+  const CARGADOS = {
+    razonSocial: 'Óptica de Prueba S.A.',
+    domicilioComercial: 'Calle Falsa 123, Ciudad',
+    cuit: '20000000001',
+    ingresosBrutos: '901-000000-1',
+    inicioActividades: '2020-03-01',
+  };
+  const SIN_CARGAR = {
+    razonSocial: null,
+    domicilioComercial: null,
+    cuit: null,
+    ingresosBrutos: null,
+    inicioActividades: null,
+  };
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+
+  it('consultarDatosEmisor_200Cargados_DevuelveLosCinco', async () => {
+    const servidor = servidorFalso({ [`GET ${RUTA}`]: json(200, { ...CARGADOS, otro: 'se descarta' }) });
+
+    expect(await consultarDatosEmisor()).toEqual({ tipo: 'ok', datos: CARGADOS });
+    const [pedido] = servidor.pedidosA('GET', RUTA);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it('consultarDatosEmisor_FechaAnioMenorA100_SeLee', async () => {
+    // Como DateOnly del servidor: el año 50 es el 50, no 1950.
+    servidorFalso({ [`GET ${RUTA}`]: json(200, { ...CARGADOS, inicioActividades: '0050-01-01' }) });
+
+    expect(await consultarDatosEmisor()).toEqual({ tipo: 'ok', datos: { ...CARGADOS, inicioActividades: '0050-01-01' } });
+  });
+
+  it('consultarDatosEmisor_200ConNulls_SinCargar', async () => {
+    // D-22: "sin cargar" es el 200 con los cinco en null.
+    servidorFalso({ [`GET ${RUTA}`]: json(200, SIN_CARGAR) });
+
+    expect(await consultarDatosEmisor()).toEqual({ tipo: 'ok', datos: null });
+  });
+
+  it('consultarDatosEmisor_404_NoSeTolera', async () => {
+    // D-22: un 404 no es "sin cargar": es el mensaje general de pedido rechazado.
+    servidorFalso({});
+
+    expect(await consultarDatosEmisor()).toEqual({ tipo: 'general', mensaje: MENSAJE_PEDIDO_RECHAZADO });
+  });
+
+  it.each([
+    ['cuerpo que no es objeto', 'texto'],
+    ['cuerpo null', null],
+    ['razón social ausente', { ...CARGADOS, razonSocial: undefined }],
+    ['domicilio numérico', { ...CARGADOS, domicilioComercial: 123 }],
+    ['CUIT con guiones', { ...CARGADOS, cuit: '20-00000000-1' }],
+    ['CUIT de 10 dígitos', { ...CARGADOS, cuit: '2000000000' }],
+    ['CUIT numérico', { ...CARGADOS, cuit: 20000000001 }],
+    ['Ingresos Brutos booleano', { ...CARGADOS, ingresosBrutos: true }],
+    ['fecha inexistente', { ...CARGADOS, inicioActividades: '2026-02-30' }],
+    ['fecha en otro formato', { ...CARGADOS, inicioActividades: '01/03/2020' }],
+    ['algunos null y otros no', { ...CARGADOS, cuit: null }],
+    ['uno solo cargado', { ...SIN_CARGAR, razonSocial: 'Óptica' }],
+  ])('consultarDatosEmisor_%s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ [`GET ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await consultarDatosEmisor()).toEqual(ILEGIBLE);
+  });
+
+  it('consultarDatosEmisor_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`GET ${RUTA}`]: vacia(401) });
+
+    expect(await consultarDatosEmisor()).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [500, ILEGIBLE],
+    [429, { tipo: 'general', mensaje: 'El sistema está ocupado. Intentá de nuevo en un momento.' }],
+  ] as const)('consultarDatosEmisor_%i_MensajeGeneral', async (estado, esperado) => {
+    servidorFalso({ [`GET ${RUTA}`]: vacia(estado) });
+
+    expect(await consultarDatosEmisor()).toEqual(esperado);
+  });
+
+  it('grabarDatosEmisor_200_EnviaLosCincoYDevuelveLoGuardado', async () => {
+    const servidor = servidorFalso({ [`POST ${RUTA}`]: json(200, CARGADOS) });
+
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual({ tipo: 'ok', datos: CARGADOS });
+    const [pedido] = servidor.pedidosA('POST', RUTA);
+    expect(JSON.parse(String(pedido?.init?.body))).toEqual(CARGADOS);
+    expect(new Headers(pedido?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it.each([
+    ['con nulls', SIN_CARGAR],
+    ['con CUIT con guiones', { ...CARGADOS, cuit: '20-00000000-1' }],
+    ['otra cosa', { otro: 1 }],
+  ])('grabarDatosEmisor_200 %s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ [`POST ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual(ILEGIBLE);
+  });
+
+  it('grabarDatosEmisor_400_DevuelveTodosLosErrores', async () => {
+    servidorFalso({
+      [`POST ${RUTA}`]: json(400, {
+        status: 400,
+        errors: {
+          razonSocial: ['Ingresá la razón social.'],
+          cuit: ['El CUIT no es válido: tienen que ser 11 dígitos, con o sin guiones.'],
+        },
+      }),
+    });
+
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual({
+      tipo: 'campos',
+      errores: [
+        { campo: 'razonSocial', mensaje: 'Ingresá la razón social.' },
+        { campo: 'cuit', mensaje: 'El CUIT no es válido: tienen que ser 11 dígitos, con o sin guiones.' },
+      ],
+    });
+  });
+
+  it('grabarDatosEmisor_413_MensajeGeneralPropio', async () => {
+    servidorFalso({ [`POST ${RUTA}`]: vacia(413) });
+
+    expect(MENSAJE_EMISOR_GRANDE).toBe('Los datos del emisor enviados son demasiado largos. Revisalos y grabá de nuevo.');
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual({ tipo: 'general', mensaje: MENSAJE_EMISOR_GRANDE });
+  });
+
+  it('grabarDatosEmisor_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`POST ${RUTA}`]: vacia(401) });
+
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('grabarDatosEmisor_500YSinRed_MensajeGeneral', async () => {
+    servidorFalso({ [`POST ${RUTA}`]: [vacia(500), sinRed] });
+
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual(ILEGIBLE);
+    expect(await grabarDatosEmisor(CARGADOS)).toEqual(ILEGIBLE);
   });
 });
 

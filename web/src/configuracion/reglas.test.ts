@@ -12,6 +12,24 @@ import {
   MENSAJE_VALOR_MENOR,
   validarConfiguracion,
   type TextosConfiguracion,
+  cuitCanonico,
+  hoyLocal,
+  MENSAJE_CUIT_FALTANTE,
+  MENSAJE_CUIT_INVALIDO,
+  MENSAJE_DOMICILIO_COMERCIAL_CARACTERES,
+  MENSAJE_DOMICILIO_COMERCIAL_FALTANTE,
+  MENSAJE_DOMICILIO_COMERCIAL_LARGO,
+  MENSAJE_INGRESOS_BRUTOS_CARACTERES,
+  MENSAJE_INGRESOS_BRUTOS_FALTANTE,
+  MENSAJE_INGRESOS_BRUTOS_LARGO,
+  MENSAJE_INICIO_ACTIVIDADES_FALTANTE,
+  MENSAJE_INICIO_ACTIVIDADES_INVALIDA,
+  MENSAJE_INICIO_ACTIVIDADES_POSTERIOR,
+  MENSAJE_RAZON_SOCIAL_CARACTERES,
+  MENSAJE_RAZON_SOCIAL_FALTANTE,
+  MENSAJE_RAZON_SOCIAL_LARGA,
+  validarDatosEmisor,
+  type TextosDatosEmisor,
 } from './reglas';
 
 const INICIALES: TextosConfiguracion = {
@@ -175,5 +193,185 @@ describe('reglas de la configuración', () => {
         puntoVenta: MENSAJE_PUNTO_VENTA,
       },
     });
+  });
+});
+
+// ---- FEAT-009: los datos del emisor (FR-01 a FR-03), espejo de DatosEmisor, Cuit y ValidacionConfiguracion ----
+
+describe('reglas de los datos del emisor', () => {
+  /** Datos ficticios (D-33): el CUIT 20-00000000-1 tiene dígito verificador válido y no es de nadie. */
+  const VALIDOS: TextosDatosEmisor = {
+    razonSocial: 'Óptica de Prueba S.A.',
+    domicilioComercial: 'Calle Falsa 123, Ciudad',
+    cuit: '20-00000000-1',
+    ingresosBrutos: '901-000000-1',
+    inicioActividades: '2020-03-01',
+  };
+  const HOY = '2026-11-16';
+
+  const emisor = (cambios: Partial<TextosDatosEmisor>) => validarDatosEmisor({ ...VALIDOS, ...cambios }, HOY);
+
+  function errorEmisor(cambios: Partial<TextosDatosEmisor>, campo: keyof TextosDatosEmisor): string | undefined {
+    const resultado = emisor(cambios);
+    return resultado.tipo === 'errores' ? resultado.errores[campo] : undefined;
+  }
+
+  it('Reglas_Cuit_DigitoVerificador', () => {
+    // AC-03: con guiones se admite y queda sin guiones (el CUIT del PRD solo en AC-03 y AC-04, D-33).
+    expect(cuitCanonico('20-12345678-6')).toBe('20123456786');
+    expect(cuitCanonico('20123456786')).toBe('20123456786');
+    expect(cuitCanonico('20000000001')).toBe('20000000001');
+    expect(cuitCanonico(' 20-00000000-1 ')).toBe('20000000001');
+    // Guiones en cualquier posición, como Cuit.Interpretar.
+    expect(cuitCanonico('2-0-0-0-0-0-0-0-0-0-1')).toBe('20000000001');
+    // AC-04: el dígito verificador no corresponde, o no son 11 dígitos.
+    expect(cuitCanonico('20-12345678-5')).toBeNull();
+    expect(cuitCanonico('2012345678')).toBeNull();
+    expect(cuitCanonico('201234567860')).toBeNull();
+    // Verificador 10: ningún dígito lo representa (2·5 + 6·4 = 34, resto 1).
+    for (let digito = 0; digito <= 9; digito++) {
+      expect(cuitCanonico(`2600000000${digito}`)).toBeNull();
+    }
+    // Ningún otro carácter: espacios internos, puntos, letras, dígitos no ASCII.
+    expect(cuitCanonico('20 00000000 1')).toBeNull();
+    expect(cuitCanonico('20.00000000.1')).toBeNull();
+    expect(cuitCanonico('2000000000a')).toBeNull();
+    expect(cuitCanonico('٢٠٠٠٠٠٠٠٠٠١')).toBeNull();
+    expect(cuitCanonico('')).toBeNull();
+    expect(cuitCanonico('---')).toBeNull();
+
+    // En la validación: inválido junto al campo con el texto de la Api; válido se envía sin guiones.
+    expect(errorEmisor({ cuit: '20-12345678-5' }, 'cuit')).toBe(MENSAJE_CUIT_INVALIDO);
+    expect(errorEmisor({ cuit: '2012345678' }, 'cuit')).toBe(MENSAJE_CUIT_INVALIDO);
+    expect(emisor({ cuit: '20-12345678-6' })).toEqual({ tipo: 'ok', datos: { ...VALIDOS, cuit: '20123456786' } });
+  });
+
+  it('reglasEmisor_MensajesIgualesALosDeLaApi', () => {
+    // Los mismos textos que ValidacionConfiguracion.cs (Block 2 de FEAT-009).
+    expect(MENSAJE_RAZON_SOCIAL_FALTANTE).toBe('Ingresá la razón social.');
+    expect(MENSAJE_RAZON_SOCIAL_CARACTERES).toBe(
+      'Escribí la razón social en una sola línea, sin caracteres especiales.',
+    );
+    expect(MENSAJE_RAZON_SOCIAL_LARGA).toBe('La razón social puede tener hasta 120 caracteres.');
+    expect(MENSAJE_DOMICILIO_COMERCIAL_FALTANTE).toBe('Ingresá el domicilio comercial.');
+    expect(MENSAJE_DOMICILIO_COMERCIAL_CARACTERES).toBe(
+      'Escribí el domicilio comercial en una sola línea, sin caracteres especiales.',
+    );
+    expect(MENSAJE_DOMICILIO_COMERCIAL_LARGO).toBe('El domicilio comercial puede tener hasta 200 caracteres.');
+    expect(MENSAJE_CUIT_FALTANTE).toBe('Ingresá el CUIT.');
+    expect(MENSAJE_CUIT_INVALIDO).toBe('El CUIT no es válido: tienen que ser 11 dígitos, con o sin guiones.');
+    expect(MENSAJE_INGRESOS_BRUTOS_FALTANTE).toBe('Ingresá el número de Ingresos Brutos.');
+    expect(MENSAJE_INGRESOS_BRUTOS_CARACTERES).toBe(
+      'Escribí el número de Ingresos Brutos en una sola línea, sin caracteres especiales.',
+    );
+    expect(MENSAJE_INGRESOS_BRUTOS_LARGO).toBe('El número de Ingresos Brutos puede tener hasta 30 caracteres.');
+    expect(MENSAJE_INICIO_ACTIVIDADES_FALTANTE).toBe('Ingresá la fecha de inicio de actividades.');
+    expect(MENSAJE_INICIO_ACTIVIDADES_INVALIDA).toBe('La fecha de inicio de actividades no es válida.');
+    expect(MENSAJE_INICIO_ACTIVIDADES_POSTERIOR).toBe('La fecha de inicio de actividades no puede ser posterior a hoy.');
+  });
+
+  it('reglasEmisor_Validos_DatosRecortados', () => {
+    expect(validarDatosEmisor(VALIDOS, HOY)).toEqual({ tipo: 'ok', datos: { ...VALIDOS, cuit: '20000000001' } });
+    // El recorte del servidor: espacios, la marca de orden de bytes y U+0085 al principio y al final; los internos quedan.
+    expect(
+      emisor({
+        razonSocial: '﻿  Óptica  de Prueba \u0085',
+        domicilioComercial: ' Calle Falsa 123\t',
+        ingresosBrutos: ' 901 ',
+        inicioActividades: ' 2020-03-01 ',
+      }),
+    ).toEqual({
+      tipo: 'ok',
+      datos: {
+        razonSocial: 'Óptica  de Prueba',
+        domicilioComercial: 'Calle Falsa 123',
+        cuit: '20000000001',
+        ingresosBrutos: '901',
+        inicioActividades: '2020-03-01',
+      },
+    });
+  });
+
+  it('reglasEmisor_CincoFaltantes_UnErrorPorCampo', () => {
+    expect(
+      validarDatosEmisor(
+        { razonSocial: '', domicilioComercial: '   ', cuit: ' ', ingresosBrutos: '﻿', inicioActividades: '' },
+        HOY,
+      ),
+    ).toEqual({
+      tipo: 'errores',
+      errores: {
+        razonSocial: MENSAJE_RAZON_SOCIAL_FALTANTE,
+        domicilioComercial: MENSAJE_DOMICILIO_COMERCIAL_FALTANTE,
+        cuit: MENSAJE_CUIT_FALTANTE,
+        ingresosBrutos: MENSAJE_INGRESOS_BRUTOS_FALTANTE,
+        inicioActividades: MENSAJE_INICIO_ACTIVIDADES_FALTANTE,
+      },
+    });
+  });
+
+  it('reglasEmisor_SinRazonSocial_SoloEseCampo', () => {
+    expect(emisor({ razonSocial: '' })).toEqual({
+      tipo: 'errores',
+      errores: { razonSocial: MENSAJE_RAZON_SOCIAL_FALTANTE },
+    });
+  });
+
+  it.each([
+    ['razonSocial', 120, MENSAJE_RAZON_SOCIAL_LARGA],
+    ['domicilioComercial', 200, MENSAJE_DOMICILIO_COMERCIAL_LARGO],
+    ['ingresosBrutos', 30, MENSAJE_INGRESOS_BRUTOS_LARGO],
+  ] as const)('reglasEmisor_Largo_%s', (campo, maximo, mensaje) => {
+    expect(errorEmisor({ [campo]: 'a'.repeat(maximo) }, campo)).toBeUndefined();
+    // Se mide recortado.
+    expect(errorEmisor({ [campo]: ` ${'a'.repeat(maximo)} ` }, campo)).toBeUndefined();
+    expect(errorEmisor({ [campo]: 'a'.repeat(maximo + 1) }, campo)).toBe(mensaje);
+    // En unidades UTF-16, como string.Length: un emoji cuenta 2.
+    expect(errorEmisor({ [campo]: `${'a'.repeat(maximo - 2)}😀` }, campo)).toBeUndefined();
+    expect(errorEmisor({ [campo]: `${'a'.repeat(maximo - 1)}😀` }, campo)).toBe(mensaje);
+  });
+
+  it.each([
+    ['razonSocial', MENSAJE_RAZON_SOCIAL_CARACTERES],
+    ['domicilioComercial', MENSAJE_DOMICILIO_COMERCIAL_CARACTERES],
+    ['ingresosBrutos', MENSAJE_INGRESOS_BRUTOS_CARACTERES],
+  ] as const)('reglasEmisor_CaracteresInvalidos_%s', (campo, mensaje) => {
+    for (const texto of ['Línea\nOtra', 'Con\u0000nulo', 'Con\u007Fborrar', 'Con\u009Fcontrol', 'Sola\uD800', 'Sola\uDC00x']) {
+      expect(errorEmisor({ [campo]: texto }, campo), JSON.stringify(texto)).toBe(mensaje);
+    }
+    // Los caracteres de control ganan sobre el largo, como en el dominio.
+    expect(errorEmisor({ [campo]: `${'a'.repeat(300)}\u0001` }, campo)).toBe(mensaje);
+  });
+
+  it('reglasEmisor_Fecha', () => {
+    expect(errorEmisor({ inicioActividades: HOY }, 'inicioActividades')).toBeUndefined();
+    expect(errorEmisor({ inicioActividades: '2026-11-17' }, 'inicioActividades')).toBe(
+      MENSAJE_INICIO_ACTIVIDADES_POSTERIOR,
+    );
+    for (const texto of ['2026-02-30', '2026-13-01', '01/03/2020', '2020-3-1', 'mañana']) {
+      expect(errorEmisor({ inicioActividades: texto }, 'inicioActividades'), texto).toBe(
+        MENSAJE_INICIO_ACTIVIDADES_INVALIDA,
+      );
+    }
+    // 2024 es bisiesto.
+    expect(errorEmisor({ inicioActividades: '2024-02-29' }, 'inicioActividades')).toBeUndefined();
+  });
+
+  it('reglasEmisor_FechaAnioMenorA100_ComoElServidor', () => {
+    // DateOnly.TryParseExact("yyyy-MM-dd") acepta los años 1 a 99 tal cual (no los lleva a 19xx) y rechaza el año 0.
+    expect(errorEmisor({ inicioActividades: '0050-01-01' }, 'inicioActividades')).toBeUndefined();
+    expect(errorEmisor({ inicioActividades: '0001-01-01' }, 'inicioActividades')).toBeUndefined();
+    expect(errorEmisor({ inicioActividades: '0004-02-29' }, 'inicioActividades')).toBeUndefined();
+    expect(errorEmisor({ inicioActividades: '0050-02-29' }, 'inicioActividades')).toBe(
+      MENSAJE_INICIO_ACTIVIDADES_INVALIDA,
+    );
+    expect(errorEmisor({ inicioActividades: '0000-01-01' }, 'inicioActividades')).toBe(
+      MENSAJE_INICIO_ACTIVIDADES_INVALIDA,
+    );
+  });
+
+  it('hoyLocal_FormatoDeFecha', () => {
+    expect(hoyLocal(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05');
+    expect(hoyLocal(new Date(2026, 10, 16, 0, 0))).toBe('2026-11-16');
   });
 });
