@@ -65,6 +65,13 @@ import {
   verificarEmision,
   type ObservacionEmision,
 } from './cliente';
+import {
+  buscarFacturas,
+  consultarFactura,
+  descargarPdfFactura,
+  MENSAJE_FACTURA_NO_ENCONTRADA,
+  MENSAJE_FACTURA_SIN_DATOS_EMISOR,
+} from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
 afterEach(() => alPerderLaSesion(null));
@@ -2357,5 +2364,234 @@ describe('cliente de la Api: verificación y descarte de emisiones pendientes (F
     expect(mensajeObservacion({ ...OBSERVACION, motivo: 'otro_entorno', importeArca: null })).toBe(
       'Revisá el punto de venta en ARCA: esta emisión se envió al entorno Simulado y el sistema está configurado en otro entorno.',
     );
+  });
+});
+
+describe('cliente de la Api: facturas (FEAT-009)', () => {
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const COMPROBANTE = 'Factura B 0003-00000125';
+
+  describe('buscarFacturas', () => {
+    const RUTA = '/api/facturacion/busqueda';
+    const CLAVE = `POST ${RUTA}`;
+    const SIN_FILTROS = { apellido: '', nombre: '', dni: '', numero: '', desde: '', hasta: '' };
+    /** Datos ficticios (Ley 25.326). */
+    const FILA = {
+      presupuesto: 155,
+      comprobante: COMPROBANTE,
+      fecha: '2026-10-30',
+      apellido: 'Pérez',
+      nombre: 'Ana',
+      dni: '00123456',
+      total: 1815,
+    };
+    const PAGINA = { facturas: [FILA], pagina: 1, tamanoPagina: 50, total: 1 };
+
+    it('buscarFacturas envía los filtros recortados en el cuerpo y lee la página', async () => {
+      const servidor = servidorFalso({ [CLAVE]: json(200, PAGINA) });
+
+      expect(
+        await buscarFacturas(
+          { apellido: ' Pérez ', nombre: 'Ana', dni: '00.123', numero: '0003-125', desde: '2026-10-01', hasta: '' },
+          2,
+        ),
+      ).toEqual({ tipo: 'ok', datos: PAGINA });
+
+      const [pedido] = servidor.pedidosA('POST', RUTA);
+      expect(pedido?.ruta).toBe(RUTA);
+      expect(JSON.parse(String(pedido?.init?.body))).toEqual({
+        apellido: 'Pérez',
+        nombre: 'Ana',
+        dni: '00.123',
+        numero: '0003-125',
+        desde: '2026-10-01',
+        pagina: 2,
+      });
+    });
+
+    it('buscarFacturas descarta los datos que no son de FR-23', async () => {
+      servidorFalso({ [CLAVE]: json(200, { ...PAGINA, facturas: [{ ...FILA, domicilio: 'Calle Falsa 123' }] }) });
+
+      expect(await buscarFacturas(SIN_FILTROS, 1)).toEqual({ tipo: 'ok', datos: PAGINA });
+    });
+
+    it('buscarFacturas: un 400 trae todos los campos', async () => {
+      servidorFalso({
+        [CLAVE]: json(400, { errors: { desde: ['La fecha Desde no puede ser posterior a Hasta.'], numero: ['Largo.'] } }),
+      });
+
+      expect(await buscarFacturas(SIN_FILTROS, 1)).toEqual({
+        tipo: 'campos',
+        errores: [
+          { campo: 'desde', mensaje: 'La fecha Desde no puede ser posterior a Hasta.' },
+          { campo: 'numero', mensaje: 'Largo.' },
+        ],
+      });
+    });
+
+    it.each([
+      ['sin facturas', { pagina: 1, tamanoPagina: 50, total: 1 }],
+      ['página 0', { ...PAGINA, pagina: 0 }],
+      ['comprobante A', { ...PAGINA, facturas: [{ ...FILA, comprobante: 'Factura A 0003-00000125' }] }],
+      ['presupuesto 0', { ...PAGINA, facturas: [{ ...FILA, presupuesto: 0 }] }],
+      ['fecha inexistente', { ...PAGINA, facturas: [{ ...FILA, fecha: '2026-02-30' }] }],
+      ['DNI numérico', { ...PAGINA, facturas: [{ ...FILA, dni: 123456 }] }],
+      ['total como texto', { ...PAGINA, facturas: [{ ...FILA, total: '1815' }] }],
+      ['no es un objeto', null],
+    ])('buscarFacturas: respuesta ilegible (%s)', async (_caso, cuerpo) => {
+      servidorFalso({ [CLAVE]: json(200, cuerpo) });
+
+      expect(await buscarFacturas(SIN_FILTROS, 1)).toEqual(ILEGIBLE);
+    });
+
+    it('buscarFacturas: un 413 es el mensaje general de la búsqueda', async () => {
+      servidorFalso({ [CLAVE]: vacia(413) });
+
+      expect(await buscarFacturas(SIN_FILTROS, 1)).toEqual({ tipo: 'general', mensaje: MENSAJE_BUSQUEDA_GRANDE });
+    });
+  });
+
+  describe('consultarFactura', () => {
+    const RUTA = '/api/presupuestos/155/factura';
+    const CLAVE = `GET ${RUTA}`;
+    const DETALLE = {
+      comprobante: COMPROBANTE,
+      fecha: '2026-10-30',
+      presupuesto: 155,
+      apellido: 'Pérez',
+      nombre: 'Ana',
+      dni: '00123456',
+      receptor: 'DNI 00123456',
+      lineas: [{ descripcion: 'Armazón metálico', cantidad: 3, importe: 10.02 }],
+      total: 10.02,
+      ivaContenido: 1.74,
+      cae: '12345678901234',
+      vencimientoCae: '2026-11-09',
+      simulada: true,
+    };
+
+    it('consultarFactura lee el detalle', async () => {
+      const servidor = servidorFalso({ [CLAVE]: json(200, { ...DETALLE, domicilio: 'Calle Falsa 123' }) });
+
+      expect(await consultarFactura(155)).toEqual({ tipo: 'ok', datos: DETALLE });
+      expect(servidor.pedidosA('GET', RUTA)).toHaveLength(1);
+    });
+
+    it('consultarFactura: la Factura C sin IVA contenido', async () => {
+      const facturaC = { ...DETALLE, comprobante: 'Factura C 0003-00000125', ivaContenido: null, simulada: false };
+      servidorFalso({ [CLAVE]: json(200, facturaC) });
+
+      expect(await consultarFactura(155)).toEqual({ tipo: 'ok', datos: facturaC });
+    });
+
+    it.each([
+      ['comprobante inválido', { ...DETALLE, comprobante: 'B 3-125' }],
+      ['fecha inválida', { ...DETALLE, fecha: '30/10/2026' }],
+      ['presupuesto 0', { ...DETALLE, presupuesto: 0 }],
+      ['apellido nulo', { ...DETALLE, apellido: null }],
+      ['nombre nulo', { ...DETALLE, nombre: null }],
+      ['DNI nulo', { ...DETALLE, dni: null }],
+      ['receptor nulo', { ...DETALLE, receptor: null }],
+      ['sin líneas', { ...DETALLE, lineas: [] }],
+      ['líneas que no son lista', { ...DETALLE, lineas: {} }],
+      ['línea sin descripción', { ...DETALLE, lineas: [{ cantidad: 1, importe: 1 }] }],
+      ['cantidad 0', { ...DETALLE, lineas: [{ descripcion: 'X', cantidad: 0, importe: 1 }] }],
+      ['importe como texto', { ...DETALLE, lineas: [{ descripcion: 'X', cantidad: 1, importe: '1' }] }],
+      ['línea nula', { ...DETALLE, lineas: [null] }],
+      ['total como texto', { ...DETALLE, total: '10.02' }],
+      ['IVA como texto', { ...DETALLE, ivaContenido: '1.74' }],
+      ['CAE corto', { ...DETALLE, cae: '123' }],
+      ['vencimiento inválido', { ...DETALLE, vencimientoCae: '' }],
+      ['simulada como texto', { ...DETALLE, simulada: 'si' }],
+      ['no es un objeto', 'factura'],
+    ])('consultarFactura: respuesta ilegible (%s)', async (_caso, cuerpo) => {
+      servidorFalso({ [CLAVE]: json(200, cuerpo) });
+
+      expect(await consultarFactura(155)).toEqual(ILEGIBLE);
+    });
+
+    it.each([
+      ['Factura B sin IVA contenido', { ...DETALLE, ivaContenido: null }],
+      ['Factura C con IVA contenido', { ...DETALLE, comprobante: 'Factura C 0003-00000125', ivaContenido: 1.74 }],
+    ])('consultarFactura: IVA contenido incoherente con la letra es ilegible (%s)', async (_caso, cuerpo) => {
+      // FR-11, FR-12: la B siempre lleva el IVA contenido y la C nunca, como lo cruza `leerFacturaEmitida`.
+      servidorFalso({ [CLAVE]: json(200, cuerpo) });
+
+      expect(await consultarFactura(155)).toEqual(ILEGIBLE);
+    });
+
+    it('consultarFactura: un 404 dice que no se encontró la factura', async () => {
+      servidorFalso({ [CLAVE]: json(404, { title: 'No se encontró la factura.' }) });
+
+      expect(await consultarFactura(155)).toEqual({ tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA });
+      expect(MENSAJE_FACTURA_NO_ENCONTRADA).toBe('No se encontró la factura.');
+    });
+
+    it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+      'consultarFactura: el número %s no se envía',
+      async (numero) => {
+        const servidor = servidorFalso({});
+
+        expect(await consultarFactura(numero)).toEqual({ tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA });
+        expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+      },
+    );
+  });
+
+  describe('descargarPdfFactura', () => {
+    const RUTA = '/api/presupuestos/155/factura/pdf';
+    const CLAVE = `GET ${RUTA}`;
+    const BYTES_PDF = '%PDF-1.7\n';
+    const pdf = (tipo = 'application/pdf') => () =>
+      new Response(BYTES_PDF, { status: 200, headers: { 'Content-Type': tipo } });
+    const conflicto = (motivo: unknown) =>
+      json(409, { status: 409, title: 'No se pudo generar el PDF de la factura.', detail: 'Texto del servidor.', motivo });
+
+    it('descargarPdfFactura devuelve el PDF como Blob', async () => {
+      const servidor = servidorFalso({ [CLAVE]: pdf() });
+
+      const resultado = await descargarPdfFactura(155);
+
+      expect(resultado.tipo).toBe('ok');
+      expect(await (resultado as { tipo: 'ok'; datos: Blob }).datos.text()).toBe(BYTES_PDF);
+      expect(servidor.pedidosA('GET', RUTA)[0]?.init?.credentials).toBe('same-origin');
+    });
+
+    it('descargarPdfFactura: 409 sin_datos_emisor es un resultado propio con el texto de la pantalla', async () => {
+      servidorFalso({ [CLAVE]: conflicto('sin_datos_emisor') });
+
+      expect(await descargarPdfFactura(155)).toEqual({
+        tipo: 'conflicto',
+        motivo: 'sin_datos_emisor',
+        mensaje: MENSAJE_FACTURA_SIN_DATOS_EMISOR,
+      });
+      expect(MENSAJE_FACTURA_SIN_DATOS_EMISOR).toBe(
+        'Completá los datos del emisor en la configuración para generar el PDF de la factura.',
+      );
+    });
+
+    it.each(['borrador', 'otro', undefined])('descargarPdfFactura: 409 con motivo %s es ilegible', async (motivo) => {
+      servidorFalso({ [CLAVE]: conflicto(motivo) });
+
+      expect(await descargarPdfFactura(155)).toEqual(ILEGIBLE);
+    });
+
+    it.each([
+      ['404', vacia(404), { tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA }],
+      ['500', vacia(500), ILEGIBLE],
+      ['200 que no es PDF', pdf('application/json'), ILEGIBLE],
+      ['falla de red', sinRed, ILEGIBLE],
+    ])('descargarPdfFactura: %s', async (_caso, respuesta, esperado) => {
+      servidorFalso({ [CLAVE]: respuesta });
+
+      expect(await descargarPdfFactura(155)).toEqual(esperado);
+    });
+
+    it('descargarPdfFactura: un número inválido no se envía', async () => {
+      const servidor = servidorFalso({});
+
+      expect(await descargarPdfFactura(0)).toEqual({ tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA });
+      expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
+    });
   });
 });

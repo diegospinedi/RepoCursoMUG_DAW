@@ -932,6 +932,15 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     expect(dato('Factura')).toBe(COMPROBANTE);
   });
 
+  it('Facturar: la fila Factura enlaza al detalle de la factura (FEAT-009)', async () => {
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FACTURADO) });
+
+    // D-14, D-28: la factura se identifica por el número del presupuesto.
+    const enlace = within(pantalla()).getByRole('link', { name: COMPROBANTE });
+    expect(enlace.getAttribute('href')).toBe('/facturas/155');
+    expect(enlace.closest('dd')?.previousElementSibling?.textContent).toBe('Factura');
+  });
+
   it.each([
     ['Borrador', GRABADO],
     ['con factura', FACTURADO],

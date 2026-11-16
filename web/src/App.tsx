@@ -4,10 +4,12 @@ import { alPerderLaSesion } from './api/cliente';
 import { Encabezado } from './componentes/Encabezado';
 import { MarcaProvider } from './marca/MarcaProvider';
 import { Articulos } from './paginas/Articulos';
+import { BuscarFacturas } from './paginas/BuscarFacturas';
 import { BuscarPresupuestos } from './paginas/BuscarPresupuestos';
 import { CambiarContrasena } from './paginas/CambiarContrasena';
 import { Configuracion } from './paginas/Configuracion';
 import { DefinirContrasena } from './paginas/DefinirContrasena';
+import { DetalleFactura } from './paginas/DetalleFactura';
 import { EditarArticulo } from './paginas/EditarArticulo';
 import { EditarPresupuesto } from './paginas/EditarPresupuesto';
 import { Ingreso } from './paginas/Ingreso';
@@ -50,6 +52,10 @@ export function App() {
             <Route path="/presupuestos/nuevo" element={<NuevoPresupuesto />} />
             <Route path="/presupuestos/:numero" element={<Presupuesto />} />
             <Route path="/presupuestos/:numero/editar" element={<EditarPresupuesto />} />
+            {/* FEAT-009: la búsqueda de facturas, con los filtros en la pantalla y nunca en la URL (ADR-019). */}
+            <Route path="/facturas" element={<BuscarFacturas />} />
+            {/* El detalle se identifica por el número del presupuesto de origen, único por factura (D-14, D-28). */}
+            <Route path="/facturas/:numero" element={<DetalleFactura />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

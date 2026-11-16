@@ -136,3 +136,14 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   queda fijado con una prueba y la web valida el rango antes de pedir (Block 7). `OpticaDbContext.cs` se modificó fuera
   de la lista del Block 6 para mapear `digitos_comprobante` con `HasDbFunction`. — agente (D-06), señalado por el
   verificador y el auditor — 2026-11-16 — Block 6.
+- **D-43 (del agente, Block 7).** `BuscarFacturas.tsx` es casi una copia de `BuscarPresupuestos.tsx` (estado, pedido,
+  paginado, reparto de errores con mensaje general fijo) y `DetalleFactura.tsx` repite la carga por número de ruta de
+  `usePresupuestoDeLaRuta`: se acepta la duplicación en este ticket (extraer un hook de búsqueda paginada o de recurso
+  por número tocaría pantallas de otros tickets) y queda como deuda para un ticket posterior. `guardarPdf` sí se extrae
+  a `web/src/componentes/guardarPdf.ts`, fuera de la lista de archivos del Block 7. El nombre del PDF se arma en la web
+  con la misma regla que la Api (`GenerarPdfFactura`), en lugar de leer `Content-Disposition`. — agente (D-06), señalado
+  por el verificador y el auditor — 2026-11-16 — Block 7.
+- **D-44 (desvío de proceso, Block 7).** En la ronda 1, el implementador escribió `web/src/App.test.tsx` con un script
+  por shell en lugar de Edit, lo que saltea el control previo de escritura. Lo autoinformó; el verificador y el auditor
+  revisaron el diff (85 líneas agregadas, 0 borradas, solo lo del bloque) y confirmaron que no debilita
+  `Pantallas_NingunaMuestraDatosArca`. En la ronda 2 se pidió no repetirlo. — agente — 2026-11-16 — Block 7.

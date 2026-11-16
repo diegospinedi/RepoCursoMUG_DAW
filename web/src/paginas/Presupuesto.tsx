@@ -1,4 +1,13 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  type SyntheticEvent,
+} from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import {
   descargarPdfPresupuesto,
@@ -16,6 +25,7 @@ import {
   type PresupuestoConsultado,
   type PresupuestoGrabado,
 } from '../api/cliente';
+import { guardarPdf } from '../componentes/guardarPdf';
 import { mostrarDecimal, mostrarImporte } from '../configuracion/numeros';
 import { mensajePasadoAFinal, mostrarFecha, TEXTO_CONFIRMAR_FINAL } from '../presupuestos/reglas';
 import { usePresupuestoDeLaRuta } from '../presupuestos/usePresupuestoDeLaRuta';
@@ -49,25 +59,6 @@ const OPCIONES_CONCEPTO: readonly { valor: ConceptoFactura; texto: string }[] = 
 
 /** Los 409 de la emisión que se resuelven en la configuración: su mensaje lleva el enlace (AC-13, AC-29, AC-32). */
 const MOTIVOS_DE_CONFIGURACION: readonly MotivoConflicto[] = ['sin_tope', 'sin_punto_venta', 'alicuota_no_admitida'];
-
-/**
- * Descarga el PDF recibido como `presupuesto-{numero}.pdf` (D-10): una URL de objeto, un enlace temporal con
- * `download`, su clic y la revocación de la URL. El nombre lleva solo el número, nunca datos del cliente (R-02).
- */
-function guardarPdf(contenido: Blob, numero: number) {
-  const url = URL.createObjectURL(contenido);
-  const enlace = document.createElement('a');
-  enlace.href = url;
-  enlace.download = `presupuesto-${numero}.pdf`;
-  enlace.hidden = true;
-  document.body.append(enlace);
-  try {
-    enlace.click();
-  } finally {
-    enlace.remove();
-    URL.revokeObjectURL(url);
-  }
-}
 
 /** La confirmación que deja el alta en el estado de la navegación (D-24); cualquier otra cosa no se muestra. */
 function confirmacionDe(estado: unknown): string | null {
@@ -474,7 +465,8 @@ export function Presupuesto() {
     }
     switch (resultado.tipo) {
       case 'ok':
-        guardarPdf(resultado.datos, numeroDelPresupuesto);
+        // D-10: el nombre lleva solo el número, nunca datos del cliente (R-02).
+        guardarPdf(resultado.datos, `presupuesto-${numeroDelPresupuesto}.pdf`);
         break;
       case 'sinSesion':
         navegar('/ingreso', { replace: true });
@@ -631,12 +623,22 @@ export function Presupuesto() {
 
 function DetallePresupuesto({ presupuesto }: { presupuesto: PresupuestoConsultado }) {
   const { cliente } = presupuesto;
-  const datos: [string, string][] = [
+  const datos: [string, ReactNode][] = [
     ['Número', String(presupuesto.numero)],
     ['Fecha', mostrarFecha(presupuesto.fecha)],
     ['Estado', TEXTO_DEL_ESTADO[presupuesto.estado]],
     // FR-20, AC-19: la factura emitida desde el presupuesto, "Factura B 0003-00000125"; sin factura, no se muestra.
-    ...(presupuesto.factura === null ? [] : [['Factura', presupuesto.factura.comprobante] as [string, string]]),
+    // FEAT-009: enlaza a su detalle, que se identifica por el número del presupuesto (D-14, D-28).
+    ...(presupuesto.factura === null
+      ? []
+      : [
+          [
+            'Factura',
+            <Link key="factura" to={`/facturas/${presupuesto.numero}`}>
+              {presupuesto.factura.comprobante}
+            </Link>,
+          ] as [string, ReactNode],
+        ]),
     ['Apellido', cliente.apellido],
     ['Nombre', cliente.nombre],
     ['DNI', cliente.dni],

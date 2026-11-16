@@ -149,6 +149,20 @@ describe('Inicio', () => {
     expect(servidor.pedidosA('POST', '/api/presupuestos/busqueda')).toHaveLength(0);
   });
 
+  it('Inicio: enlace Facturas', async () => {
+    // FEAT-009: la búsqueda de facturas no consulta al abrir, como la de presupuestos.
+    const servidor = servidorFalso(conSesion);
+    renderizarApp('/');
+    const enlace = await screen.findByRole('link', { name: 'Facturas' });
+    expect(enlace.getAttribute('href')).toBe('/facturas');
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Buscar facturas' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/facturas');
+    expect(servidor.pedidosA('POST', '/api/facturacion/busqueda')).toHaveLength(0);
+  });
+
   it('Inicio_EnlaceArticulos', async () => {
     servidorFalso({
       ...conSesion,
