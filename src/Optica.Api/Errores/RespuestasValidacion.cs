@@ -31,8 +31,9 @@ public static class RespuestasValidacion
         "No se pudieron leer los datos del emisor enviados. Revisalos y grabá de nuevo.";
 
     /// <summary>
-    /// Acción para un cuerpo de la búsqueda de presupuestos que no se pudo leer (FEAT-006): JSON roto o vacío, un tipo
-    /// incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice "grabá".
+    /// Acción para un cuerpo de la búsqueda de presupuestos (FEAT-006) o de facturas (FEAT-009) que no se pudo leer: JSON
+    /// roto o vacío, un tipo incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice
+    /// "grabá". No repite lo recibido.
     /// </summary>
     public const string AccionCuerpoIlegibleBusqueda =
         "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";

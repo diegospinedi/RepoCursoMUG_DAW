@@ -104,6 +104,8 @@ public sealed class ProteccionTests
             (HttpMethods.Post, RutaVerificacion),
             (HttpMethods.Post, RutaDescarte),
             (HttpMethods.Get, RutaEmisionesPendientes),
+            // FEAT-009: la búsqueda de facturas lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (R-01).
+            (HttpMethods.Post, RutaBusquedaFacturas),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -185,6 +187,14 @@ public sealed class ProteccionTests
                 cliente, HttpMethod.Post, $"{RutaPresupuestos}/1/factura/descarte",
                 CuerpoFacturaDeBytes(LimiteFactura + 1))),
             ("GET emisiones pendientes", Http.GetAsync(cliente, RutaEmisionesPendientes)),
+            ("POST busqueda facturas", EnviarJsonAsync(cliente, HttpMethod.Post, RutaBusquedaFacturas, CuerpoBusqueda)),
+            ("POST busqueda facturas texto plano", Http.EnviarAsync(
+                cliente,
+                HttpMethod.Post,
+                RutaBusquedaFacturas,
+                new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"))),
+            ("POST busqueda facturas grande", EnviarJsonAsync(
+                cliente, HttpMethod.Post, RutaBusquedaFacturas, CuerpoBusquedaDeBytes(LimiteBusqueda + 1))),
         };
 
         foreach (var (descripcion, pedido) in pedidos)
@@ -418,6 +428,9 @@ public sealed class ProteccionTests
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
 
+    /// <summary>FEAT-009: la búsqueda de facturas, con el mismo tope de 4 KB y el mismo cuerpo (ADR-019, D-28).</summary>
+    private const string RutaBusquedaFacturas = "/api/facturacion/busqueda";
+
     /// <summary>El límite del cuerpo de la búsqueda: 4 KB (<c>[RequestSizeLimit]</c>).</summary>
     private const int LimiteBusqueda = 4 * 1024;
 
@@ -454,8 +467,8 @@ public sealed class ProteccionTests
     }
 
     /// <summary>
-    /// La búsqueda exige <c>Content-Type: application/json</c> (<see cref="LimitesDelCuerpo"/>): texto plano, ningún tipo,
-    /// o ningún tipo y ningún cuerpo, 415 sin cuerpo.
+    /// Las dos búsquedas (presupuestos y, desde FEAT-009, facturas) exigen <c>Content-Type: application/json</c>
+    /// (<see cref="LimitesDelCuerpo"/>): texto plano, ningún tipo, o ningún tipo y ningún cuerpo, 415 sin cuerpo.
     /// </summary>
     [Theory]
     [InlineData("textoPlano")]
@@ -467,17 +480,20 @@ public sealed class ProteccionTests
         var cliente = fabrica.CrearClienteSinCookies();
         var cookie = await Http.DefinirAsync(cliente);
 
-        HttpContent contenido = variante switch
+        foreach (var ruta in new[] { RutaBusqueda, RutaBusquedaFacturas })
         {
-            "textoPlano" => new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
-            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoBusqueda)),
-            _ => new ByteArrayContent([]),
-        };
-        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaBusqueda, contenido, cookie);
+            HttpContent contenido = variante switch
+            {
+                "textoPlano" => new StringContent(CuerpoBusqueda, Encoding.UTF8, "text/plain"),
+                "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoBusqueda)),
+                _ => new ByteArrayContent([]),
+            };
+            var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, ruta, contenido, cookie);
 
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
-        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
-        AfirmarQueElEndpointExiste(fabrica, RutaBusqueda);
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+            AfirmarQueElEndpointExiste(fabrica, ruta);
+        }
     }
 
     /// <summary>

@@ -192,6 +192,9 @@ public partial class Program
         // (QuestPDF y QRCoder, ADR-027).
         builder.Services.AddScoped<ObtenerFactura>();
         builder.Services.AddScoped<GenerarPdfFactura>();
+        // FEAT-009 (Block 6): la búsqueda de facturas, una lectura sin transacción de escritura y sin registrador; los
+        // filtros llegan en el cuerpo (ADR-019, D-28, R-01).
+        builder.Services.AddScoped<BuscarFacturas>();
 
         // Data Protection (cifra la cookie): claves en IDatosLocales.DirectorioClaves (<directorio de datos>/claves),
         // fuera del repo, y en Windows protegidas con DPAPI. El restablecimiento vacía esa misma carpeta. Fuera de

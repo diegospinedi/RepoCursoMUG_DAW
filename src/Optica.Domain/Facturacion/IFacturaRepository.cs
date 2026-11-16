@@ -25,4 +25,15 @@ public interface IFacturaRepository
 
     /// <summary>Verdadero si el presupuesto <paramref name="presupuestoNumero"/> ya tiene una factura (FR-03).</summary>
     Task<bool> ExisteParaPresupuestoAsync(long presupuestoNumero, CancellationToken cancelacion = default);
+
+    /// <summary>
+    /// Una página de la búsqueda de facturas (FR-16 a FR-23 y FR-25 de FEAT-009): solo los filtros cargados, combinados
+    /// con "Y"; Apellido, Nombre y DNI son los del cliente del presupuesto de origen, también en una factura emitida sin
+    /// identificar al receptor. De la más reciente a la más antigua por fecha y número, con el Id como desempate (D-20),
+    /// y el total de coincidencias con el mismo filtro.
+    /// </summary>
+    /// <param name="pagina">Desde 1.</param>
+    /// <param name="tamanoPagina">Positivo.</param>
+    Task<PaginaFacturas> BuscarAsync(
+        FiltroFacturas filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default);
 }

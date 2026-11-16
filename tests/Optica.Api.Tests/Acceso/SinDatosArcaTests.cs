@@ -206,6 +206,14 @@ public sealed class SinDatosArcaTests
         Assert.Empty(Hallazgos(RutaFactura, factura.RootElement));
         Assert.Empty(Hallazgos(RutaPresupuesto, presupuesto.RootElement));
 
+        // FEAT-009 (D-15): la búsqueda de facturas lleva el comprobante como texto, sin clave de punto de venta.
+        var buscadas = await Http.PostJsonAsync(cliente, RutaBusquedaFacturas, "{}", cookie);
+        Assert.Equal(System.Net.HttpStatusCode.OK, buscadas.StatusCode);
+        using var busqueda = JsonDocument.Parse(await buscadas.Content.ReadAsStringAsync());
+        var encontrada = Assert.Single(busqueda.RootElement.GetProperty("facturas").EnumerateArray());
+        Assert.Equal("Factura B 0003-00000001", encontrada.GetProperty("comprobante").GetString());
+        Assert.Empty(Hallazgos(RutaBusquedaFacturas, busqueda.RootElement));
+
         // El rechazo de ARCA (D-18) lleva código y descripción, nunca datos del certificado.
         using var conRechazo = new FabricaApi(respuestaArca: FabricaApi.RespuestaArcaRechazar);
         var otroCliente = conRechazo.CrearClienteSinCookies();
@@ -256,6 +264,7 @@ public sealed class SinDatosArcaTests
     }
 
     private const string RutaFactura = "/api/presupuestos/{numero:long}/factura";
+    private const string RutaBusquedaFacturas = "/api/facturacion/busqueda";
     private const string RutaArticulos = "/api/articulos";
     private const string RutaArticulo = "/api/articulos/{codigo:long}";
     private const string RutaPresupuestos = "/api/presupuestos";

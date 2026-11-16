@@ -129,3 +129,10 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   fila" (la entidad no admite filas incompletas, D-19), y una fila corrupta da 500; los importes del detalle van en
   pesos decimales como `FacturaEmitida`. — agente (D-06), aceptado por el verificador y el auditor — 2026-11-16 —
   Block 5.
+- **D-42 (del agente, Block 6).** El rango Desde > Hasta de la búsqueda de facturas lo valida solo el dominio
+  (`FiltroFacturas.Crear`) y `BuscarFacturas` lo traduce al error junto a `desde`; el controlador valida en el borde
+  textos, fechas y página y corta antes. Si llega un rango invertido junto con otro error de borde, el 400 trae solo el
+  del borde y el de `desde` aparece al corregir (FEAT-006 los acumula). Se prefirió no duplicar la regla en dos capas;
+  queda fijado con una prueba y la web valida el rango antes de pedir (Block 7). `OpticaDbContext.cs` se modificó fuera
+  de la lista del Block 6 para mapear `digitos_comprobante` con `HasDbFunction`. — agente (D-06), señalado por el
+  verificador y el auditor — 2026-11-16 — Block 6.

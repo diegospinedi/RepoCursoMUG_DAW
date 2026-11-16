@@ -246,9 +246,25 @@ public sealed class SinCacheTests : IDisposable
         var ilegible = await Http.PostJsonAsync(cliente, RutaBusqueda, "{\"pagina\":\"2\"}", cookie);
         Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
         AfirmarNoStore(ilegible, "400 de un cuerpo de búsqueda ilegible");
+
+        // FEAT-009 (R-01): la búsqueda de facturas también trae Apellido, Nombre y DNI; lo mismo para sus respuestas.
+        var facturas = await Http.PostJsonAsync(cliente, RutaBusquedaFacturas, "{\"apellido\":\"ficticio\"}", cookie);
+        Assert.Equal(HttpStatusCode.OK, facturas.StatusCode);
+        AfirmarNoStore(facturas, "POST /api/facturacion/busqueda");
+
+        var facturasInvalida = await Http.PostJsonAsync(
+            cliente, RutaBusquedaFacturas, "{\"desde\":\"2026-03-20\",\"hasta\":\"2026-03-10\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, facturasInvalida.StatusCode);
+        AfirmarNoStore(facturasInvalida, "400 de la búsqueda de facturas");
+
+        var facturasIlegible = await Http.PostJsonAsync(cliente, RutaBusquedaFacturas, "{\"pagina\":\"2\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, facturasIlegible.StatusCode);
+        AfirmarNoStore(facturasIlegible, "400 de un cuerpo de búsqueda de facturas ilegible");
     }
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";
+
+    private const string RutaBusquedaFacturas = "/api/facturacion/busqueda";
 
     /// <summary>
     /// FEAT-006 (R-02): el PDF lleva los datos del cliente; su 200 (<c>application/pdf</c>), su 409 <c>borrador</c> y su

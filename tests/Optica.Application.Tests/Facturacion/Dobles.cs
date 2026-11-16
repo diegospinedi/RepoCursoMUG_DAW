@@ -127,6 +127,11 @@ internal sealed class AlmacenFacturacion :
         return Task.FromResult(Facturas.Any(factura => factura.PresupuestoNumero == presupuestoNumero));
     }
 
+    // La búsqueda de facturas (FEAT-009) se prueba con su propio doble y contra SQLite.
+    public Task<PaginaFacturas> BuscarAsync(
+        FiltroFacturas filtro, int pagina, int tamanoPagina, CancellationToken cancelacion = default) =>
+        throw new NotSupportedException();
+
     // Emisiones pendientes.
 
     public void Agregar(EmisionPendiente pendiente)

@@ -516,11 +516,13 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        // Las funciones de la búsqueda de artículos, registradas en cada conexión por FabricaConexion (ADR-011).
+        // Las funciones de las búsquedas, registradas en cada conexión por FabricaConexion (ADR-011; FEAT-009, D-27).
         modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.Plegar))!)
             .HasName(FuncionesSqlite.NombrePlegar);
         modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.OrdenArticulo))!)
             .HasName(FuncionesSqlite.NombreOrdenArticulo);
+        modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.DigitosComprobante))!)
+            .HasName(FuncionesSqlite.NombreDigitosComprobante);
     }
 
     /// <exception cref="ArgumentException">El valor tiene más de 2 decimales. El mensaje no incluye el valor.</exception>

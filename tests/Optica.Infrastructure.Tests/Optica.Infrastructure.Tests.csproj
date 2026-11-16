@@ -33,6 +33,8 @@
     <Compile Include="..\Compartido\EncuentroDeAltas.cs" Link="Compartido\EncuentroDeAltas.cs" />
     <!-- La siembra de presupuestos de las pruebas de volumen, compartida con Optica.Api.Tests (NFR-03 de FEAT-003d). -->
     <Compile Include="..\Compartido\SiembraPresupuestos.cs" Link="Compartido\SiembraPresupuestos.cs" />
+    <!-- La siembra de facturas de la búsqueda, compartida con Optica.Api.Tests (AC-17 de FEAT-009). -->
+    <Compile Include="..\Compartido\SiembraFacturas.cs" Link="Compartido\SiembraFacturas.cs" />
   </ItemGroup>
 
   <ItemGroup>
