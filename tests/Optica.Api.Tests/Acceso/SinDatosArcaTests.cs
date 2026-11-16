@@ -149,6 +149,8 @@ public sealed class SinDatosArcaTests
         Assert.Contains(RutaPresupuesto, conJson);
         // La configuración, con la excepción del punto de venta (D-08 de FEAT-007).
         Assert.Contains(RutaConfiguracion, conJson);
+        // FEAT-009: los datos del emisor, sin cargar, responden 200 con los cinco en null (D-22) y se revisan igual.
+        Assert.Contains(RutaEmisor, conJson);
         // El PDF del presupuesto en Final (FEAT-006) se pidió y respondió application/pdf.
         Assert.Equal([RutaPdf], conPdf);
         Assert.Contains("/api/sesion", sinCuerpo);
@@ -235,6 +237,7 @@ public sealed class SinDatosArcaTests
     private const string RutaPresupuesto = "/api/presupuestos/{numero:long}";
     private const string RutaPdf = "/api/presupuestos/{numero:long}/pdf";
     private const string RutaConfiguracion = "/api/configuracion";
+    private const string RutaEmisor = "/api/configuracion/emisor";
 
     [Fact]
     public async Task SinDatosArca_Configuracion_PermitePuntoVentaYRechazaCertificado()

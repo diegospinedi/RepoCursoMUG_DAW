@@ -392,6 +392,53 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-009 (R-06): los datos del emisor pueden ser de una persona física (razón social, CUIT); el GET (200 sin datos
+    /// y con datos), el POST (200, 400 por campo, 400 de cuerpo ilegible, 413) y el 401 sin sesión responden con
+    /// <c>no-store</c>. Datos inventados y CUIT ficticio (D-33).
+    /// </summary>
+    [Fact]
+    public async Task RutasEmisor_NoStore()
+    {
+        const string ruta = "/api/configuracion/emisor";
+        const string cuerpo =
+            "{\"razonSocial\":\"Ficticia SA\",\"domicilioComercial\":\"Calle Inventada 123\",\"cuit\":\"20-00000000-1\","
+            + "\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}";
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, ruta);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del emisor");
+
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var sinDatos = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, sinDatos.StatusCode);
+        AfirmarNoStore(sinDatos, "GET del emisor sin datos");
+
+        var grabado = await Http.PostJsonAsync(cliente, ruta, cuerpo, cookie);
+        Assert.Equal(HttpStatusCode.OK, grabado.StatusCode);
+        AfirmarNoStore(grabado, "POST del emisor");
+
+        var conDatos = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, conDatos.StatusCode);
+        Assert.Equal("20000000001", (await Http.JsonAsync(conDatos)).GetProperty("cuit").GetString());
+        AfirmarNoStore(conDatos, "GET del emisor con datos");
+
+        var invalido = await Http.PostJsonAsync(cliente, ruta, cuerpo.Replace("00000000-1", "00000000-5", StringComparison.Ordinal), cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalido.StatusCode);
+        AfirmarNoStore(invalido, "400 del emisor");
+
+        var ilegible = await Http.PostJsonAsync(cliente, ruta, "{\"cuit\":20000000001}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        AfirmarNoStore(ilegible, "400 de un cuerpo del emisor ilegible");
+
+        var grande = await Http.PostJsonAsync(cliente, ruta, cuerpo[..^1] + ",\"r\":\"" + new string('a', 2100) + "\"}", cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 del emisor");
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

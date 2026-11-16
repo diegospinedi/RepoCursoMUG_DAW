@@ -95,3 +95,7 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
 - **D-33 (del agente, Block 1, datos personales).** El CUIT 20-12345678-6 del PRD tiene dígito verificador válido y
   podría ser de una persona real: queda solo en las pruebas de AC-03 y AC-04; el resto usa 20-00000000-1. Nunca se usa
   en bases de demostración ni contra ARCA. — agente (D-06) — 2026-11-16 — Block 1 y siguientes.
+- **D-34 (del agente, Block 2).** `GrabarDatosEmisor` valida con `DatosEmisor.ParaGrabar` antes de abrir la
+  transacción (la validación no depende de la base, como en `GrabarConfiguracionConRecalculo`, y un pedido inválido no
+  toma el lock de escritura); la lectura de los vigentes, el reemplazo y la confirmación van dentro. La spec decía
+  "dentro: lee, valida, reemplaza". — agente (D-06), aceptado por el verificador y el auditor — 2026-11-16 — Block 2.

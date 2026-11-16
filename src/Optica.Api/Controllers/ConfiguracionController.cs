@@ -69,21 +69,56 @@ public sealed record ConfiguracionGrabada(
 }
 
 /// <summary>
+/// Cuerpo de <c>POST /api/configuracion/emisor</c> (FEAT-009, ADR-028): los cinco datos del emisor como texto. Un
+/// número, un arreglo o un objeto en lugar de texto no se convierte: el cuerpo es ilegible y el error va en ese campo.
+/// </summary>
+/// <remarks>
+/// <see cref="object.ToString"/> no muestra ningún valor (<c>SolicitudDatosEmisor { }</c>): MVC registra en Trace los
+/// argumentos de la acción con su <c>ToString()</c>, y la razón social y el CUIT pueden ser de una persona física (R-06).
+/// </remarks>
+[JsonNumberHandling(JsonNumberHandling.Strict)]
+public sealed record SolicitudDatosEmisor(
+    string? RazonSocial, string? DomicilioComercial, string? Cuit, string? IngresosBrutos, string? InicioActividades)
+{
+    private bool PrintMembers(System.Text.StringBuilder constructor) => false;
+}
+
+/// <summary>
 /// Consulta y graba los parámetros de negocio (FEAT-001c). Solo traduce HTTP: delega en
 /// <see cref="ObtenerConfiguracionNegocio"/> y <see cref="GrabarConfiguracionConRecalculo"/>, que validan y registran cada
 /// grabación. Exige sesión por la política por defecto (no está en <see cref="RutasAnonimas"/>, R-01): sin sesión, 401
 /// antes del 415 y del 413. El Content-Type y el tamaño del cuerpo los controla <see cref="LimitesDelCuerpo"/> (R-02,
 /// R-05). Sin fila de configuración (D-04), la excepción termina en el 500 genérico de
-/// <see cref="ManejadorErroresNoControlados"/>.
+/// <see cref="ManejadorErroresNoControlados"/>. Desde FEAT-009 también consulta y graba los datos del emisor
+/// (<c>/api/configuracion/emisor</c>, ADR-028) con <see cref="ObtenerDatosEmisor"/> y <see cref="GrabarDatosEmisor"/>,
+/// con la misma sesión y los mismos controles del cuerpo.
 /// </summary>
 [ApiController]
 [Route("api/configuracion")]
 public sealed class ConfiguracionController(
     ObtenerConfiguracionNegocio obtenerConfiguracion,
-    GrabarConfiguracionConRecalculo grabarConfiguracion) : ControllerBase
+    GrabarConfiguracionConRecalculo grabarConfiguracion,
+    ObtenerDatosEmisor obtenerDatosEmisor,
+    GrabarDatosEmisor grabarDatosEmisor) : ControllerBase
 {
     /// <summary>Tamaño máximo del cuerpo del POST; más grande, 413.</summary>
     public const long CuerpoMaximo = 1024;
+
+    /// <summary>
+    /// Tamaño máximo del cuerpo del POST de los datos del emisor; más grande, 413. Con caracteres de 3 bytes, una carga
+    /// válida pasa 1 KB (D-21).
+    /// </summary>
+    public const long CuerpoMaximoEmisor = 2 * 1024;
+
+    /// <summary>Campos del cuerpo de los datos del emisor, en el orden en que se busca el que nombra un error de lectura.</summary>
+    private static readonly IReadOnlyList<string> CamposEmisor =
+    [
+        ValidacionConfiguracion.CampoRazonSocial,
+        ValidacionConfiguracion.CampoDomicilioComercial,
+        ValidacionConfiguracion.CampoCuit,
+        ValidacionConfiguracion.CampoIngresosBrutos,
+        ValidacionConfiguracion.CampoInicioActividades,
+    ];
 
     /// <summary>Campos del cuerpo, en el orden en que se busca el que nombra un error de lectura.</summary>
     private static readonly IReadOnlyList<string> Campos =
@@ -129,6 +164,53 @@ public sealed class ConfiguracionController(
                 solicitud?.PuntoVenta),
             cancelacion);
         return await ResponderGrabacionAsync(resultado, cancelacion);
+    }
+
+    /// <summary>
+    /// Los datos del emisor vigentes: 200 con los cinco campos, cada uno null mientras nunca se cargó (D-22). Una fila
+    /// corrupta termina en el 500 genérico de <see cref="ManejadorErroresNoControlados"/>.
+    /// </summary>
+    [HttpGet("emisor")]
+    public async Task<ActionResult<DatosEmisorVigentes>> ObtenerEmisor(CancellationToken cancelacion) =>
+        await obtenerDatosEmisor.EjecutarAsync(cancelacion);
+
+    /// <summary>
+    /// Graba los cinco datos del emisor juntos y responde 200 con los grabados (CUIT sin guiones, AC-03). Un cuerpo
+    /// ilegible responde 400 con un solo error, en el campo que no se pudo leer (o en la razón social si el cuerpo entero
+    /// no se pudo leer) y con una acción fija, sin los mensajes del lector de JSON ni el valor. Datos inválidos, 400 con
+    /// un error por campo (AC-02, AC-04); no se graba nada. Un cuerpo vacío llega como solicitud null, igual que en
+    /// <see cref="Grabar"/>: 400 con los cinco campos faltantes.
+    /// </summary>
+    [HttpPost("emisor")]
+    [RequestSizeLimit(CuerpoMaximoEmisor)]
+    public async Task<IActionResult> GrabarEmisor(
+        [FromBody] SolicitudDatosEmisor? solicitud, CancellationToken cancelacion)
+    {
+        if (!ModelState.IsValid)
+        {
+            return this.CuerpoIlegible(
+                RespuestasValidacion.AccionCuerpoIlegibleEmisor, ValidacionConfiguracion.CampoRazonSocial, CamposEmisor);
+        }
+
+        var resultado = await grabarDatosEmisor.EjecutarAsync(
+            new DatosEmisorRecibidos(
+                solicitud?.RazonSocial,
+                solicitud?.DomicilioComercial,
+                solicitud?.Cuit,
+                solicitud?.IngresosBrutos,
+                solicitud?.InicioActividades),
+            cancelacion);
+        if (resultado.EsGrabado)
+        {
+            return Ok(resultado.Datos);
+        }
+
+        if (resultado.Errores.Count > 0)
+        {
+            return this.Invalido([.. resultado.Errores]);
+        }
+
+        throw new InvalidOperationException("Resultado de grabar los datos del emisor no previsto.");
     }
 
     /// <summary>

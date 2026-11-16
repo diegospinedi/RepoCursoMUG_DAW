@@ -322,6 +322,98 @@ public sealed class ProteccionTests
         return Http.EnviarAsync(cliente, HttpMethod.Post, $"{RutaPresupuestos}/999/factura", contenido, cookie);
     }
 
+    // FEAT-009: los datos del emisor (ADR-028).
+
+    private const string RutaEmisor = "/api/configuracion/emisor";
+
+    /// <summary>El límite del cuerpo de los datos del emisor: 2 KB (<c>[RequestSizeLimit]</c>, D-21).</summary>
+    private const int LimiteEmisor = 2 * 1024;
+
+    /// <summary>Los cinco datos del emisor, inventados, con el CUIT ficticio (D-33).</summary>
+    private const string CuerpoEmisor =
+        "{\"razonSocial\":\"Zq7Ficticia SA\",\"domicilioComercial\":\"Calle Inventada 123\",\"cuit\":\"20-00000000-1\","
+        + "\"ingresosBrutos\":\"IB-0001\",\"inicioActividades\":\"2020-03-01\"}";
+
+    /// <summary>
+    /// Sad path (R-06): sin sesión, el GET y el POST de <c>/api/configuracion/emisor</c> responden 401 sin cuerpo; el
+    /// POST, antes de leer el cuerpo y antes del 415 y del 413. Las rutas existen, no son anónimas y no se grabó nada.
+    /// </summary>
+    [Fact]
+    public async Task RutasEmisor_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        foreach (var metodo in new[] { HttpMethods.Get, HttpMethods.Post })
+        {
+            Assert.Contains((metodo, RutaEmisor), endpoints);
+            Assert.False(RutasAnonimas.Contiene(metodo, RutaEmisor), $"{metodo} {RutaEmisor} no puede ser anónima.");
+        }
+
+        var pedidos = new List<(string Descripcion, HttpMethod Metodo, HttpContent? Contenido)>
+        {
+            ("GET", HttpMethod.Get, null),
+            ("POST", HttpMethod.Post, new StringContent(CuerpoEmisor, Encoding.UTF8, "application/json")),
+            ("POST ilegible", HttpMethod.Post, new StringContent("esto no es json", Encoding.UTF8, "application/json")),
+            ("POST texto plano", HttpMethod.Post, new StringContent(CuerpoEmisor, Encoding.UTF8, "text/plain")),
+            ("POST grande", HttpMethod.Post, new StringContent(
+                CuerpoEmisorDeBytes(LimiteEmisor + 1), Encoding.UTF8, "application/json")),
+            ("POST sin cuerpo", HttpMethod.Post, null),
+        };
+        foreach (var (descripcion, metodo, contenido) in pedidos)
+        {
+            var respuesta = await Http.EnviarAsync(cliente, metodo, RutaEmisor, contenido);
+
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.Unauthorized,
+                $"{descripcion} respondió {(int)respuesta.StatusCode} sin sesión; se esperaba 401.");
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        // Nada se grabó: con sesión, el GET sigue con los cinco datos en null.
+        var leido = await Http.JsonAsync(await Http.GetAsync(cliente, RutaEmisor, cookie));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("razonSocial").ValueKind);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("cuit").ValueKind);
+    }
+
+    /// <summary>El POST de los datos del emisor exige <c>Content-Type: application/json</c>: si no, 415 sin cuerpo.</summary>
+    [Theory]
+    [InlineData("textoPlano")]
+    [InlineData("sinTipo")]
+    [InlineData("sinTipoNiCuerpo")]
+    public async Task PostEmisor_SinJson_415(string variante)
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+
+        HttpContent contenido = variante switch
+        {
+            "textoPlano" => new StringContent(CuerpoEmisor, Encoding.UTF8, "text/plain"),
+            "sinTipo" => new ByteArrayContent(Encoding.UTF8.GetBytes(CuerpoEmisor)),
+            _ => new ByteArrayContent([]),
+        };
+        var respuesta = await Http.EnviarAsync(cliente, HttpMethod.Post, RutaEmisor, contenido, cookie);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, respuesta.StatusCode);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        AfirmarQueElEndpointExiste(fabrica, RutaEmisor);
+    }
+
+    /// <summary><see cref="CuerpoEmisor"/> con una propiedad que se ignora, hasta ocupar <paramref name="bytes"/>.</summary>
+    private static string CuerpoEmisorDeBytes(int bytes)
+    {
+        var sinRelleno = CuerpoEmisor[..^1] + ",\"relleno\":\"\"}";
+        var faltan = bytes - Encoding.UTF8.GetByteCount(sinRelleno);
+        Assert.True(faltan >= 0, "El cuerpo sin relleno ya es más largo que el pedido.");
+        var cuerpo = CuerpoEmisor[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
+        return cuerpo;
+    }
+
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";

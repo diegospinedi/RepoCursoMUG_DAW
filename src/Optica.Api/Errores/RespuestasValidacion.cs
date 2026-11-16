@@ -23,6 +23,14 @@ public static class RespuestasValidacion
         "No se pudieron leer los valores enviados. Revisalos y grabá de nuevo.";
 
     /// <summary>
+    /// Acción para un cuerpo de los datos del emisor que no se pudo leer (FEAT-009): JSON roto, un cuerpo que no es un
+    /// objeto, o un número, un arreglo o un objeto donde va un texto. No repite lo recibido. Un cuerpo vacío no es
+    /// ilegible: como en el POST de la configuración, llega al caso de uso sin datos y responde los cinco faltantes.
+    /// </summary>
+    public const string AccionCuerpoIlegibleEmisor =
+        "No se pudieron leer los datos del emisor enviados. Revisalos y grabá de nuevo.";
+
+    /// <summary>
     /// Acción para un cuerpo de la búsqueda de presupuestos que no se pudo leer (FEAT-006): JSON roto o vacío, un tipo
     /// incorrecto en un filtro o una página que no es un entero. La búsqueda no graba: no dice "grabá".
     /// </summary>

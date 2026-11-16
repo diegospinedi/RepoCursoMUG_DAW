@@ -139,6 +139,12 @@ public partial class Program
         builder.Services.AddScoped<ObtenerConfiguracionNegocio>();
         builder.Services.AddScoped<GrabarConfiguracionConRecalculo>();
 
+        // Datos del emisor (FEAT-009, ADR-028), con sesión: se leen de la base en cada pedido y cada grabación queda en el
+        // log solo con los nombres de los campos que cambiaron (categoría Optica.Application.Configuracion.DatosEmisor,
+        // R-06).
+        builder.Services.AddScoped<ObtenerDatosEmisor>();
+        builder.Services.AddScoped<GrabarDatosEmisor>();
+
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
         // listado (sin costo ni margen, D-12), la modificación con versión (D-08, D-17) y el cambio de estado (D-09).
