@@ -112,8 +112,11 @@ public sealed class EmisionPendienteRepository(OpticaDbContext contexto) : IEmis
                     fila.PresupuestoNumero, momento, tipo.Value, puntoVenta, fila.Fecha, fila.Total, entorno.Value);
             }
 
-            if (fila is { Numero: { } numero, Concepto: { } textoConcepto, Neto: { } neto, Iva: { } iva,
-                    ReceptorIdentificado: 0 or 1 }
+            if (fila is
+                {
+                    Numero: { } numero, Concepto: { } textoConcepto, Neto: { } neto, Iva: { } iva,
+                    ReceptorIdentificado: 0 or 1
+                }
                 && TextosFacturacion.ConceptoDe(textoConcepto) is { } concepto
                 && LeerAlicuota(fila.Alicuota, out var alicuota))
             {

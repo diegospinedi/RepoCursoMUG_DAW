@@ -1,0 +1,15 @@
+```
+/ddw-validate-tests docs/ddw/reports/tests-FEAT-008.md — PASSED
+────────────────────────────────────────────────────────────────
+  ✅ F-TEST-07: the report describes one run
+  ✅ F-TEST-01: runner and command named: dotnet test (SDK 10) con xUnit y coverlet; Vitest con cobertura v8 (web); node:test (e2e unidad); Playwright con Chrome y Edge estables — `dotnet build Optica.sln && dotnet test Optica.sl`
+  ✅ F-TEST-02: 3799 test(s): 3799 passed, 0 failed, 0 skipped — and they add up
+  ✅ F-TEST-08: no failing tests
+  ✅ F-TEST-03: no failures to name
+  ✅ F-TEST-04: coverage stated: line 97%, branch 90%, function 97%
+  ✅ F-TEST-05: floor 80%, the method default (testing.instructions.md) — the project declares none of its own
+  ✅ F-TEST-06: nothing skipped
+────────────────────────────────────────────────────────────────
+Total: 8 passed, 0 failed, 0 warnings
+Result: PASSED
+```
