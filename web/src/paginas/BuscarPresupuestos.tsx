@@ -281,12 +281,18 @@ export function BuscarPresupuestos() {
       {/* La página que se muestra es la que devolvió la Api, no la pedida: mientras llega la otra no cambia. */}
       {resultado !== null && (resultado.total > 0 || resultado.pagina > 1) && (
         <nav className="paginacion" aria-label="Páginas de los resultados">
-          <button type="button" disabled={buscando || resultado.pagina <= 1} onClick={() => irA(resultado.pagina - 1)}>
+          <button
+            type="button"
+            className="boton-secundario"
+            disabled={buscando || resultado.pagina <= 1}
+            onClick={() => irA(resultado.pagina - 1)}
+          >
             Anterior
           </button>
           <span>{`Página ${resultado.pagina} de ${totalPaginas}`}</span>
           <button
             type="button"
+            className="boton-secundario"
             disabled={buscando || resultado.pagina >= totalPaginas}
             onClick={() => irA(resultado.pagina + 1)}
           >

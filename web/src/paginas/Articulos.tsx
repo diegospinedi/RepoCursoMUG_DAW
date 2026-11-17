@@ -212,6 +212,7 @@ export function Articulos() {
                     <td>
                       <button
                         type="button"
+                        className="boton-secundario"
                         aria-label={`${accion} ${fila.codigo} ${fila.descripcion}`}
                         disabled={cambiando || cargando}
                         onClick={() => void cambiarEstado(fila)}
@@ -229,12 +230,18 @@ export function Articulos() {
       {/* La página que se muestra es la que devolvió la Api, no la pedida: mientras llega la otra no cambia. */}
       {listado !== null && (listado.total > 0 || listado.pagina > 1) && (
         <nav className="paginacion" aria-label="Páginas del listado">
-          <button type="button" disabled={cargando || listado.pagina <= 1} onClick={() => irA(listado.pagina - 1)}>
+          <button
+            type="button"
+            className="boton-secundario"
+            disabled={cargando || listado.pagina <= 1}
+            onClick={() => irA(listado.pagina - 1)}
+          >
             Anterior
           </button>
           <span>{`Página ${listado.pagina} de ${totalPaginas}`}</span>
           <button
             type="button"
+            className="boton-secundario"
             disabled={cargando || listado.pagina >= totalPaginas}
             onClick={() => irA(listado.pagina + 1)}
           >

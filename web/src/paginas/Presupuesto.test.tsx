@@ -615,6 +615,13 @@ describe('Presupuesto: Descargar PDF (FEAT-006)', () => {
     expect(within(pantalla()).queryByRole('alert')).toBeNull();
   });
 
+  it('Descargar PDF: botón secundario (boton-secundario)', async () => {
+    // FEAT-012, D-14, AC-13: "Descargar PDF" es una acción secundaria por su función y lo marca el código, no el contexto.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL) });
+
+    expect(botonPdf().classList.contains('boton-secundario')).toBe(true);
+  });
+
   it('Descargar PDF deshabilitado en Borrador', async () => {
     // AC-12: en Borrador el botón está deshabilitado (atributo `disabled`) y no pide nada a la Api.
     const registro = await abrirCon({ 'GET /api/presupuestos/155': json(200, GRABADO), [`GET ${RUTA_PDF}`]: pdf() });
@@ -1003,6 +1010,17 @@ describe('Presupuesto: Facturar (FEAT-007)', () => {
     expect(registro.pedidosA('POST', RUTA_FACTURA)).toEqual([]);
   });
 
+  it('Facturar: Cancelar es secundario y Emitir principal (boton-secundario)', async () => {
+    // FEAT-012, D-14, AC-13: en el diálogo, Cancelar lleva la clase del secundario; Emitir y Facturar siguen principales.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, FINAL) });
+    expect(botonFacturar().classList.contains('boton-secundario')).toBe(false);
+
+    const dialogo = await abrirDialogo();
+
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' }).classList.contains('boton-secundario')).toBe(true);
+    expect(within(dialogo).getByRole('button', { name: 'Emitir' }).classList.contains('boton-secundario')).toBe(false);
+  });
+
   it('Facturar: mientras emite, un segundo clic no envía otra emisión', async () => {
     let responder: (respuesta: Response) => void = () => {};
     const pendiente = new Promise<Response>((resolver) => {
@@ -1363,6 +1381,53 @@ describe('Presupuesto: verificación y descarte de la emisión pendiente (FEAT-0
     expect(pedidos).toHaveLength(1);
     expect(new Headers(pedidos[0]?.init?.headers).get('Content-Type')).toBe('application/json');
     expect(pedidos[0]?.init?.body).toBeUndefined();
+  });
+
+  it('Presupuesto_DescartarYCancelar_BotonesSecundarios', async () => {
+    // FEAT-012, D-14, AC-13: "Descartar la emisión" y el Cancelar de su diálogo (el mismo diálogo de Pasar a Final) son
+    // secundarios; Verificar y el Descartar que confirma siguen principales.
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, CON_OBSERVACION) });
+
+    expect(botonDescartar().classList.contains('boton-secundario')).toBe(true);
+    expect(botonVerificar().classList.contains('boton-secundario')).toBe(false);
+    const dialogo = await abrirDialogoDescarte();
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' }).classList.contains('boton-secundario')).toBe(true);
+    expect(within(dialogo).getByRole('button', { name: 'Descartar' }).classList.contains('boton-secundario')).toBe(false);
+  });
+
+  it('Presupuesto_MensajesDeEstado_ConClaseMensajeEstado', async () => {
+    // FEAT-012, FR-13, D-17: "Verificando con ARCA…" y "Enviando la factura a ARCA…" son estados (`role="status"`) que
+    // se dibujan como bloque neutro con la clase `mensaje-estado`.
+    let responderVerificacion: (respuesta: Response) => void = () => {};
+    const verificacion = new Promise<Response>((resolver) => {
+      responderVerificacion = resolver;
+    });
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, PENDIENTE), [CLAVE_VERIFICACION]: () => verificacion });
+
+    fireEvent.click(botonVerificar());
+
+    const verificando = await screen.findByText('Verificando con ARCA…');
+    expect(verificando.getAttribute('role')).toBe('status');
+    expect(verificando.classList.contains('mensaje-estado')).toBe(true);
+    responderVerificacion(new Response(JSON.stringify({ resultado: 'recuperada', factura: FACTURA }), { status: 200 }));
+    await screen.findByText('Se recuperó la Factura B 0003-00000125 que ARCA ya había autorizado.');
+    cleanup();
+
+    let responderEmision: (respuesta: Response) => void = () => {};
+    const emision = new Promise<Response>((resolver) => {
+      responderEmision = resolver;
+    });
+    await abrirCon({ 'GET /api/presupuestos/155': json(200, SIN_PENDIENTE), 'POST /api/presupuestos/155/factura': () => emision });
+    fireEvent.click(within(pantalla()).getByRole('button', { name: 'Facturar' }));
+    const dialogo = await screen.findByRole('dialog', { name: 'Facturar' });
+    fireEvent.click(within(dialogo).getByRole('radio', { name: 'Productos' }));
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Emitir' }));
+
+    const enviando = await within(dialogo).findByText('Enviando la factura a ARCA…');
+    expect(enviando.getAttribute('role')).toBe('status');
+    expect(enviando.classList.contains('mensaje-estado')).toBe(true);
+    responderEmision(new Response(JSON.stringify(FACTURA), { status: 201 }));
+    await screen.findByText('Se emitió la Factura B 0003-00000125.');
   });
 
   it('Presupuesto_DescartarCancelado_SigueVerificar', async () => {

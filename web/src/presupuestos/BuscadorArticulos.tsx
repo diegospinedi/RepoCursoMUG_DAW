@@ -154,6 +154,7 @@ export function BuscadorArticulos({ alAgregar, alError }: Props) {
                   <td>
                     <button
                       type="button"
+                      className="boton-secundario"
                       aria-label={`Agregar ${articulo.codigo} ${articulo.descripcion}`}
                       onClick={() => agregar(articulo)}
                     >
@@ -168,12 +169,18 @@ export function BuscadorArticulos({ alAgregar, alError }: Props) {
       )}
       {resultados !== null && (resultados.total > 0 || resultados.pagina > 1) && (
         <nav className="paginacion" aria-label="Páginas de la búsqueda">
-          <button type="button" disabled={buscando || resultados.pagina <= 1} onClick={() => irA(resultados.pagina - 1)}>
+          <button
+            type="button"
+            className="boton-secundario"
+            disabled={buscando || resultados.pagina <= 1}
+            onClick={() => irA(resultados.pagina - 1)}
+          >
             Anterior
           </button>
           <span>{`Página ${resultados.pagina} de ${totalPaginas}`}</span>
           <button
             type="button"
+            className="boton-secundario"
             disabled={buscando || resultados.pagina >= totalPaginas}
             onClick={() => irA(resultados.pagina + 1)}
           >

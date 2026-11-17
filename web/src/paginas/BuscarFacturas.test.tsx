@@ -154,6 +154,17 @@ describe('BuscarFacturas', () => {
     }
   });
 
+  it('BuscarFacturas_Paginacion_BotonesSecundarios', async () => {
+    // FEAT-012, D-14, AC-13: Anterior y Siguiente son secundarios; Buscar sigue principal.
+    await abrir({ [CLAVE]: json(200, pagina(filasDel(200, 151), 1, 120)) });
+    buscar();
+    await screen.findByText('Página 1 de 3');
+
+    expect(screen.getByRole('button', { name: 'Anterior' }).classList.contains('boton-secundario')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Siguiente' }).classList.contains('boton-secundario')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Buscar' }).classList.contains('boton-secundario')).toBe(false);
+  });
+
   it('Buscar: paginado de 50 que reutiliza el último filtro aplicado', async () => {
     const servidor = await abrir({
       [CLAVE]: [

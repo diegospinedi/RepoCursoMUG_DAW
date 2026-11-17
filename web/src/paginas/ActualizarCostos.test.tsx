@@ -456,6 +456,28 @@ describe('ActualizarCostos', () => {
     expect(await screen.findByText('Se actualizaron 4 artículos de 6 filas.')).toBeTruthy();
   });
 
+  it('ActualizarCostos_Cargando_ConElAnchoDeLaPantalla', async () => {
+    // FEAT-012 (W13 de la revisión): mientras verifica la sesión, "Cargando…" lleva `pantalla--ancha`, así el marco ya
+    // tiene el ancho de la pantalla que viene y no salta al terminar.
+    let liberar: () => void = () => {};
+    const llegada = new Promise<void>((resolver) => {
+      liberar = resolver;
+    });
+    servidorFalso({
+      'GET /api/sesion': async () => {
+        await llegada;
+        return vacia(204)();
+      },
+    });
+    renderizarApp(RUTA);
+
+    const cargando = await screen.findByText('Cargando…');
+    expect(cargando.classList.contains('cargando')).toBe(true);
+    expect(cargando.classList.contains('pantalla--ancha')).toBe(true);
+    await act(async () => liberar());
+    expect(await screen.findByRole('heading', { level: 1 })).toBeTruthy();
+  });
+
   it('salir antes de verificar la sesión no cambia nada', async () => {
     let liberar: () => void = () => {};
     const llegada = new Promise<void>((resolver) => {

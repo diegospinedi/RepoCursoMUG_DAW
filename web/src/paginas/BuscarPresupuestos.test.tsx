@@ -141,6 +141,18 @@ function diferida(cuerpo: unknown) {
 }
 
 describe('BuscarPresupuestos', () => {
+  it('BuscarPresupuestos_Paginacion_BotonesSecundarios', async () => {
+    // FEAT-012, D-14, AC-13: Anterior y Siguiente son secundarios; Buscar sigue principal.
+    servidorFalso({ [CLAVE]: json(200, pagina(filasDel(120, 71), 1, 120)) });
+    await abrir();
+    buscar();
+    await screen.findByText('Página 1 de 3');
+
+    expect(anterior().classList.contains('boton-secundario')).toBe(true);
+    expect(siguiente().classList.contains('boton-secundario')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Buscar' }).classList.contains('boton-secundario')).toBe(false);
+  });
+
   it('buscar sin filtros muestra la primera página y Siguiente', async () => {
     // AC-08: 120 presupuestos; la primera página trae del 120 al 71 y la tercera del 20 al 1.
     const servidor = servidorFalso({

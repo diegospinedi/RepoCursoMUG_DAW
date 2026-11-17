@@ -288,7 +288,7 @@ export function EditarArticulo() {
               <p className="mensaje-general" role="alert">
                 {conflicto}
               </p>
-              <button type="button" onClick={volverAAbrir}>
+              <button type="button" className="boton-secundario" onClick={volverAAbrir}>
                 Volver a abrir
               </button>
             </div>
@@ -298,7 +298,12 @@ export function EditarArticulo() {
               <p className="aviso" role="status">
                 {MENSAJE_ARTICULO_INACTIVO}
               </p>
-              <button type="button" disabled={enviando} onClick={() => void reactivar(carga.articulo)}>
+              <button
+                type="button"
+                className="boton-secundario"
+                disabled={enviando}
+                onClick={() => void reactivar(carga.articulo)}
+              >
                 Reactivar
               </button>
             </div>

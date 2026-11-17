@@ -196,6 +196,14 @@ describe('DetalleFactura', () => {
       expect(within(pantalla()).queryByRole('alert')).toBeNull();
     });
 
+    it('Detalle_DescargarPdf_BotonSecundario', async () => {
+      // FEAT-012, D-14, AC-13: "Descargar PDF" es una acción secundaria por su función.
+      await abrirCon({ [`GET ${RUTA_DETALLE}`]: json(200, DETALLE_155) });
+      await within(pantalla()).findByText('Comprobante', { selector: 'dt' });
+
+      expect(botonPdf().classList.contains('boton-secundario')).toBe(true);
+    });
+
     it('Detalle_SinDatosEmisor_AvisoConEnlace', async () => {
       // AC-05: sin los datos del emisor no se genera el PDF y se indica completarlos en la configuración.
       await abrirCon({

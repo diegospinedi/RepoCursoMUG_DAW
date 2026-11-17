@@ -136,7 +136,7 @@ export function ActualizarCostos() {
   }
 
   if (verificando) {
-    return <p className="cargando">Cargando…</p>;
+    return <p className="cargando pantalla--ancha">Cargando…</p>;
   }
 
   return (
