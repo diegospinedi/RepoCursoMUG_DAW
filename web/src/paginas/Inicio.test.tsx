@@ -442,6 +442,107 @@ describe('Inicio', () => {
     });
   });
 
+  describe('menú de tarjetas (FEAT-012)', () => {
+    /** La pantalla de Inicio: la sección de la que el h1 es hijo directo. */
+    function pantalla() {
+      const titulo = screen.getByRole('heading', { level: 1, name: 'Sesión iniciada' });
+      return titulo.parentElement!;
+    }
+
+    /** Verdadero si `a` está antes que `b` en el documento. */
+    function antesDe(a: Node, b: Node) {
+      return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    }
+
+    it('Inicio_AvisosAntesDelMenu', async () => {
+      // AC-08: los avisos se dibujan antes de las tarjetas; el h1 sigue siendo hijo directo de la sección.
+      servidorFalso({
+        ...conSesion,
+        'GET /api/backup/estado': json(200, { faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: false }),
+        'GET /api/facturacion/emisiones-pendientes': json(200, { presupuestos: [155] }),
+      });
+      renderizarApp('/');
+      await screen.findByText(/^Falta el backup de ayer\./);
+      await screen.findByRole('link', { name: '155' });
+
+      const seccion = pantalla();
+      expect(seccion.tagName).toBe('SECTION');
+      expect(seccion.classList.contains('pantalla')).toBe(true);
+      expect(seccion.classList.contains('pantalla--menu')).toBe(true);
+      const avisos = within(seccion).getAllByRole('status');
+      expect(avisos).toHaveLength(2);
+      const regiones = within(seccion).getAllByRole('region');
+      expect(regiones.map((region) => region.querySelector('h2')?.textContent)).toEqual(['Ventas', 'Catálogo', 'Sistema']);
+      for (const aviso of avisos) {
+        expect(antesDe(aviso, regiones[0]!)).toBe(true);
+      }
+      // Las tarjetas no son avisos: ni role status/alert ni la clase aviso.
+      for (const region of regiones) {
+        expect(within(region).queryByRole('status')).toBeNull();
+        expect(within(region).queryByRole('alert')).toBeNull();
+        expect(region.querySelector('.aviso')).toBeNull();
+      }
+      // "Salir" va al final, después del menú.
+      const botonSalir = within(seccion).getByRole('button', { name: 'Salir' });
+      expect(antesDe(regiones[2]!, botonSalir)).toBe(true);
+    });
+
+    it('Inicio_SalirSigueCerrandoLaSesion', async () => {
+      // AC-09: "Salir" es un botón secundario en la barra final y sigue cerrando la sesión.
+      const servidor = servidorFalso({ ...conSesion, 'POST /api/acceso/salir': vacia(204) });
+      renderizarApp('/');
+      const botonSalir = await screen.findByRole('button', { name: 'Salir' });
+      expect(botonSalir.tagName).toBe('BUTTON');
+      expect(botonSalir.textContent).toBe('Salir');
+      expect(botonSalir.classList.contains('boton-secundario')).toBe(true);
+      expect(botonSalir.parentElement?.classList.contains('inicio__acciones')).toBe(true);
+      expect(botonSalir.parentElement?.parentElement).toBe(pantalla());
+
+      fireEvent.click(botonSalir);
+
+      expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
+      expect(servidor.pedidosA('POST', '/api/acceso/salir')).toHaveLength(1);
+    });
+
+    it('Inicio_SalirConError_AlertaJuntoAlBoton', async () => {
+      // El error de "Salir" se muestra en la barra final, justo antes del botón que lo produjo.
+      servidorFalso({ ...conSesion, 'POST /api/acceso/salir': vacia(415) });
+      renderizarApp('/');
+      const botonSalir = await screen.findByRole('button', { name: 'Salir' });
+
+      fireEvent.click(botonSalir);
+
+      const alerta = await within(pantalla()).findByRole('alert');
+      expect(alerta.textContent).toBe('No se pudo completar la operación. Recargá la página y reintentá.');
+      expect(alerta.parentElement).toBe(botonSalir.parentElement);
+      expect(alerta.parentElement?.classList.contains('inicio__acciones')).toBe(true);
+      expect(alerta.nextElementSibling).toBe(botonSalir);
+    });
+
+    it('Inicio_ConsultasFallidas_MenuSinAvisos', async () => {
+      // Si fallan las dos consultas, el menú se dibuja entero y no aparece ningún aviso.
+      const servidor = servidorFalso({
+        ...conSesion,
+        'GET /api/backup/estado': vacia(500),
+        'GET /api/facturacion/emisiones-pendientes': sinRed,
+      });
+      renderizarApp('/');
+      await screen.findByRole('heading', { name: 'Sesión iniciada' });
+      await waitFor(() => expect(servidor.pedidosA('GET', '/api/backup/estado')).toHaveLength(1));
+      await waitFor(() => expect(servidor.pedidosA('GET', '/api/facturacion/emisiones-pendientes')).toHaveLength(1));
+      await act(async () => {
+        await new Promise((resolver) => setTimeout(resolver, 0));
+      });
+
+      const seccion = pantalla();
+      expect(within(seccion).getAllByRole('region')).toHaveLength(3);
+      expect(seccion.querySelectorAll('li.tarjeta-menu')).toHaveLength(7);
+      expect(within(seccion).queryByRole('status')).toBeNull();
+      expect(within(seccion).queryByRole('alert')).toBeNull();
+      expect(seccion.querySelector('[style], style')).toBeNull();
+    });
+  });
+
   describe('con reloj falso', () => {
     // El reloj falso se activa ANTES de renderizar: así captura cualquier setInterval o setTimeout que la pantalla
     // programe al montarse. No se usan findBy/waitFor, que esperan con esos mismos temporizadores.

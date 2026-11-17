@@ -161,6 +161,7 @@ export function DetalleFactura() {
           <p>
             <button
               type="button"
+              className="boton-secundario"
               aria-disabled={descargando || undefined}
               aria-busy={descargando || undefined}
               onClick={() => void descargarPdf(carga.factura)}

@@ -26,47 +26,51 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-configuracion-backup` | `chrome` | `configuracion-backup.spec.ts` | 5549 |
 | `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5550 |
 | `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5551 |
-| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5552 |
-| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5553 |
-| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5554 |
-| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5555 |
-| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5556 |
-| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5557 |
-| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5558 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5559 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5560 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5561 |
-| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5562 |
-| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5563 |
-| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5564 |
-| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5565 |
-| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5566 |
-| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5567 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5568 |
-| `msedge-actualizar-costos` | `msedge` | `actualizar-costos.spec.ts` | 5569 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5570 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5571 |
-| `msedge-backup-aviso` | `msedge` | `backup-aviso.spec.ts` | 5572 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5573 |
-| `msedge-configuracion-backup` | `msedge` | `configuracion-backup.spec.ts` | 5574 |
-| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5575 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5576 |
-| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5577 |
-| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5578 |
-| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5579 |
-| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5580 |
-| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5581 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5582 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5583 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5584 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5585 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5586 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5587 |
-| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5588 |
-| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5589 |
-| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5590 |
-| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5591 |
-| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5592 |
+| `chrome-estilo-uniforme` | `chrome` | `estilo-uniforme.spec.ts` | 5552 |
+| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5553 |
+| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5554 |
+| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5555 |
+| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5556 |
+| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5557 |
+| `chrome-inicio-menu` | `chrome` | `inicio-menu.spec.ts` | 5558 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5559 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5560 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5561 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5562 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5563 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5564 |
+| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5565 |
+| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5566 |
+| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5567 |
+| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5568 |
+| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5569 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5570 |
+| `msedge-actualizar-costos` | `msedge` | `actualizar-costos.spec.ts` | 5571 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5572 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5573 |
+| `msedge-backup-aviso` | `msedge` | `backup-aviso.spec.ts` | 5574 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5575 |
+| `msedge-configuracion-backup` | `msedge` | `configuracion-backup.spec.ts` | 5576 |
+| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5577 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5578 |
+| `msedge-estilo-uniforme` | `msedge` | `estilo-uniforme.spec.ts` | 5579 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5580 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5581 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5582 |
+| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5583 |
+| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5584 |
+| `msedge-inicio-menu` | `msedge` | `inicio-menu.spec.ts` | 5585 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5586 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5587 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5588 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5589 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5590 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5591 |
+| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5592 |
+| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5593 |
+| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5594 |
+| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5595 |
+| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5596 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -92,7 +96,10 @@ de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec
 `configuracion-backup.spec.ts` (FEAT-010) ocupan 5546 y 5548 en Chrome, mueven `chrome-configuracion` a 5547 y los que
 siguen en Chrome a 5549–5566, y los de Edge a 5567–5569, 5571 y 5573–5590, con los suyos en 5570 y 5572; y
 `actualizar-costos.spec.ts` (FEAT-011) ocupa 5544 en Chrome, entre `acceso` y `articulos`, mueve los que siguen en
-Chrome a 5545–5567 y los de Edge a 5568 y 5570–5592, con el suyo en 5569. Son 50 proyectos, de 5543 a 5592. Si
+Chrome a 5545–5567 y los de Edge a 5568 y 5570–5592, con el suyo en 5569; y `estilo-uniforme.spec.ts` e
+`inicio-menu.spec.ts` (FEAT-012) ocupan 5552 y 5558 en Chrome, mueven `chrome-facturacion*` y `chrome-facturas-*` a
+5553–5557 y los `chrome-presupuestos-*` y `chrome-verificacion-*` a 5559–5569, y los de Edge a 5570–5578, 5580–5584 y
+5586–5596, con los suyos en 5579 y 5585. Son 54 proyectos, de 5543 a 5596. Si
 tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
 al arrancar.
 
@@ -146,7 +153,31 @@ costos y no restaura backups. Las pantallas de detalle (presupuesto, factura, ed
 la base está vacía: las cubren `ProteccionTests` en la Api y, en la web, una búsqueda de texto en el código
 (`restaur` no aparece en `web/src` fuera de las pruebas); esa búsqueda no es una prueba automática.
 Como todas las bases nuevas de la suite muestran ese aviso en el inicio, una prueba que busque `getByRole('status')`
-tiene que filtrarlo por su texto (como `acceso.spec.ts`).
+tiene que filtrarlo por su texto (como `acceso.spec.ts`). Desde FEAT-012 la lista esperada sigue el orden del menú en
+tarjetas (D-11): Nuevo presupuesto, Buscar presupuestos, Facturas, Artículos, Nuevo artículo, Configuración y Cambiar
+la contraseña.
+
+**Menú de Inicio y estilo uniforme (FEAT-012).** Las dos pruebas miden con la marca del harness (primario `#0903A0`
+sobre fondo `#FFFFFF`, la real de NFR-01) y solo con estilos computados (`getComputedStyle` y las cajas del
+navegador): no guardan capturas. Las medidas que comparten (el contraste WCAG desde los colores computados, la espera
+de la marca y de las transiciones, y el ancho de la página) están en `tests/medidas.ts`, que como no termina en
+`.spec.ts` no es un proyecto. Las dos fallan ante cualquier violación de la política de seguridad de contenido
+(R-02). `inicio-menu.spec.ts` (AC-01, AC-02 y AC-04 a AC-07) no graba datos: verifica las secciones Ventas, Catálogo
+y Sistema con sus opciones y destinos, el clic en la esquina de la tarjeta "Facturas" (fuera del nombre, de la
+descripción y del ícono) que abre la búsqueda de facturas, el recorrido con Tab en el orden del menú con el contorno
+computado en la tarjeta (3px del primario, separado 2px) y sin contorno propio del enlace, una sola columna sin
+desplazamiento horizontal con 360 px y dos tarjetas o más en una fila con 1280 px, el ícono en el primario y el
+contraste del texto del menú (4,5:1 o más) y del foco (3:1 o más), y que el recorrido no deje errores en la consola.
+`estilo-uniforme.spec.ts` (AC-11 a AC-16, D-20) siembra por la Api, en cada prueba, un artículo, un presupuesto en
+Final con su factura (ARCA simulada) y otro en Borrador para la pantalla de modificación, con códigos `EU-<puerto>-<n>`
+y un cliente ficticio. Recorre las 15 pantallas por su ruta con 360 px y 1280 px y verifica: la tarjeta de cada
+pantalla con el fondo, el borde, el radio y la sombra computados de una opción del menú (Inicio sin tarjeta exterior,
+D-15); la página sin desplazamiento horizontal y las tablas con `overflow-x: auto` en su contenedor; el mismo alto,
+radio y colores de los botones principales y secundarios, también los de las filas; el campo inválido al enviar vacío
+(cinco formularios) con el borde de error, el mensaje junto al campo y el contorno del primario con el foco; el mismo
+bloque de error (borde lateral, fondo y prefijo "✕") en cuatro pantallas de detalle con un número inexistente y en la
+definición de la contraseña rechazada; y el contraste de 4,5:1 o más de cada texto visible, campo y botón habilitado,
+calculado desde los colores computados sobre su fondo efectivo.
 
 **ARCA en la suite (FEAT-007).** Todas las Api de la suite arrancan con ARCA simulada (`Arca__Entorno=Simulado`), con
 un tiempo máximo de 2 s (`Arca__TiempoMaximoSegundos=2`) y sin CUIT ni certificado (`Arca__Cuit`,
@@ -407,10 +438,5 @@ Antes de dar por terminado un cambio, corré la suite completa, sin filtro.
 ## Diagnóstico sin Chrome ni Edge
 
 `OPTICA_E2E_DIAGNOSTICO_CHROMIUM=1 npx playwright test --project="chromium-*"` usa el Chromium que descarga Playwright
-(proyectos `chromium-acceso`, `chromium-articulos`, `chromium-articulos-edicion`, `chromium-configuracion`,
-`chromium-configuracion-recalculo`, `chromium-facturacion`, `chromium-facturacion-rechazo`,
-`chromium-facturacion-sin-respuesta`, `chromium-presupuestos-alta`, `chromium-presupuestos-busqueda`,
-`chromium-presupuestos-calculos`, `chromium-presupuestos-concurrencia`, `chromium-presupuestos-edicion`,
-`chromium-presupuestos-pdf`, `chromium-verificacion-consulta-sin-respuesta`, `chromium-verificacion-emite`,
-`chromium-verificacion-importe-distinto`, `chromium-verificacion-recupera` y `chromium-verificacion-sin-respuesta`).
+(un proyecto `chromium-<archivo>` por cada archivo de la tabla).
 Es solo un diagnóstico: no reemplaza a `chrome` y `msedge` ni cuenta para NFR-03.

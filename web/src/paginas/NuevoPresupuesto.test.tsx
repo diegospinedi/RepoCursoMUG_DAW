@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
@@ -611,6 +611,50 @@ describe('NuevoPresupuesto', () => {
     expect(await screen.findByText('Página 1 de 2')).toBeTruthy();
     expect(registro.pedidosA('GET', '/api/articulos?texto=armazon&pagina=2&soloActivos=true')).toHaveLength(1);
     expect(registro.pedidosA('GET', BUSCAR_ARMAZON.slice(4))).toHaveLength(2);
+  });
+
+  it('NuevoPresupuesto_Cargando_ConElAnchoDeLaPantalla', async () => {
+    // FEAT-012 (W13 de la revisión): mientras verifica la sesión, "Cargando…" lleva `pantalla--ancha`, así el marco ya
+    // tiene el ancho de la pantalla que viene y no salta al terminar.
+    let liberar: () => void = () => {};
+    const llegada = new Promise<void>((resolver) => {
+      liberar = resolver;
+    });
+    servidor({
+      'GET /api/sesion': async () => {
+        await llegada;
+        return vacia(204)();
+      },
+    });
+    renderizarApp(RUTA);
+
+    const cargando = await screen.findByText('Cargando…');
+    expect(cargando.classList.contains('cargando')).toBe(true);
+    expect(cargando.classList.contains('pantalla--ancha')).toBe(true);
+    await act(async () => liberar());
+    await screen.findByRole('heading', { name: TITULO });
+  });
+
+  it('NuevoPresupuesto_AgregarQuitarYPaginacion_BotonesSecundarios', async () => {
+    // FEAT-012, D-14, AC-13: Agregar, Quitar, Anterior y Siguiente (BuscadorArticulos y FormularioPresupuesto) son
+    // secundarios; Buscar y Grabar siguen principales.
+    servidor({ [BUSCAR_ARMAZON]: json(200, pagina([ARMAZON], 1, 51)) });
+    await abrir();
+    await buscar();
+    const botonAgregar = screen.getByRole('button', { name: `Agregar ${ARMAZON.codigo} ${ARMAZON.descripcion}` });
+    agregar(ARMAZON);
+
+    const secundarios = [
+      botonAgregar,
+      screen.getByRole('button', { name: 'Quitar línea 1' }),
+      screen.getByRole('button', { name: 'Anterior' }),
+      screen.getByRole('button', { name: 'Siguiente' }),
+    ];
+    for (const boton of secundarios) {
+      expect(boton.classList.contains('boton-secundario')).toBe(true);
+    }
+    expect(screen.getByRole('button', { name: 'Buscar' }).classList.contains('boton-secundario')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Grabar' }).classList.contains('boton-secundario')).toBe(false);
   });
 
   it('NuevoPresupuesto_Agregar1850_PrecioUnitarioSoloLectura', async () => {

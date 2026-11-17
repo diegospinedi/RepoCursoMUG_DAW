@@ -550,6 +550,7 @@ export function Presupuesto() {
           */}
           <button
             type="button"
+            className="boton-secundario"
             disabled={carga.presupuesto.estado !== 'final'}
             aria-disabled={descargando || undefined}
             aria-busy={descargando || undefined}
@@ -760,7 +761,11 @@ function EmisionPendiente({
       <p id={idAvisoPendiente} className="aviso" role="status">
         {AVISO_EMISION_PENDIENTE}
       </p>
-      {verificando && <p role="status">Verificando con ARCA…</p>}
+      {verificando && (
+        <p className="mensaje-estado" role="status">
+          Verificando con ARCA…
+        </p>
+      )}
       {mostrarObservacion && (
         <p id={idObservacion} className="aviso">
           {textoObservacion}
@@ -771,6 +776,7 @@ function EmisionPendiente({
           <button
             ref={refBotonDescartar}
             type="button"
+            className="boton-secundario"
             aria-describedby={mostrarObservacion ? idObservacion : undefined}
             aria-disabled={ocupado || undefined}
             onClick={() => !ocupado && alDescartar()}
@@ -863,7 +869,13 @@ function DialogoConfirmacion({ titulo, texto, textoConfirmar, enviando, alConfir
       <button type="button" aria-disabled={enviando} onClick={() => !enviando && alConfirmar()}>
         {textoConfirmar}
       </button>
-      <button ref={refCancelar} type="button" aria-disabled={enviando} onClick={() => !enviando && alCancelar()}>
+      <button
+        ref={refCancelar}
+        type="button"
+        className="boton-secundario"
+        aria-disabled={enviando}
+        onClick={() => !enviando && alCancelar()}
+      >
         Cancelar
       </button>
     </dialog>
@@ -954,7 +966,11 @@ function DialogoFacturar({ emitiendo, alEmitir, alCancelar }: PropsDialogoFactur
           </label>
         ))}
       </fieldset>
-      {emitiendo && <p role="status">Enviando la factura a ARCA…</p>}
+      {emitiendo && (
+        <p className="mensaje-estado" role="status">
+          Enviando la factura a ARCA…
+        </p>
+      )}
       <button
         type="button"
         disabled={concepto === null}
@@ -963,7 +979,12 @@ function DialogoFacturar({ emitiendo, alEmitir, alCancelar }: PropsDialogoFactur
       >
         Emitir
       </button>
-      <button type="button" aria-disabled={emitiendo} onClick={() => !emitiendo && alCancelar()}>
+      <button
+        type="button"
+        className="boton-secundario"
+        aria-disabled={emitiendo}
+        onClick={() => !emitiendo && alCancelar()}
+      >
         Cancelar
       </button>
     </dialog>

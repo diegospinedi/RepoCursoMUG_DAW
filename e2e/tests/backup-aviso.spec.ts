@@ -37,15 +37,18 @@ const RESTAURAR = /restaur|restore|restablec/i;
 /** Un control que combine el backup o una copia con cargarla, importarla, subirla o volver a ella. */
 const CARGAR_COPIA = /(backup|copia)[^]*(cargar|importar|subir|volver)|(cargar|importar|subir|volver)[^]*(backup|copia)/i;
 
-/** Las pantallas del menú del inicio, en su orden: el enlace y el título con que se reconoce cada una. */
+/**
+ * Las pantallas del menú del inicio, en su orden: el enlace y el título con que se reconoce cada una. El orden es el del
+ * menú en tarjetas de FEAT-012 (D-11): Ventas, Catálogo y Sistema.
+ */
 const PANTALLAS_DEL_MENU = [
-  { enlace: 'Cambiar la contraseña', titulo: 'Cambiar la contraseña' },
-  { enlace: 'Configuración', titulo: 'Configuración' },
-  { enlace: 'Artículos', titulo: 'Artículos' },
-  { enlace: 'Nuevo artículo', titulo: 'Nuevo artículo' },
   { enlace: 'Nuevo presupuesto', titulo: 'Nuevo presupuesto' },
   { enlace: 'Buscar presupuestos', titulo: 'Buscar presupuestos' },
   { enlace: 'Facturas', titulo: 'Buscar facturas' },
+  { enlace: 'Artículos', titulo: 'Artículos' },
+  { enlace: 'Nuevo artículo', titulo: 'Nuevo artículo' },
+  { enlace: 'Configuración', titulo: 'Configuración' },
+  { enlace: 'Cambiar la contraseña', titulo: 'Cambiar la contraseña' },
 ];
 
 /** El único campo de archivo que admite una pantalla: su etiqueta y su `accept`. */

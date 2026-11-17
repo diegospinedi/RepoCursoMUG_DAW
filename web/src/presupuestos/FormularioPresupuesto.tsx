@@ -295,7 +295,13 @@ function FilaLinea({ fila, numero, errores, alCambiarCantidad, alCambiarDescuent
       <td className="tabla__importe">{importeOSinDato(calculada.precios?.precioConDescuento ?? null)}</td>
       <td className="tabla__importe">{importeOSinDato(calculada.precios?.precioFinal ?? null)}</td>
       <td>
-        <button type="button" aria-label={`Quitar línea ${numero}`} aria-describedby={describe} onClick={alQuitar}>
+        <button
+          type="button"
+          className="boton-secundario"
+          aria-label={`Quitar línea ${numero}`}
+          aria-describedby={describe}
+          onClick={alQuitar}
+        >
           Quitar
         </button>
         {errorLinea !== undefined && (

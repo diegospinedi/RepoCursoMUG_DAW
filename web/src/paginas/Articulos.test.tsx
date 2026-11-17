@@ -184,6 +184,27 @@ describe('Articulos', () => {
     await screen.findByText('Página 1 de 3');
   });
 
+  it('Articulos_BotonesSecundarios_DesactivarReactivarYPaginacion', async () => {
+    // FEAT-012, D-14, AC-13: Desactivar, Reactivar, Anterior y Siguiente son secundarios; Buscar sigue principal.
+    servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, { ...LENTE, activo: false }], 1, 120)),
+    });
+    await abrir();
+    await waitFor(() => expect(filas()).toHaveLength(2));
+
+    const secundarios = [
+      within(filaDe(7)).getByRole('button', { name: DESACTIVAR_7 }),
+      within(filaDe(8)).getByRole('button', { name: 'Reactivar 8 Lente orgánico' }),
+      screen.getByRole('button', { name: 'Anterior' }),
+      screen.getByRole('button', { name: 'Siguiente' }),
+    ];
+    for (const boton of secundarios) {
+      expect(boton.classList.contains('boton-secundario')).toBe(true);
+    }
+    expect(screen.getByRole('button', { name: 'Buscar' }).classList.contains('boton-secundario')).toBe(false);
+  });
+
   it('Articulos_Desactivar_MuestraInactivo', async () => {
     // AC-05: queda inactivo en el listado y conserva sus datos.
     const servidor = servidorFalso({

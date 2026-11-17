@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { consultarEstadoBackup, listarEmisionesPendientes, salir, type EstadoBackup } from '../api/cliente';
 import { mostrarFecha } from '../presupuestos/reglas';
+import { MenuInicio } from './MenuInicio';
 
 /**
  * El separador antes del elemento `indice` de una lista en castellano de `total` elementos: nada antes del primero,
@@ -65,11 +66,12 @@ function avisoDe(estado: unknown): string | null {
 }
 
 /**
- * Pantalla con la sesión iniciada y los enlaces a las demás. Al cargar pide una vez la lista de emisiones pendientes
- * (FEAT-008, FR-03) y, si hay, las avisa con un enlace a cada presupuesto; sin pendientes, o con cualquier falla al
- * pedirla, no muestra nada (AC-04). También pide una vez el estado del backup (FEAT-010, FR-09) y, si falta el de ayer,
- * lo avisa; con cualquier falla al pedirlo no muestra nada. No consulta en forma periódica: cualquier pedido con cookie
- * renovaría la sesión.
+ * Pantalla con la sesión iniciada: los avisos, el menú de tarjetas a las demás pantallas (FEAT-012) y la barra final
+ * con "Salir" y su error, en ese orden (D-08). Al cargar pide una vez la lista de emisiones pendientes (FEAT-008, FR-03)
+ * y, si hay, las avisa con un enlace a cada presupuesto; sin pendientes, o con cualquier falla al pedirla, no muestra
+ * nada (AC-04). También pide una vez el estado del backup (FEAT-010, FR-09) y, si falta el de ayer, lo avisa; con
+ * cualquier falla al pedirlo no muestra nada. No consulta en forma periódica: cualquier pedido con cookie renovaría la
+ * sesión.
  */
 export function Inicio() {
   const navegar = useNavigate();
@@ -116,16 +118,11 @@ export function Inicio() {
   }
 
   return (
-    <section className="pantalla">
+    <section className="pantalla pantalla--menu">
       <h1>Sesión iniciada</h1>
       {aviso !== null && (
         <p className="mensaje-exito" role="status">
           {aviso}
-        </p>
-      )}
-      {mensaje !== null && (
-        <p className="mensaje-general" role="alert">
-          {mensaje}
         </p>
       )}
       {avisoBackup !== null && (
@@ -134,30 +131,17 @@ export function Inicio() {
         </p>
       )}
       {pendientes.length > 0 && <AvisoEmisionesPendientes presupuestos={pendientes} />}
-      <p>
-        <Link to="/cambiar-contrasena">Cambiar la contraseña</Link>
-      </p>
-      <p>
-        <Link to="/configuracion">Configuración</Link>
-      </p>
-      <p>
-        <Link to="/articulos">Artículos</Link>
-      </p>
-      <p>
-        <Link to="/articulos/nuevo">Nuevo artículo</Link>
-      </p>
-      <p>
-        <Link to="/presupuestos/nuevo">Nuevo presupuesto</Link>
-      </p>
-      <p>
-        <Link to="/presupuestos">Buscar presupuestos</Link>
-      </p>
-      <p>
-        <Link to="/facturas">Facturas</Link>
-      </p>
-      <button type="button" onClick={alSalir} disabled={saliendo}>
-        Salir
-      </button>
+      <MenuInicio />
+      <div className="inicio__acciones">
+        {mensaje !== null && (
+          <p className="mensaje-general" role="alert">
+            {mensaje}
+          </p>
+        )}
+        <button type="button" className="boton-secundario" onClick={alSalir} disabled={saliendo}>
+          Salir
+        </button>
+      </div>
     </section>
   );
 }

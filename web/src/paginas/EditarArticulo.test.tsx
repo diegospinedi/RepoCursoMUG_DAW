@@ -357,6 +357,21 @@ describe('EditarArticulo', () => {
     expect(servidor.pedidosA('GET', API)).toHaveLength(2);
   });
 
+  it('EditarArticulo_VolverAAbrir_BotonSecundario', async () => {
+    // FEAT-012, D-14, AC-13: "Volver a abrir" y "Reactivar" (como en el listado de artículos) son secundarios.
+    servidorFalso({
+      [`GET ${API}`]: json(200, { ...ARTICULO, activo: false }),
+      [`PUT ${API}/estado`]: conflicto('cambiado'),
+    });
+    await abrirFormulario();
+    expect(screen.getByRole('button', { name: 'Reactivar' }).classList.contains('boton-secundario')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reactivar' }));
+
+    const volver = await screen.findByRole('button', { name: 'Volver a abrir' });
+    expect(volver.classList.contains('boton-secundario')).toBe(true);
+  });
+
   it('EditarArticulo_VolverAAbrir_GrabarNoDisponibleDuranteLaReapertura', async () => {
     const reapertura = diferida({ ...ARTICULO, descripcion: 'Otra descripción', version: 5 });
     const servidor = servidorFalso({
