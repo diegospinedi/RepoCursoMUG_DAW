@@ -196,21 +196,27 @@ public sealed class RestauradorSqlite : IRestauradorBase
         }
     }
 
-    /// <summary>Verdadero si la base tiene todos los triggers de protección que crean sus migraciones.</summary>
+    /// <summary>
+    /// Verdadero si la base tiene todos los triggers de protección que crean sus migraciones, cada uno con el texto de
+    /// <see cref="TriggersDeProteccion"/> (comparado con <see cref="TriggersDeProteccion.Normalizar"/>): un trigger que
+    /// conserva el nombre pero tiene otro cuerpo no protege (H-01 del SAST).
+    /// </summary>
     private static bool TriggersCompletos(SqliteConnection conexion, IReadOnlyList<string> migraciones)
     {
-        var presentes = new HashSet<string>(StringComparer.Ordinal);
+        var presentes = new Dictionary<string, string>(StringComparer.Ordinal);
         using (var comando = conexion.CreateCommand())
         {
-            comando.CommandText = "SELECT name FROM sqlite_master WHERE type = 'trigger'";
+            comando.CommandText = "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'";
             using var lector = comando.ExecuteReader();
             while (lector.Read())
             {
-                presentes.Add(lector.GetString(0));
+                presentes[lector.GetString(0)] = lector.IsDBNull(1) ? string.Empty : TriggersDeProteccion.Normalizar(lector.GetString(1));
             }
         }
 
-        return TriggersDeProteccion.Esperados(migraciones).All(presentes.Contains);
+        return TriggersDeProteccion.Esperados(migraciones).All(esperado =>
+            presentes.TryGetValue(esperado.Nombre, out var sql)
+            && string.Equals(sql, TriggersDeProteccion.Normalizar(esperado.Sql), StringComparison.Ordinal));
     }
 
     /// <summary>

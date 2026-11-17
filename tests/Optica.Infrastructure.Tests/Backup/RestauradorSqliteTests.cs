@@ -284,6 +284,82 @@ public class RestauradorSqliteTests
         Assert.False(Directory.Exists(Path.Combine(entorno.Datos, RestauradorSqlite.CarpetaAnterior)));
     }
 
+    /// <summary>
+    /// Dos cuerpos que conservan el nombre de <c>TR_Factura_Inmutable</c> y lo dejan sin efecto (H-01 del SAST): uno que
+    /// no aborta y otro que no dispara nunca.
+    /// </summary>
+    public static TheoryData<string> TriggersFacturaNeutralizados => new()
+    {
+        "CREATE TRIGGER \"TR_Factura_Inmutable\" BEFORE UPDATE ON \"Factura\" FOR EACH ROW BEGIN SELECT 1; END",
+        "CREATE TRIGGER \"TR_Factura_Inmutable\" BEFORE UPDATE ON \"Factura\" FOR EACH ROW WHEN 0 " +
+        "BEGIN SELECT RAISE(ABORT, 'registro_cerrado'); END",
+    };
+
+    [Theory]
+    [MemberData(nameof(TriggersFacturaNeutralizados))]
+    public async Task Verificar_CopiaConUnTriggerDeOtroCuerpo_AjenaSinTocarLaBase(string otroCuerpo)
+    {
+        // Historial completo y todos los nombres, pero TR_Factura_Inmutable ya no protege: restaurarla dejaría modificar
+        // una factura con CAE (AGENTS.md).
+        using var entorno = await EntornoRestauracion.CrearAsync();
+        var copia = await entorno.HacerCopiaAsync(EntornoRestauracion.FechaCopia);
+        EntornoRestauracion.Ejecutar(copia, $"DROP TRIGGER \"TR_Factura_Inmutable\"; {otroCuerpo};");
+        var antes = entorno.FotoDatos();
+        var caso = entorno.CrearCasoDeUso();
+
+        var verificacion = await caso.VerificarAsync(copia);
+        var resultado = await caso.RestaurarAsync(copia);
+
+        Assert.Equal(RechazoCopia.Ajena, verificacion.Rechazo);
+        Assert.Equal(FallaRestauracion.CopiaRechazada, resultado.Falla);
+        Assert.Equal(RechazoCopia.Ajena, resultado.Copia.Rechazo);
+        Assert.Equal(antes, entorno.FotoDatos());
+        Assert.False(Directory.Exists(Path.Combine(entorno.Datos, RestauradorSqlite.CarpetaAnterior)));
+    }
+
+    [Theory]
+    [MemberData(nameof(TriggersFacturaNeutralizados))]
+    public async Task Restaurar_TemporalConUnTriggerDeOtroCuerpo_RechazadoAunqueLaCopiaHayaPasado(string otroCuerpo)
+    {
+        using var entorno = await EntornoRestauracion.CrearAsync();
+        var copia = await entorno.HacerCopiaAsync(EntornoRestauracion.FechaCopia);
+        EntornoRestauracion.Ejecutar(copia, $"DROP TRIGGER \"TR_Factura_Inmutable\"; {otroCuerpo};");
+        var antes = entorno.FotoDatos();
+
+        var resultado = await entorno.CrearCasoDeUso(new CopiaAceptada(entorno.CrearRestaurador())).RestaurarAsync(copia);
+
+        Assert.Equal(FallaRestauracion.CopiaRechazada, resultado.Falla);
+        Assert.Equal(RechazoCopia.Ajena, resultado.Copia.Rechazo);
+        Assert.Equal(antes, entorno.FotoDatos());
+        Assert.False(Directory.Exists(Path.Combine(entorno.Datos, RestauradorSqlite.CarpetaAnterior)));
+        Assert.False(File.Exists(Path.Combine(entorno.Datos, RestauradorSqlite.NombreTemporal)));
+    }
+
+    [Fact]
+    public async Task Verificar_CopiaConUnTriggerReformateado_Valida()
+    {
+        // El mismo cuerpo con otros espacios y saltos de línea es el mismo trigger: la comparación no depende del formato.
+        using var entorno = await EntornoRestauracion.CrearAsync();
+        var copia = await entorno.HacerCopiaAsync(EntornoRestauracion.FechaCopia);
+        EntornoRestauracion.Ejecutar(
+            copia,
+            "DROP TRIGGER \"TR_Factura_Inmutable\";\n" +
+            "CREATE TRIGGER   \"TR_Factura_Inmutable\"\r\n  BEFORE UPDATE ON \"Factura\"\n\tFOR EACH ROW\n" +
+            "BEGIN\n    SELECT RAISE(ABORT, 'registro_cerrado');\nEND;");
+
+        var verificacion = await entorno.CrearCasoDeUso().VerificarAsync(copia);
+
+        Assert.Null(verificacion.Rechazo);
+    }
+
+    [Fact]
+    public void TriggersDeProteccion_Normalizar_SinDependerDelFormato()
+    {
+        Assert.Equal(
+            "CREATE TRIGGER \"T\" BEFORE UPDATE ON \"X\" FOR EACH ROW BEGIN SELECT 1; END",
+            TriggersDeProteccion.Normalizar("  CREATE TRIGGER \"T\"\r\n\tBEFORE UPDATE ON \"X\"   FOR EACH ROW\nBEGIN SELECT 1; END ; "));
+    }
+
     [Fact]
     public async Task Restaurar_TemporalDanado_RechazadoSinTocarLaBase()
     {
@@ -340,8 +416,9 @@ public class RestauradorSqliteTests
     public void TriggersDeProteccion_CadaMigracionCreaExactamenteLosDeLaTabla()
     {
         // La guarda de la tabla: se migra una base nueva de a una migración y, después de cada una, los triggers de la base
-        // tienen que ser exactamente los de la tabla para las migraciones aplicadas. Una migración nueva que crea, borra o
-        // pierde un trigger (por ejemplo, al reconstruir una tabla) sin actualizar la tabla hace fallar esta prueba.
+        // tienen que ser exactamente los de la tabla para las migraciones aplicadas, con el mismo texto (normalizado) que
+        // la tabla. Una migración nueva que crea, borra, cambia o pierde un trigger (por ejemplo, al reconstruir una tabla)
+        // sin actualizar la tabla hace fallar esta prueba.
         var directorio = BaseTemporal.CrearDirectorioTemporal();
         try
         {
@@ -357,14 +434,18 @@ public class RestauradorSqliteTests
             {
                 migrador.Migrate(migracion);
                 aplicadas.Add(migracion);
-                var esperados = aplicadas
-                    .SelectMany(m => TriggersDeProteccion.PorMigracion.TryGetValue(m, out var t) ? t : [])
-                    .Order(StringComparer.Ordinal);
+                var esperados = TriggersDeProteccion.Esperados(aplicadas)
+                    .Select(t => TriggersDeProteccion.Normalizar(t.Nombre + " | " + t.Sql))
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+                // El nombre no tiene espacios: normalizar la fila entera normaliza solo el texto del trigger.
                 var enLaBase = contexto.Database
-                    .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type = 'trigger'")
+                    .SqlQueryRaw<string>("SELECT name || ' | ' || sql AS \"Value\" FROM sqlite_master WHERE type = 'trigger'")
                     .AsEnumerable()
-                    .Order(StringComparer.Ordinal);
-                Assert.True(esperados.SequenceEqual(enLaBase), $"Triggers después de {migracion}.");
+                    .Select(TriggersDeProteccion.Normalizar)
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+                Assert.Equal(esperados, enLaBase);
             }
 
             // CierrePresupuestos 6, Facturas 6, RecuperacionEmisiones 3 y Backup 2.

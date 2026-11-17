@@ -95,6 +95,65 @@ public class RestaurarBackupTests
         Assert.Empty(restaurador.Bitacora);
     }
 
+    /// <summary>
+    /// H-02 del SAST: rutas UNC y de dispositivo con un nombre de copia válido. Abrir una UNC inicia una autenticación
+    /// SMB que puede entregar el hash NTLM de la cuenta.
+    /// </summary>
+    public static TheoryData<string> RutasDeRed => new()
+    {
+        @"\\servidor-testigo\recurso\optica-2026-10-30.db",
+        @"\\?\UNC\servidor-testigo\recurso\optica-2026-10-30.db",
+        @"\\.\C:\Pendrive\optica-2026-10-30.db",
+        "//servidor-testigo/recurso/optica-2026-10-30.db",
+    };
+
+    [Theory]
+    [MemberData(nameof(RutasDeRed))]
+    public async Task Verificar_RutaUncODeDispositivo_RechazadaPorLaFormaSinAbrirla(string ruta)
+    {
+        var restaurador = new RestauradorFalso { Inspeccion = new InspeccionCopia(true, true, Conocidas, 0) };
+
+        var verificacion = await new RestaurarBackup(restaurador, restaurador.Datos).VerificarAsync(ruta);
+
+        Assert.Equal(RechazoCopia.RutaDeRed, verificacion.Rechazo);
+        // Por la forma del texto: el restaurador (el único que toca el disco) no se llamó, tampoco en Linux.
+        Assert.Empty(restaurador.Bitacora);
+        Assert.Null(verificacion.NombreArchivo);
+        Assert.Null(verificacion.Fecha);
+    }
+
+    [Theory]
+    [MemberData(nameof(RutasDeRed))]
+    public async Task Restaurar_RutaUncODeDispositivo_RechazadaSinTocarNada(string ruta)
+    {
+        var restaurador = new RestauradorFalso { Inspeccion = new InspeccionCopia(true, true, Conocidas, 0) };
+
+        var resultado = await new RestaurarBackup(restaurador, restaurador.Datos).RestaurarAsync(ruta);
+
+        Assert.Equal(FallaRestauracion.CopiaRechazada, resultado.Falla);
+        Assert.Equal(RechazoCopia.RutaDeRed, resultado.Copia.Rechazo);
+        Assert.Empty(restaurador.Bitacora);
+    }
+
+    [Theory]
+    [MemberData(nameof(RutasDeRed))]
+    public void FormaRuta_EsUncODispositivo_PorLaFormaDelTexto(string ruta)
+    {
+        Assert.True(FormaRuta.EsUncODispositivo(ruta));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Pendrive\optica-2026-10-30.db")]
+    [InlineData(@"E:\optica-2026-10-30.db")]
+    [InlineData("/media/pendrive/optica-2026-10-30.db")]
+    [InlineData(@"\Pendrive\optica-2026-10-30.db")]
+    [InlineData("optica-2026-10-30.db")]
+    [InlineData("")]
+    public void FormaRuta_Local_NoEsUncNiDispositivo(string ruta)
+    {
+        Assert.False(FormaRuta.EsUncODispositivo(ruta));
+    }
+
     [Fact]
     public async Task Verificar_CopiaInexistente_Rechazada()
     {

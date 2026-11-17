@@ -158,3 +158,13 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   nueva, y quedan cubiertas en la Api por `ProteccionTests` y en la web solo por revisión del código. `backup-aviso`
   probaba comportamiento de los Blocks 6 y 7 y no tuvo rojo propio: se mostró que puede fallar con mutaciones temporales
   revertidas. — agente (D-05), señalado por el verificador y el auditor — 2026-11-17 — Block 8.
+- **D-38 (del agente, cierre de CODE, SAST).** La verificación de la copia y del temporal compara también el texto
+  normalizado de cada trigger de protección (`TriggersDeProteccion` con nombre y SQL canónico, atada a las migraciones por
+  la prueba que migra de a una); un trigger con otro cuerpo hace la copia ajena (H-01). El argumento de
+  `restaurar-backup` rechaza por la forma del texto las rutas UNC y de dispositivo (`\\`, `\\?\`, `\\.\`, `//`) con la
+  regla `FormaRuta` de Application, que también usa `InspectorUbicaciones` (H-02). Riesgos residuales, para un ticket
+  aparte: triggers, vistas o índices de expresión de más en una copia armada a mano; el prefijo `\??\UNC\`, una letra
+  mapeada a una unidad de red o un enlace hacia la red en el argumento del comando; `trusted_schema = OFF` en
+  `FabricaConexion`; campos JSON desconocidos aceptados en `POST /api/configuracion/backup`. Todos exigen acceso a la
+  consola de la PC o no tienen impacto con el contrato actual. — agente (D-05), señalado por el SAST — 2026-11-17 —
+  cierre de CODE.

@@ -69,10 +69,10 @@ public sealed class InspectorUbicaciones : IInspectorUbicaciones
 
     /// <summary>
     /// Verdadero si la ruta empieza con dos separadores (<c>\\servidor\recurso</c>, <c>//servidor/recurso</c>,
-    /// <c>\\?\</c>, <c>\\.\</c>): UNC o de dispositivo (D-17).
+    /// <c>\\?\</c>, <c>\\.\</c>): UNC o de dispositivo (D-17). El criterio es <see cref="FormaRuta.EsUncODispositivo"/>,
+    /// el mismo con que se rechaza la ruta de una copia a restaurar.
     /// </summary>
-    public static bool EsUncODispositivo(string ruta) =>
-        ruta is { Length: >= 2 } && EsSeparador(ruta[0]) && EsSeparador(ruta[1]);
+    public static bool EsUncODispositivo(string ruta) => FormaRuta.EsUncODispositivo(ruta);
 
     /// <summary>
     /// Verdadero si las dos rutas, ya normalizadas, están en la misma unidad: con letra, la misma letra sin distinguir
@@ -322,8 +322,6 @@ public sealed class InspectorUbicaciones : IInspectorUbicaciones
     /// <summary>La letra de unidad en mayúscula si la ruta empieza con <c>X:</c>; null si no.</summary>
     private static char? Letra(string ruta) =>
         ruta is { Length: >= 2 } && char.IsAsciiLetter(ruta[0]) && ruta[1] == ':' ? char.ToUpperInvariant(ruta[0]) : null;
-
-    private static bool EsSeparador(char caracter) => caracter is '\\' or '/';
 }
 
 /// <summary>

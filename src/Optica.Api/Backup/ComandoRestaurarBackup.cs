@@ -13,8 +13,8 @@ namespace Optica.Api.Backup;
 /// <remarks>
 /// <para>
 /// En este orden: verifica que exista la base, sin crear nada; toma el candado de instancia única y lo mantiene hasta
-/// terminar, así no corre con la Api en marcha ni la Api arranca en el medio (R-08); verifica la copia (nombre, integridad
-/// y versión, D-28) y muestra el resultado y cuántas facturas con CAE de la base actual son posteriores a la última de la
+/// terminar, así no corre con la Api en marcha ni la Api arranca en el medio (R-08); verifica la copia (ruta local, nombre,
+/// integridad y versión, D-17, D-28) y muestra el resultado y cuántas facturas con CAE de la base actual son posteriores a la última de la
 /// copia (R-10); pide escribir <see cref="Confirmacion"/>; restaura; y recuerda revisar en ARCA los comprobantes emitidos
 /// desde la fecha de la copia antes de volver a facturar (R-07, D-15) y conservar bajo llave la carpeta con la base
 /// anterior (D-29). La restauración renueva las claves de sesión: todas las sesiones abiertas se cierran. Desde la
@@ -219,6 +219,10 @@ public sealed class ComandoRestaurarBackup(
     /// <summary>El rechazo de la copia; con un nombre fuera del patrón no se repite el nombre (puede llevar el de una persona).</summary>
     private static string MensajeRechazo(VerificacionCopia copia) => copia.Rechazo switch
     {
+        // Sin repetir la ruta: nombra un servidor y puede llevar el nombre de una persona (D-12).
+        RechazoCopia.RutaDeRed =>
+            "La ruta elegida es una ruta de red o de dispositivo (empieza con \\\\ o //) y no se abre. Copiá la copia a " +
+            $"una carpeta o un pendrive de esta PC y repetí el comando con esa ruta. {NoSeCambioNada}",
         RechazoCopia.NombreInvalido =>
             "El archivo elegido no es una copia de backup del sistema: su nombre tiene que ser optica-AAAA-MM-DD.db. " +
             NoSeCambioNada,

@@ -23,6 +23,12 @@ public enum RechazoCopia
 
     /// <summary>Tiene migraciones que esta versión no conoce: la hizo una versión más nueva de la aplicación.</summary>
     VersionMasNueva,
+
+    /// <summary>
+    /// La ruta es UNC o de dispositivo (<c>\\</c>, <c>\\?\</c>, <c>\\.\</c>, <c>//</c>): se rechaza por la forma del texto,
+    /// sin abrirla (D-17). Abrir una ruta UNC inicia una autenticación SMB que puede entregar el hash NTLM de la cuenta.
+    /// </summary>
+    RutaDeRed,
 }
 
 /// <summary>
@@ -82,7 +88,8 @@ public sealed record ResultadoRestauracion(
 /// </summary>
 /// <remarks>
 /// <para>
-/// La verificación (<see cref="VerificarAsync"/>) exige, en orden, el nombre exacto de una copia
+/// La verificación (<see cref="VerificarAsync"/>) exige, en orden, una ruta que no sea UNC ni de dispositivo
+/// (<see cref="FormaRuta.EsUncODispositivo"/>, decidido por el texto sin abrirla), el nombre exacto de una copia
 /// (<see cref="CopiaBackup.TryLeerFecha"/>), que el archivo exista, que pase la comprobación de integridad y que su
 /// historial de migraciones sea un prefijo, no vacío, de las migraciones de esta versión: una copia con migraciones
 /// desconocidas es de una versión más nueva, y una sin historial o con huecos no es de la óptica (D-28). Recién con la copia
@@ -113,6 +120,14 @@ public sealed class RestaurarBackup(IRestauradorBase restaurador, IDatosLocales 
     public async Task<VerificacionCopia> VerificarAsync(string rutaCopia, CancellationToken cancelacion = default)
     {
         ArgumentNullException.ThrowIfNull(rutaCopia);
+
+        // Antes que nada y sin abrirla: una ruta UNC o de dispositivo se rechaza por su forma (D-17). Abrirla iniciaría
+        // una autenticación SMB contra el servidor que nombra. Ni el nombre ni la fecha se devuelven.
+        if (FormaRuta.EsUncODispositivo(rutaCopia))
+        {
+            return new VerificacionCopia(RechazoCopia.RutaDeRed, null, null, false, null);
+        }
+
         var nombre = Path.GetFileName(rutaCopia);
         if (!CopiaBackup.TryLeerFecha(nombre, out var fecha))
         {

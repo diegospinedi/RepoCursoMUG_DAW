@@ -253,6 +253,30 @@ public sealed class ComandoRestaurarBackupTests
     }
 
     [Theory]
+    [InlineData(@"\\servidor-testigo\recurso\optica-2026-10-30.db")]
+    [InlineData(@"\\?\UNC\servidor-testigo\recurso\optica-2026-10-30.db")]
+    [InlineData(@"\\.\servidor-testigo\optica-2026-10-30.db")]
+    [InlineData("//servidor-testigo/recurso/optica-2026-10-30.db")]
+    public async Task Comando_RutaUncODeDispositivo_FallaSinRepetirLaRutaNiTocarLaBase(string ruta)
+    {
+        // H-02 del SAST: abrir una ruta UNC inicia una autenticación SMB que puede entregar el hash NTLM de la cuenta.
+        using var escenario = new Escenario();
+        await escenario.PrepararCopiaYDatosAsync();
+        var antes = Foto(escenario.Datos);
+
+        var (codigo, salida) = await EjecutarAsync(escenario.Datos, "RESTAURAR\n", ruta);
+
+        Assert.Equal(2, codigo);
+        Assert.Contains("es una ruta de red o de dispositivo", salida, StringComparison.Ordinal);
+        Assert.Contains("No se cambió nada", salida, StringComparison.Ordinal);
+        Assert.DoesNotContain("servidor-testigo", salida, StringComparison.Ordinal);
+        Assert.DoesNotContain("optica-2026-10-30.db", salida, StringComparison.Ordinal);
+        Assert.DoesNotContain("Escribí RESTAURAR", salida, StringComparison.Ordinal);
+        Assert.Equal(antes, Foto(escenario.Datos));
+        AfirmarSinRutas(salida, escenario);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     public async Task Comando_ArgumentosIncorrectos_FallaSinTocarLaBase(int extras)

@@ -5,7 +5,7 @@ namespace Optica.Application.Backup;
 /// existe, si es una copia completa (modo de diario de reversión y comprobación de integridad correcta), las migraciones
 /// de su historial (null si no tiene la tabla de migraciones), el número interno de su última factura (0 si no tiene
 /// facturas o es de una versión anterior a la facturación) y si tiene todos los triggers de protección (de solo agregar
-/// y de registros cerrados) que crean las migraciones de su historial.
+/// y de registros cerrados) que crean las migraciones de su historial, cada uno con el texto con que lo crea su migración.
 /// </summary>
 /// <remarks>Ningún dato de clientes: solo identificadores de migraciones, un número y dos indicadores.</remarks>
 public sealed record InspeccionCopia(
