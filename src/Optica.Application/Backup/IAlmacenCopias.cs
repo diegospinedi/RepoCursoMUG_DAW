@@ -16,6 +16,13 @@ public interface IAlmacenCopias
     /// <summary>La ruta del temporal de la copia de <paramref name="fecha"/>: <c>optica-AAAA-MM-DD.db.parcial</c>.</summary>
     string RutaTemporal(string carpeta, DateOnly fecha);
 
+    /// <summary>
+    /// Verdadero si la carpeta existe y se puede leer (FR-09: la ubicación accesible del aviso al ingresar). A diferencia
+    /// de los demás métodos, nunca lanza, como <see cref="IInspectorUbicaciones"/>: si no puede evaluarla (carpeta
+    /// desconectada, sin permiso, ruta inválida) responde falso. No lista la carpeta entera ni registra la ruta.
+    /// </summary>
+    bool SePuedeLeer(string carpeta);
+
     /// <summary>Las fechas de las copias terminadas de la carpeta (sin temporales), en cualquier orden.</summary>
     /// <exception cref="IOException">La carpeta no existe o no se puede leer.</exception>
     /// <exception cref="UnauthorizedAccessException">Sin permiso para leer la carpeta.</exception>

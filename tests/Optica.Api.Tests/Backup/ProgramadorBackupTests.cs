@@ -628,6 +628,8 @@ public sealed class ProgramadorBackupTests
 
         public string RutaTemporal(string carpeta, DateOnly fecha) => real.RutaTemporal(carpeta, fecha);
 
+        public bool SePuedeLeer(string carpeta) => real.SePuedeLeer(carpeta);
+
         public IReadOnlyList<DateOnly> ListarCopias(string carpeta) => real.ListarCopias(carpeta);
 
         public IReadOnlyList<DateOnly> ListarTemporalesSinCopia(string carpeta) => real.ListarTemporalesSinCopia(carpeta);

@@ -196,16 +196,40 @@ const PANTALLAS: Pantalla[] = [
     ruta: '/',
     descripcion: 'inicio',
     preparar: () =>
-      servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }), 'GET /api/sesion': vacia(204) }),
+      servidorFalso({
+        'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+        'GET /api/sesion': vacia(204),
+        // FEAT-010: el backup de ayer está, así que no hay aviso.
+        'GET /api/backup/estado': json(200, { faltaAyer: false, ultimo: '2026-10-30', ubicacion: 'elegida', accesible: true }),
+      }),
     titulo: 'Sesión iniciada',
   },
   {
     ruta: '/',
     descripcion: 'inicio con el aviso del cambio',
     preparar: () =>
-      servidorFalso({ 'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }), 'GET /api/sesion': vacia(204) }),
+      servidorFalso({
+        'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+        'GET /api/sesion': vacia(204),
+        'GET /api/backup/estado': json(200, { faltaAyer: false, ultimo: '2026-10-30', ubicacion: 'elegida', accesible: true }),
+      }),
     titulo: 'Sesión iniciada',
     estadoNavegacion: { mensaje: MENSAJE_CAMBIADA },
+  },
+  {
+    ruta: '/',
+    descripcion: 'inicio con el aviso de backup',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/acceso/estado': json(200, { contrasenaDefinida: true }),
+        'GET /api/sesion': vacia(204),
+        // FEAT-010: falta el de ayer y la ubicación no está accesible; el texto del aviso también se revisa.
+        'GET /api/backup/estado': json(200, { faltaAyer: true, ultimo: '2026-10-29', ubicacion: 'elegida', accesible: false }),
+      }),
+    titulo: 'Sesión iniciada',
+    interactuar: async () => {
+      expect(await screen.findByText(/^Falta el backup de ayer\./)).toBeTruthy();
+    },
   },
   {
     ruta: '/definir-contrasena',

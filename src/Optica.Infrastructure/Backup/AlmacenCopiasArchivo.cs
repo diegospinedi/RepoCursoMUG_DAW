@@ -18,6 +18,35 @@ public sealed class AlmacenCopiasArchivo : IAlmacenCopias
         return Path.Combine(carpeta, CopiaBackup.NombreParcial(fecha));
     }
 
+    /// <summary>
+    /// <see cref="Directory.Exists(string)"/> y la primera entrada de la carpeta, sin enumerarla entera. Las fallas de E/S,
+    /// de permisos y de ruta inválida responden falso y no se registran (su texto puede traer la ruta, D-12).
+    /// </summary>
+    public bool SePuedeLeer(string carpeta)
+    {
+        if (string.IsNullOrWhiteSpace(carpeta))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Directory.Exists(carpeta))
+            {
+                return false;
+            }
+
+            using var entradas = Directory.EnumerateFileSystemEntries(carpeta).GetEnumerator();
+            entradas.MoveNext();
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
     public IReadOnlyList<DateOnly> ListarCopias(string carpeta) =>
         [.. Copias(carpeta).Select(copia => copia.Fecha)];
 

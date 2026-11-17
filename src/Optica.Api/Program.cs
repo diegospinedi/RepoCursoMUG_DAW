@@ -173,6 +173,8 @@ public partial class Program
         // Block 5: si toca el backup programado de hoy (20:00 locales, sin la copia programada en el historial, D-24); lo
         // consulta el programador en un alcance propio en cada despertar.
         builder.Services.AddScoped<ConsultarBackupProgramado>();
+        // Block 6: el estado del backup para el aviso al ingresar (GET /api/backup/estado, con sesión), sin rutas (D-12).
+        builder.Services.AddScoped<ObtenerEstadoBackup>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el

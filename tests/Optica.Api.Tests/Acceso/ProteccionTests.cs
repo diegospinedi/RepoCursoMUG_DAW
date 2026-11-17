@@ -483,6 +483,35 @@ public sealed class ProteccionTests
         Assert.Equal(string.Empty, await sinJson.Content.ReadAsStringAsync());
     }
 
+    /// <summary>FEAT-010, Block 6: el estado del backup para el aviso al ingresar.</summary>
+    private const string RutaEstadoBackup = "/api/backup/estado";
+
+    /// <summary>
+    /// Sad path: sin sesión, <c>GET /api/backup/estado</c> responde 401 sin cuerpo. La ruta existe, solo con GET, y no es
+    /// anónima: dice si hay backups y cuándo fue el último. Con sesión responde 200.
+    /// </summary>
+    [Fact]
+    public async Task RutasEstado_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        Assert.Contains((HttpMethods.Get, RutaEstadoBackup), endpoints);
+        Assert.Equal([HttpMethods.Get], endpoints.Where(e => e.Ruta == RutaEstadoBackup).Select(e => e.Metodo));
+        Assert.False(RutasAnonimas.Contiene(HttpMethods.Get, RutaEstadoBackup), $"{RutaEstadoBackup} no puede ser anónima.");
+
+        var respuesta = await Http.GetAsync(cliente, RutaEstadoBackup);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+        Assert.Null(respuesta.Headers.Location);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+
+        var conSesion = await Http.GetAsync(cliente, RutaEstadoBackup, cookie);
+        Assert.Equal(HttpStatusCode.OK, conSesion.StatusCode);
+    }
+
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
 
     private const string RutaBusqueda = RutaPresupuestos + "/busqueda";

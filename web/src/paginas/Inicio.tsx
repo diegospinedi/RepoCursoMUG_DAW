@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { listarEmisionesPendientes, salir } from '../api/cliente';
+import { consultarEstadoBackup, listarEmisionesPendientes, salir, type EstadoBackup } from '../api/cliente';
+import { mostrarFecha } from '../presupuestos/reglas';
 
 /**
  * El separador antes del elemento `indice` de una lista en castellano de `total` elementos: nada antes del primero,
@@ -32,6 +33,29 @@ function AvisoEmisionesPendientes({ presupuestos }: { presupuestos: readonly num
   );
 }
 
+/**
+ * El texto del aviso de backup (FEAT-010, FR-09, D-26), o `null` si no falta el de ayer: la fecha del último backup en
+ * dd/mm/aaaa o que no hay ninguno, y después si no hay una ubicación elegida o si la elegida no está accesible. Sin
+ * enlaces ni la palabra "configuración" (D-13).
+ */
+function textoAvisoBackup(estado: EstadoBackup): string | null {
+  if (!estado.faltaAyer) {
+    return null;
+  }
+  const frases = [
+    'Falta el backup de ayer.',
+    estado.ultimo === null
+      ? 'No hay ningún backup disponible.'
+      : `El último backup es del ${mostrarFecha(estado.ultimo)}.`,
+  ];
+  if (estado.ubicacion === 'sin_elegir') {
+    frases.push('No hay una ubicación de backup elegida.');
+  } else if (!estado.accesible) {
+    frases.push('La ubicación del backup no está accesible.');
+  }
+  return frases.join(' ');
+}
+
 /** El aviso que otra pantalla deja en el estado de la navegación (por ejemplo, después de cambiar la contraseña). */
 function avisoDe(estado: unknown): string | null {
   if (typeof estado !== 'object' || estado === null || !('mensaje' in estado)) {
@@ -43,7 +67,9 @@ function avisoDe(estado: unknown): string | null {
 /**
  * Pantalla con la sesión iniciada y los enlaces a las demás. Al cargar pide una vez la lista de emisiones pendientes
  * (FEAT-008, FR-03) y, si hay, las avisa con un enlace a cada presupuesto; sin pendientes, o con cualquier falla al
- * pedirla, no muestra nada (AC-04). No consulta en forma periódica: cualquier pedido con cookie renovaría la sesión.
+ * pedirla, no muestra nada (AC-04). También pide una vez el estado del backup (FEAT-010, FR-09) y, si falta el de ayer,
+ * lo avisa; con cualquier falla al pedirlo no muestra nada. No consulta en forma periódica: cualquier pedido con cookie
+ * renovaría la sesión.
  */
 export function Inicio() {
   const navegar = useNavigate();
@@ -51,6 +77,7 @@ export function Inicio() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [saliendo, setSaliendo] = useState(false);
   const [pendientes, setPendientes] = useState<readonly number[]>([]);
+  const [avisoBackup, setAvisoBackup] = useState<string | null>(null);
 
   useEffect(() => {
     let vigente = true;
@@ -61,7 +88,15 @@ export function Inicio() {
         setPendientes(resultado.datos);
       }
     }
+    async function consultarBackup() {
+      const resultado = await consultarEstadoBackup();
+      // Como el de las emisiones: una falla no se muestra.
+      if (vigente && resultado.tipo === 'ok') {
+        setAvisoBackup(textoAvisoBackup(resultado.datos));
+      }
+    }
     void listar();
+    void consultarBackup();
     return () => {
       vigente = false;
     };
@@ -91,6 +126,11 @@ export function Inicio() {
       {mensaje !== null && (
         <p className="mensaje-general" role="alert">
           {mensaje}
+        </p>
+      )}
+      {avisoBackup !== null && (
+        <p className="aviso" role="status">
+          {avisoBackup}
         </p>
       )}
       {pendientes.length > 0 && <AvisoEmisionesPendientes presupuestos={pendientes} />}

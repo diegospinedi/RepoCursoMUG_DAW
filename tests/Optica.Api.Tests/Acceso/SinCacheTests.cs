@@ -547,6 +547,27 @@ public sealed class SinCacheTests : IDisposable
         AfirmarNoStore(grande, "413 del backup");
     }
 
+    /// <summary>
+    /// FEAT-010, Block 6: el estado del backup tampoco queda en caché (el aviso tiene que ver el estado de cada ingreso):
+    /// ni el 401 ni el 200.
+    /// </summary>
+    [Fact]
+    public async Task RutasEstadoBackup_NoStore()
+    {
+        const string ruta = "/api/backup/estado";
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, ruta);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del estado del backup");
+
+        var cookie = await Http.DefinirAsync(cliente);
+        var estado = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, estado.StatusCode);
+        AfirmarNoStore(estado, "GET del estado del backup");
+    }
+
     /// <summary>Inspector que toma toda ruta como de otra unidad, existente y escribible: la prueba no depende del disco.</summary>
     private sealed class InspectorOtraUnidad : Optica.Application.Backup.IInspectorUbicaciones
     {

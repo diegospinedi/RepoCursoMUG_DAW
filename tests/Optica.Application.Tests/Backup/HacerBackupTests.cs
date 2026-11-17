@@ -393,6 +393,8 @@ public class HacerBackupTests
         public string RutaTemporal(string carpeta, DateOnly fecha) =>
             Path.Combine(carpeta, CopiaBackup.NombreParcial(fecha));
 
+        public bool SePuedeLeer(string carpeta) => throw new NotSupportedException("El backup no consulta la lectura.");
+
         public IReadOnlyList<DateOnly> ListarCopias(string carpeta)
         {
             Assert.Equal(Carpeta, carpeta);

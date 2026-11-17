@@ -124,3 +124,13 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   Debug, para que la primera copia salga apenas se elige la carpeta. ADR-030 dice que las pruebas de la Api arrancan el
   programador con el reloj falso: vale D-25 (`FabricaApi` lo quita) y el ADR queda leído así. — agente (D-05),
   señalado por el verificador y el auditor — 2026-11-16 — Block 5.
+- **D-35 (del agente, Block 6).** `accesible` sale de `IAlmacenCopias.SePuedeLeer`, que nunca lanza (como
+  `IInspectorUbicaciones`) y solo mira si la carpeta existe y su primer elemento, sin listar las copias; el caso de uso no
+  captura excepciones. `faltaAyer` usa `ReglaBackupDiario.FaltaLaDeAyer` sobre una sola lectura de `ultimo`. El aviso
+  sale solo si falta el de ayer (FR-09, AC-18): si el pendrive se desconecta después de la copia de ayer, el aviso
+  aparece recién el día siguiente a la primera copia fallida; avisar antes sería un cambio de PRD. La fecha se muestra
+  con `mostrarFecha` de `presupuestos/reglas.ts` (como facturas; moverla a `api/fechas.ts` queda como deuda). La guarda de
+  desmontaje del aviso no se puede distinguir con una prueba en React 19 y queda como limitación conocida. El caso "sin
+  permiso" se saltea en Windows y como root. El implementador intentó una vez editar una prueba con `sed -i`; el
+  clasificador lo bloqueó y no se aplicó. — agente (D-05), señalado por el verificador y el auditor — 2026-11-17 —
+  Block 6.

@@ -1536,6 +1536,46 @@ export const verificarEmision = (numero: number): Promise<Resultado<Verificacion
     ? pedir(opcionesEmisionPendiente(numero, 'verificacion', MOTIVOS_409_VERIFICACION), leerVerificacion).then(sinCampo)
     : Promise.resolve({ tipo: 'general', mensaje: MENSAJE_PRESUPUESTO_NO_ENCONTRADO });
 
+// ---- Estado del backup (FEAT-010, FR-09): GET /api/backup/estado ----
+
+/** Si hay una ubicación de backup elegida. */
+export type UbicacionEstadoBackup = 'elegida' | 'sin_elegir';
+
+/**
+ * El estado del backup para el aviso al ingresar: si falta el de ayer, la fecha del último (`yyyy-MM-dd`, o `null` si
+ * no hay ninguno), si hay una ubicación elegida y si esa ubicación se puede leer. Nunca trae la ruta (D-12).
+ */
+export interface EstadoBackup {
+  faltaAyer: boolean;
+  ultimo: string | null;
+  ubicacion: UbicacionEstadoBackup;
+  accesible: boolean;
+}
+
+/**
+ * Los cuatro campos del contrato, cada uno con su tipo; solo copia esos campos. Sin ubicación elegida no puede ser
+ * accesible: esa combinación, como cualquier otra forma, es una respuesta ilegible.
+ */
+const leerEstadoBackup: Lector<EstadoBackup> = (cuerpo) => {
+  if (
+    !esObjeto(cuerpo) ||
+    typeof cuerpo.faltaAyer !== 'boolean' ||
+    !(cuerpo.ultimo === null || esFecha(cuerpo.ultimo)) ||
+    (cuerpo.ubicacion !== 'elegida' && cuerpo.ubicacion !== 'sin_elegir') ||
+    typeof cuerpo.accesible !== 'boolean' ||
+    (cuerpo.ubicacion === 'sin_elegir' && cuerpo.accesible)
+  ) {
+    return undefined;
+  }
+  return { faltaAyer: cuerpo.faltaAyer, ultimo: cuerpo.ultimo, ubicacion: cuerpo.ubicacion, accesible: cuerpo.accesible };
+};
+
+/**
+ * El estado del backup (FEAT-010, FR-09) con `GET /api/backup/estado`. Lo pide la pantalla de inicio una vez al cargar.
+ */
+export const consultarEstadoBackup = (): Promise<Resultado<EstadoBackup>> =>
+  pedir({ metodo: 'GET', ruta: '/api/backup/estado' }, leerEstadoBackup);
+
 /**
  * Descarta la emisión pendiente de un presupuesto con una observación vigente (FEAT-008, FR-09, FR-11) con
  * `POST /api/presupuestos/{numero}/factura/descarte`, sin cuerpo: 204 sin datos. Un 409 `sin_pendiente` o

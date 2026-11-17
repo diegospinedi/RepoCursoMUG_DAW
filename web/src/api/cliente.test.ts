@@ -26,6 +26,7 @@ import {
   consultarUbicacionBackup,
   grabarUbicacionBackup,
   MENSAJE_BACKUP_GRANDE,
+  consultarEstadoBackup,
   consultarEstado,
   consultarMarca,
   consultarSesion,
@@ -727,6 +728,64 @@ describe('cliente de la Api: ubicación del backup', () => {
 
     expect(await grabarUbicacionBackup(CARPETA)).toEqual(ILEGIBLE);
     expect(await grabarUbicacionBackup(CARPETA)).toEqual(ILEGIBLE);
+  });
+});
+
+describe('cliente de la Api: estado del backup (FEAT-010, Block 6)', () => {
+  const RUTA = '/api/backup/estado';
+  const ILEGIBLE = { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION };
+  const ESTADO = { faltaAyer: true, ultimo: '2026-10-29', ubicacion: 'elegida', accesible: false };
+
+  it('consultarEstadoBackup_200_LoDevuelveSoloConSusCampos', async () => {
+    const servidor = servidorFalso({ [`GET ${RUTA}`]: json(200, { ...ESTADO, ruta: 'E:\\Backups', otro: 1 }) });
+
+    // Solo los cuatro campos del contrato: un campo de más (una ruta, por ejemplo) no se copia (D-12).
+    expect(await consultarEstadoBackup()).toEqual({ tipo: 'ok', datos: ESTADO });
+    const [pedido] = servidor.pedidosA('GET', RUTA);
+    expect(pedido?.init?.credentials).toBe('same-origin');
+    expect(pedido?.init?.cache).toBe('no-store');
+  });
+
+  it.each([
+    ['sin ningún backup y sin ubicación', { faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: false }],
+    ['con el de ayer y la ubicación accesible', { faltaAyer: false, ultimo: '2026-10-30', ubicacion: 'elegida', accesible: true }],
+  ])('consultarEstadoBackup_200_%s', async (_caso, cuerpo) => {
+    servidorFalso({ [`GET ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await consultarEstadoBackup()).toEqual({ tipo: 'ok', datos: cuerpo });
+  });
+
+  it.each([
+    ['cuerpo que no es objeto', 'texto'],
+    ['cuerpo null', null],
+    ['faltaAyer ausente', { ultimo: null, ubicacion: 'sin_elegir', accesible: false }],
+    ['faltaAyer como texto', { ...ESTADO, faltaAyer: 'true' }],
+    ['ultimo con otro formato', { ...ESTADO, ultimo: '29/10/2026' }],
+    ['ultimo inexistente', { ...ESTADO, ultimo: '2026-02-30' }],
+    ['ultimo ausente', { faltaAyer: true, ubicacion: 'elegida', accesible: false }],
+    ['ubicacion desconocida', { ...ESTADO, ubicacion: 'E:\\Backups' }],
+    ['accesible como número', { ...ESTADO, accesible: 0 }],
+    ['sin elegir pero accesible', { faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: true }],
+  ])('consultarEstadoBackup_%s_ErrorGeneral', async (_caso, cuerpo) => {
+    servidorFalso({ [`GET ${RUTA}`]: json(200, cuerpo) });
+
+    expect(await consultarEstadoBackup()).toEqual(ILEGIBLE);
+  });
+
+  it('consultarEstadoBackup_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [`GET ${RUTA}`]: vacia(401) });
+
+    expect(await consultarEstadoBackup()).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('consultarEstadoBackup_500YSinRed_MensajeGeneral', async () => {
+    servidorFalso({ [`GET ${RUTA}`]: [vacia(500), sinRed] });
+
+    expect(await consultarEstadoBackup()).toEqual(ILEGIBLE);
+    expect(await consultarEstadoBackup()).toEqual(ILEGIBLE);
   });
 });
 

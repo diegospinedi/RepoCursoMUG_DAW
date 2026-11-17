@@ -277,6 +277,171 @@ describe('Inicio', () => {
     });
   });
 
+  describe('aviso de backup (FEAT-010)', () => {
+    const RUTA_ESTADO = '/api/backup/estado';
+    const INICIO_AVISO = 'Falta el backup de ayer.';
+
+    /** Abre el inicio con el estado indicado y espera a que la pantalla haya procesado la respuesta. */
+    async function abrirInicio(estado: Parameters<typeof servidorFalso>[0][string]) {
+      const servidor = servidorFalso({ ...conSesion, [`GET ${RUTA_ESTADO}`]: estado });
+      renderizarApp('/');
+      await screen.findByRole('heading', { name: 'Sesión iniciada' });
+      await waitFor(() => expect(servidor.pedidosA('GET', RUTA_ESTADO)).toHaveLength(1));
+      // La respuesta se procesa después del pedido: un ciclo más para que un aviso que no debe estar tampoco llegue.
+      await act(async () => {
+        await new Promise((resolver) => setTimeout(resolver, 0));
+      });
+      return servidor;
+    }
+
+    /** El aviso de backup: el `status` de la pantalla que empieza con "Falta el backup de ayer.". */
+    function avisoBackup() {
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      return within(pantalla!)
+        .queryAllByRole('status')
+        .find((elemento) => (elemento.textContent ?? '').startsWith(INICIO_AVISO));
+    }
+
+    /**
+     * Los `status` que hablan del backup: los de la pantalla, o los de todo el documento si la pantalla ya no está
+     * montada. No mira el resto del texto (los enlaces y los títulos pueden nombrar el backup en el futuro).
+     */
+    function statusDeBackup() {
+      const pantalla = screen.queryByRole('heading', { name: 'Sesión iniciada' })?.closest('section');
+      const estados = pantalla ? within(pantalla).queryAllByRole('status') : screen.queryAllByRole('status');
+      return estados.filter((elemento) => /backup/i.test(elemento.textContent ?? ''));
+    }
+
+    it.each([
+      [
+        'con la ubicación accesible',
+        { faltaAyer: true, ultimo: '2026-10-29', ubicacion: 'elegida', accesible: true },
+        'Falta el backup de ayer. El último backup es del 29/10/2026.',
+      ],
+      [
+        // AC-18: el pendrive está desconectado; la fecha sale del historial.
+        'con la ubicación no accesible',
+        { faltaAyer: true, ultimo: '2026-10-29', ubicacion: 'elegida', accesible: false },
+        'Falta el backup de ayer. El último backup es del 29/10/2026. La ubicación del backup no está accesible.',
+      ],
+    ])('Inicio_AvisoBackupConFecha (%s)', async (_caso, estado, texto) => {
+      // AC-09: un solo pedido al cargar y el aviso con la fecha del último backup en dd/mm/aaaa.
+      const servidor = await abrirInicio(json(200, estado));
+
+      const aviso = avisoBackup();
+      expect(aviso?.textContent).toBe(texto);
+      // D-13: sin enlaces ni la palabra "configuración" (hay e2e que buscan el enlace "Configuración" por subcadena).
+      expect(within(aviso!).queryAllByRole('link')).toHaveLength(0);
+      expect(aviso?.textContent?.toLowerCase()).not.toContain('configuración');
+      expect(servidor.pedidosA('GET', RUTA_ESTADO)).toHaveLength(1);
+      const [pedido] = servidor.pedidosA('GET', RUTA_ESTADO);
+      expect(pedido?.init?.credentials).toBe('same-origin');
+      // El enlace a la configuración sigue siendo uno solo.
+      expect(screen.getAllByRole('link', { name: /configuración/i })).toHaveLength(1);
+    });
+
+    it.each([
+      [
+        // Base nueva, sin ubicación elegida (D-26: el texto de "sin elegir", no el de "no accesible").
+        'sin ubicación elegida',
+        { faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: false },
+        'Falta el backup de ayer. No hay ningún backup disponible. No hay una ubicación de backup elegida.',
+      ],
+      [
+        // La ubicación ya se eligió y está accesible, pero todavía no se hizo ningún backup: solo la primera parte.
+        'con la ubicación elegida y accesible',
+        { faltaAyer: true, ultimo: null, ubicacion: 'elegida', accesible: true },
+        'Falta el backup de ayer. No hay ningún backup disponible.',
+      ],
+    ])('Inicio_AvisoSinNingunBackup (%s)', async (_caso, estado, texto) => {
+      // AC-10: no existe ningún backup y falta el de ayer.
+      await abrirInicio(json(200, estado));
+
+      const aviso = avisoBackup();
+      expect(aviso?.textContent).toBe(texto);
+      expect(within(aviso!).queryAllByRole('link')).toHaveLength(0);
+      expect(aviso?.textContent?.toLowerCase()).not.toContain('configuración');
+    });
+
+    it.each([
+      ['con la ubicación accesible', { faltaAyer: false, ultimo: '2026-10-30', ubicacion: 'elegida', accesible: true }],
+      ['con la ubicación no accesible', { faltaAyer: false, ultimo: '2026-10-31', ubicacion: 'elegida', accesible: false }],
+    ])('Inicio_ConElDeAyer_SinAviso (%s)', async (_caso, estado) => {
+      // FR-09: el aviso es por la falta del backup de ayer; sin esa falta no se muestra nada.
+      await abrirInicio(json(200, estado));
+
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      expect(within(pantalla!).queryByRole('status')).toBeNull();
+      expect(statusDeBackup()).toEqual([]);
+    });
+
+    it.each([
+      ['404', vacia(404)],
+      ['500', vacia(500)],
+      ['falla de red', sinRed],
+      ['respuesta ilegible', json(200, { faltaAyer: 'sí', ultimo: null, ubicacion: 'sin_elegir', accesible: false })],
+    ])('Inicio_EstadoFalla_SinAviso (%s)', async (_caso, respuesta) => {
+      const errores = vi.spyOn(console, 'error');
+      const advertencias = vi.spyOn(console, 'warn');
+
+      await abrirInicio(respuesta);
+
+      // Si el estado falla no se muestra nada: ni el aviso, ni un error, ni nada en la consola.
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      expect(within(pantalla!).queryByRole('status')).toBeNull();
+      expect(within(pantalla!).queryByRole('alert')).toBeNull();
+      expect(statusDeBackup()).toEqual([]);
+      expect(screen.getByTestId('ubicacion').textContent).toBe('/');
+      expect(errores).not.toHaveBeenCalled();
+      expect(advertencias).not.toHaveBeenCalled();
+    });
+
+    it('Inicio_AvisoBackupYEmisionesPendientes_Juntos', async () => {
+      // Los dos avisos son independientes: cada uno con su pedido y su status.
+      servidorFalso({
+        ...conSesion,
+        [`GET ${RUTA_ESTADO}`]: json(200, { faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: false }),
+        'GET /api/facturacion/emisiones-pendientes': json(200, { presupuestos: [155] }),
+      });
+      renderizarApp('/');
+
+      expect(await screen.findByText(/^Falta el backup de ayer\./)).toBeTruthy();
+      expect(await screen.findByRole('link', { name: '155' })).toBeTruthy();
+      const pantalla = screen.getByRole('heading', { name: 'Sesión iniciada' }).closest('section');
+      expect(within(pantalla!).getAllByRole('status')).toHaveLength(2);
+    });
+
+    it('Inicio_AvisoBackup_SalirAntesDeLaRespuesta_NoActualiza', async () => {
+      // Guarda de desmontaje: la respuesta que llega después de dejar la pantalla no se usa.
+      let responder: (respuesta: Response) => void = () => {};
+      const errores = vi.spyOn(console, 'error');
+      const servidor = servidorFalso({
+        ...conSesion,
+        [`GET ${RUTA_ESTADO}`]: () =>
+          new Promise<Response>((resolver) => {
+            responder = resolver;
+          }),
+      });
+      const { unmount } = renderizarApp('/');
+      await screen.findByRole('heading', { name: 'Sesión iniciada' });
+      await waitFor(() => expect(servidor.pedidosA('GET', RUTA_ESTADO)).toHaveLength(1));
+
+      unmount();
+      await act(async () => {
+        responder(
+          new Response(JSON.stringify({ faltaAyer: true, ultimo: null, ubicacion: 'sin_elegir', accesible: false }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+        await new Promise((resolver) => setTimeout(resolver, 0));
+      });
+
+      expect(statusDeBackup()).toEqual([]);
+      expect(errores).not.toHaveBeenCalled();
+    });
+  });
+
   describe('con reloj falso', () => {
     // El reloj falso se activa ANTES de renderizar: así captura cualquier setInterval o setTimeout que la pantalla
     // programe al montarse. No se usan findBy/waitFor, que esperan con esos mismos temporizadores.

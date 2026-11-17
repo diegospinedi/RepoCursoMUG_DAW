@@ -175,6 +175,8 @@ public sealed class SinDatosArcaTests
         Assert.Contains(RutaEmisor, conJson);
         // FEAT-010: la ubicación del backup, sin elegir, responde 200 con { ruta: null } y se revisa.
         Assert.Contains(RutaBackup, conJson);
+        // FEAT-010, Block 6: el estado del backup, en una base sin backups, responde 200 y se revisa.
+        Assert.Contains(RutaEstadoBackup, conJson);
         // FEAT-009: el detalle de la factura, con el comprobante como texto y sin clave de punto de venta (D-15).
         Assert.Contains(RutaFactura, conJson);
         // El PDF del presupuesto en Final (FEAT-006) y el de su factura (FEAT-009) se pidieron y respondieron
@@ -276,6 +278,7 @@ public sealed class SinDatosArcaTests
     private const string RutaConfiguracion = "/api/configuracion";
     private const string RutaEmisor = "/api/configuracion/emisor";
     private const string RutaBackup = "/api/configuracion/backup";
+    private const string RutaEstadoBackup = "/api/backup/estado";
 
     [Fact]
     public async Task SinDatosArca_Configuracion_PermitePuntoVentaYRechazaCertificado()
