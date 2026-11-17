@@ -78,7 +78,11 @@ public sealed class Articulo
     /// <summary>Verdadero si el precio de costo es cero o negativo: lleva la advertencia de FR-05.</summary>
     public bool CostoNoPositivo => PrecioCosto <= 0m;
 
-    /// <summary>Falso si el artículo está dado de baja: no se modifica hasta reactivarlo (FR-05, D-02).</summary>
+    /// <summary>
+    /// Falso si el artículo está dado de baja: no se modifica hasta reactivarlo (FR-05, D-02). Excepción: la planilla
+    /// de costos le cambia el costo y la venta y lo deja inactivo (<see cref="ConCostoNuevo"/>; FR-11, D-12 de
+    /// FEAT-011).
+    /// </summary>
     public bool Activo { get; }
 
     /// <summary>La versión para la concurrencia optimista, desde 0.</summary>
@@ -168,6 +172,47 @@ public sealed class Articulo
         return ResultadoRecalculo.Cambiado(new Articulo(
             Codigo, CodigoProveedor, Descripcion, precioCosto: PrecioCosto, margenUtilidad: MargenUtilidad,
             precioVenta: precio.PrecioVenta, activo: Activo, version: Version));
+    }
+
+    /// <summary>
+    /// El artículo con el precio de costo nuevo de la planilla y el precio de venta recalculado con el margen guardado y
+    /// la configuración vigente (FR-06 de FEAT-011). Se aplica también a un inactivo, que sigue inactivo: es la
+    /// excepción documentada a D-02 de FEAT-002b (FR-11, D-12 de FEAT-011). Devuelve
+    /// <see cref="ResultadoCostoNuevo.Aplicado"/> con una copia con el mismo código, descripción, margen, estado y
+    /// versión, que incrementa la persistencia, y <see cref="ResultadoCostoNuevo.Cambia"/> falso si el costo y la venta
+    /// son iguales a los guardados (D-13). Si el costo o la venta quedan fuera del rango de importes, devuelve
+    /// <see cref="ResultadoCostoNuevo.FueraDeRango"/> (D-09). Nunca lanza por desborde.
+    /// </summary>
+    /// <param name="costo">El costo nuevo, ya redondeado al centavo (D-03 de FEAT-011).</param>
+    /// <exception cref="ArgumentNullException"><paramref name="vigente"/> es null.</exception>
+    /// <exception cref="ArgumentException">
+    /// El costo tiene más de 2 decimales: el redondeo de D-03 le corresponde a quien llama. El mensaje no incluye el
+    /// valor.
+    /// </exception>
+    public ResultadoCostoNuevo ConCostoNuevo(decimal costo, ConfiguracionNegocio vigente)
+    {
+        ArgumentNullException.ThrowIfNull(vigente);
+
+        switch (PoliticaArticulo.EvaluarCostoNuevo(costo))
+        {
+            case InfraccionArticulo.CostoFueraDeRango:
+                return ResultadoCostoNuevo.FueraDeRango;
+            case not null:
+                throw new ArgumentException("El precio de costo no es válido.", nameof(costo));
+        }
+
+        var calculo = CalculadoraPrecioVenta.Calcular(costo, MargenUtilidad, vigente);
+        if (calculo.Precio is not { } precio)
+        {
+            return ResultadoCostoNuevo.FueraDeRango;
+        }
+
+        var cambia = costo != PrecioCosto || precio.PrecioVenta != PrecioVenta;
+        return ResultadoCostoNuevo.Aplicado(
+            new Articulo(
+                Codigo, CodigoProveedor, Descripcion, precioCosto: costo, margenUtilidad: MargenUtilidad,
+                precioVenta: precio.PrecioVenta, activo: Activo, version: Version),
+            cambia);
     }
 
     private static bool TieneInfraccionDeCostoOMargen(List<InfraccionArticulo> infracciones) =>

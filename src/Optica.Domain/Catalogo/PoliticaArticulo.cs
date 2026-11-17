@@ -71,6 +71,29 @@ public static class PoliticaArticulo
         return infracciones;
     }
 
+    /// <summary>
+    /// La regla del precio de costo sola, que <see cref="Articulo.ConCostoNuevo"/> aplica al costo nuevo de la planilla
+    /// (FR-08, FR-09 y D-09 de FEAT-011): null si
+    /// es válido; si no, <see cref="InfraccionArticulo.CostoConMasDeDosDecimales"/> o
+    /// <see cref="InfraccionArticulo.CostoFueraDeRango"/>. Cero y negativos son válidos. Es la misma regla que aplica
+    /// <see cref="Evaluar"/> al costo. Nunca lanza.
+    /// </summary>
+    public static InfraccionArticulo? EvaluarCostoNuevo(decimal costo) => EvaluarCosto(costo);
+
+    /// <summary>
+    /// Verdadero si el código en el proveedor, recortado, no está vacío, es UTF-16 válido y tiene hasta
+    /// <see cref="LargoMaximoCodigo"/> caracteres: la misma regla que aplica <see cref="Evaluar"/> al código. La
+    /// planilla de costos la usa para tratar un código inadmisible como "código inexistente" sin calcular su clave
+    /// (D-10 de FEAT-011). Nunca lanza por el contenido.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="codigo"/> es null.</exception>
+    public static bool EsCodigoAdmisible(string codigo)
+    {
+        ArgumentNullException.ThrowIfNull(codigo);
+        return EvaluarTexto(codigo, LargoMaximoCodigo, InfraccionArticulo.CodigoFaltante,
+            InfraccionArticulo.CodigoConCaracteresInvalidos, InfraccionArticulo.CodigoDemasiadoLargo) is null;
+    }
+
     // Faltante, después UTF-16 inválido (D-16, para que Clave nunca llegue a Normalize con un sustituto suelto) y por
     // último el largo, medido en string.Length sobre el texto recortado (D-02, D-13).
     private static InfraccionArticulo? EvaluarTexto(

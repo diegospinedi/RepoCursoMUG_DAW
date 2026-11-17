@@ -402,6 +402,70 @@ public class ArticuloTests
         Assert.Same(ResultadoRecalculo.SinCambio, resultado);
     }
 
+    [Fact]
+    public void ConCostoNuevo_AlicuotaYMultiplo_RecalculaVenta()
+    {
+        // AC-01 de FEAT-011 (FR-06): alícuota 21, múltiplo 0,01, costo 1210 y margen 50; el costo nuevo 2420 da venta
+        // 3630,00. La copia conserva código, descripción, margen, estado y versión.
+        var original = Guardado();
+
+        var resultado = original.ConCostoNuevo(2420m, ResponsableInscripto(multiplo: 0.01m));
+
+        Assert.True(resultado.EsAplicado);
+        Assert.False(resultado.EsFueraDeRango);
+        Assert.True(resultado.Cambia);
+        Assert.Equal(2420m, resultado.Articulo.PrecioCosto);
+        Assert.Equal(3630.00m, resultado.Articulo.PrecioVenta);
+        Assert.Equal(original.Codigo, resultado.Articulo.Codigo);
+        Assert.Equal(original.CodigoProveedor, resultado.Articulo.CodigoProveedor);
+        Assert.Equal(original.Descripcion, resultado.Articulo.Descripcion);
+        Assert.Equal(original.MargenUtilidad, resultado.Articulo.MargenUtilidad);
+        Assert.True(resultado.Articulo.Activo);
+        Assert.Equal(original.Version, resultado.Articulo.Version);
+        Assert.Equal(1210m, original.PrecioCosto);
+        Assert.Equal(1815m, original.PrecioVenta);
+    }
+
+    [Fact]
+    public void ConCostoNuevo_VentaFueraDeRango_FueraDeRango()
+    {
+        // D-09: el costo máximo con margen 50 da una venta fuera de rango; nunca un desborde.
+        var resultado = Guardado().ConCostoNuevo(ReglasImporte.ImporteMaximo, ResponsableInscripto());
+
+        Assert.Same(ResultadoCostoNuevo.FueraDeRango, resultado);
+        Assert.True(resultado.EsFueraDeRango);
+        Assert.False(resultado.EsAplicado);
+        Assert.Null(resultado.Articulo);
+    }
+
+    [Fact]
+    public void ConCostoNuevo_CostoFueraDeRango_FueraDeRango()
+    {
+        // D-09: el costo nuevo fuera de ReglasImporte.ImporteMaximo es FueraDeRango, sin lanzar.
+        var resultado = Guardado().ConCostoNuevo(ReglasImporte.ImporteMaximo + 0.01m, ResponsableInscripto());
+
+        Assert.Same(ResultadoCostoNuevo.FueraDeRango, resultado);
+    }
+
+    [Fact]
+    public void ConCostoNuevo_CostoConTresDecimales_LanzaSinValor()
+    {
+        // El redondeo de D-03 le corresponde a quien llama; el mensaje no incluye el valor.
+        var error = Assert.Throws<ArgumentException>(
+            () => Guardado().ConCostoNuevo(1234.565m, ResponsableInscripto()));
+
+        Assert.Equal("costo", error.ParamName);
+        Assert.DoesNotContain("1234", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConCostoNuevo_VigenteNull_Lanza()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() => Guardado().ConCostoNuevo(2420m, null!));
+
+        Assert.Equal("vigente", error.ParamName);
+    }
+
     private static Articulo Guardado(bool activo = true) =>
         new(7L, "ABC-1", "Lente", 1210m, 50m, 1815m, activo, version: 3L);
 
