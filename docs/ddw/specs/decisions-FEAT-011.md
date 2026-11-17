@@ -102,3 +102,15 @@ agente bajo la delegación del usuario ("la recomendada y la que menos tiempo in
   - **Campo de archivo en la pantalla nueva.** `backup-aviso.spec.ts` (AC-15 de FEAT-010) recorre también "Artículos →
     Actualizar costos con planilla" y admite ahí un único campo de archivo `accept=".xlsx"` con la etiqueta "Planilla de
     costos (.xlsx)". Esa pantalla no restaura backups.
+- **D-28 — usuario — 2026-11-17 — cierre de CODE (SAST):** el usuario aceptó como riesgo de desarrollo el aviso Alto
+  GHSA-fc5q-39xc-vjpf (ReDoS en `picomatch` ≤ 4.0.7). Lo traen Vite y Vitest en `web/`; apareció después de FEAT-010 y
+  el ticket no cambió los paquetes. No existe versión corregida. `npm audit --omit=dev` da 0, picomatch no viaja en la
+  web publicada y los patrones glob los escribe el proyecto. Se descartaron mantener el ticket bloqueado y bajar Vitest
+  a 3.1.4 (cambio incompatible). Revisión: cuando se publique `picomatch` > 4.0.7 o una versión de Vite/Vitest que lo
+  evite, se actualiza en un ticket aparte. El F-SAST-13 del informe evalúa las dependencias que se publican (Api y web
+  compilada) y deja este aviso escrito con la decisión.
+- **D-29 — agente, bajo la delegación del usuario — 2026-11-17 — cierre de CODE (SAST):** los hallazgos Bajos e
+  informativos del SAST quedan como riesgos residuales documentados, para un ticket aparte:
+  - H-02: tipos de excepción del SDK fuera de la lista traducida, que el manejador global registraría con su mensaje;
+  - H-03: `Leer` sin `CancellationToken`;
+  - H-04: el log de la carga no identifica a la persona, porque el sistema no tiene usuarios.
