@@ -1,23 +1,34 @@
 // Pruebas unitarias de compilacion.mjs (sin navegador ni Api): `npm run test:unidad` en e2e/.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, describe, test } from 'node:test';
 
 import {
   ARCA_POR_ARCHIVO,
   archivosDePrueba,
+  baseDeOtroMontaje,
+  carpetasDeBackup,
   comandosDeCompilacion,
   contadorSimulado,
+  corridaViva,
   debeBorrarse,
   entornoDeLaApi,
+  esDelUsuario,
   esperarApi,
+  inicioEnStat,
+  leerArchivoPid,
   leerInstancias,
   leerPid,
+  mensajeDeCarpetasEnUso,
   mensajeDeFallo,
+  montajesDeMountinfo,
+  puntoDeMontajeDe,
   revisarArcaPorArchivo,
+  revisarCarpetaDeBackup,
+  tratamientoDeSinEscritura,
   variablesDeArca,
   verificarModulosDeLaWeb,
 } from './compilacion.mjs';
@@ -156,6 +167,317 @@ describe('debeBorrarse (limpieza de corridas anteriores)', () => {
 
   test('leerPid de un pid válido, con salto de línea: el número', () => {
     assert.equal(leerPid('1234\n'), 1234);
+  });
+});
+
+describe('carpetas de backup de la suite (FEAT-010, Block 8, D-16)', () => {
+  // Bases absolutas en la plataforma que corre la prueba (en Windows, '/dev/shm' no sería una ruta completa).
+  const TEMPORAL = join(tmpdir(), 'base-temporal');
+  const OTRO_MONTAJE = join(tmpdir(), 'base-otro-montaje');
+  const BASES = [TEMPORAL, OTRO_MONTAJE];
+
+  test('con otro punto de montaje: destino y sin escritura ahí; misma unidad e inexistente junto a los datos', () => {
+    const carpetas = carpetasDeBackup({ puerto: 5543, temporal: TEMPORAL, otroMontaje: OTRO_MONTAJE });
+
+    assert.deepEqual(carpetas, {
+      mismoMontaje: join(TEMPORAL, 'optica-e2e-backup-5543'),
+      otroMontaje: join(OTRO_MONTAJE, 'optica-e2e-backup-5543'),
+      destino: join(OTRO_MONTAJE, 'optica-e2e-backup-5543', 'destino'),
+      sinEscritura: join(OTRO_MONTAJE, 'optica-e2e-backup-5543', 'sin-escritura'),
+      mismaUnidad: join(TEMPORAL, 'optica-e2e-backup-5543', 'misma-unidad'),
+      inexistente: join(TEMPORAL, 'optica-e2e-backup-5543', 'no-existe'),
+    });
+  });
+
+  test('sin otro punto de montaje: no hay destino ni carpeta sin escritura (el caso positivo se salta)', () => {
+    const carpetas = carpetasDeBackup({ puerto: 5600, temporal: TEMPORAL, otroMontaje: null });
+
+    assert.equal(carpetas.otroMontaje, null);
+    assert.equal(carpetas.destino, null);
+    assert.equal(carpetas.sinEscritura, null);
+    assert.equal(carpetas.mismaUnidad, join(TEMPORAL, 'optica-e2e-backup-5600', 'misma-unidad'));
+  });
+
+  for (const puerto of [0, 65_536, 5543.5, Number.NaN, '5543']) {
+    test(`carpetasDeBackup con el puerto ${String(puerto)} (${typeof puerto}): rechazado`, () => {
+      assert.throws(
+        () => carpetasDeBackup({ puerto, temporal: TEMPORAL, otroMontaje: OTRO_MONTAJE }),
+        /puerto/,
+      );
+    });
+  }
+
+  test('carpetasDeBackup con una base relativa: rechazado', () => {
+    assert.throws(() => carpetasDeBackup({ puerto: 5543, temporal: 'tmp', otroMontaje: null }), /absoluta/);
+  });
+
+  describe('baseDeOtroMontaje', () => {
+    const dispositivos = (mapa) => (ruta) => (Object.hasOwn(mapa, ruta) ? mapa[ruta] : null);
+    /** Sin /proc/self/mountinfo legible: decide el dispositivo. */
+    const sinMountinfo = () => [];
+
+    test('Linux con /dev/shm en otro dispositivo que la carpeta temporal: /dev/shm', () => {
+      const base = baseDeOtroMontaje({
+        plataforma: 'linux',
+        temporal: '/tmp',
+        dispositivo: dispositivos({ '/tmp': 2096, '/dev/shm': 65 }),
+        montajes: sinMountinfo,
+      });
+
+      assert.equal(base, '/dev/shm');
+    });
+
+    test('Linux con /dev/shm en el mismo dispositivo: ninguna (no es otra unidad)', () => {
+      const base = baseDeOtroMontaje({
+        plataforma: 'linux',
+        temporal: '/tmp',
+        dispositivo: dispositivos({ '/tmp': 65, '/dev/shm': 65 }),
+        montajes: sinMountinfo,
+      });
+
+      assert.equal(base, null);
+    });
+
+    test('Linux sin /dev/shm: ninguna', () => {
+      assert.equal(
+        baseDeOtroMontaje({
+          plataforma: 'linux',
+          temporal: '/tmp',
+          dispositivo: dispositivos({ '/tmp': 2096 }),
+          montajes: sinMountinfo,
+        }),
+        null,
+      );
+    });
+
+    // Con mountinfo decide el punto de montaje de prefijo más largo, el mismo criterio de la Api (DriveInfo).
+    test('mountinfo: /dev/shm y la carpeta temporal en puntos de montaje distintos: /dev/shm', () => {
+      const base = baseDeOtroMontaje({
+        plataforma: 'linux',
+        temporal: '/tmp',
+        dispositivo: dispositivos({ '/tmp': 2096, '/dev/shm': 65 }),
+        montajes: () => ['/', '/dev', '/dev/shm'],
+      });
+
+      assert.equal(base, '/dev/shm');
+    });
+
+    test('mountinfo: dispositivos distintos en el mismo punto de montaje (subvolumen de btrfs): ninguna', () => {
+      const base = baseDeOtroMontaje({
+        plataforma: 'linux',
+        temporal: '/tmp',
+        dispositivo: dispositivos({ '/tmp': 40, '/dev/shm': 41 }),
+        montajes: () => ['/'],
+      });
+
+      assert.equal(base, null, 'La Api los toma como la misma unidad: AC-01 fallaría.');
+    });
+
+    test('mountinfo: el mismo dispositivo en otro punto de montaje (bind): /dev/shm, como lo ve la Api', () => {
+      const base = baseDeOtroMontaje({
+        plataforma: 'linux',
+        temporal: '/tmp',
+        dispositivo: dispositivos({ '/tmp': 65, '/dev/shm': 65 }),
+        montajes: () => ['/', '/dev/shm'],
+      });
+
+      assert.equal(base, '/dev/shm');
+    });
+
+    test('Windows: ninguna (no hay un segundo punto de montaje conocido)', () => {
+      const nuncaSeConsulta = () => {
+        throw new Error('En Windows no se consulta ningún dispositivo.');
+      };
+
+      assert.equal(baseDeOtroMontaje({ plataforma: 'win32', temporal: 'C:\\Temp', dispositivo: nuncaSeConsulta }), null);
+    });
+  });
+
+  describe('revisarCarpetaDeBackup (el harness solo crea y borra sus carpetas temporales)', () => {
+    test('la carpeta propia de la instancia, en cualquiera de las dos bases: aceptada', () => {
+      const carpetas = carpetasDeBackup({ puerto: 5543, temporal: TEMPORAL, otroMontaje: OTRO_MONTAJE });
+
+      assert.doesNotThrow(() => revisarCarpetaDeBackup(carpetas.mismoMontaje, BASES));
+      assert.doesNotThrow(() => revisarCarpetaDeBackup(carpetas.otroMontaje, BASES));
+    });
+
+    const rechazadas = {
+      'una carpeta de backup real fuera de las bases': join(tmpdir(), 'Usuarios', 'Prueba', 'Backups'),
+      'la base misma': OTRO_MONTAJE,
+      'una subcarpeta de la carpeta propia': join(OTRO_MONTAJE, 'optica-e2e-backup-5543', 'destino'),
+      'un nombre sin el prefijo de la suite': join(OTRO_MONTAJE, 'Backups'),
+      'el prefijo sin un puerto': join(OTRO_MONTAJE, 'optica-e2e-backup-x'),
+      'el prefijo dentro de otra carpeta de la base': join(OTRO_MONTAJE, 'otra', 'optica-e2e-backup-5543'),
+      'una ruta relativa': join('optica-e2e-backup-5543'),
+      'una ruta con ".." que sale de la base': `${OTRO_MONTAJE}${sep}optica-e2e-backup-5543${sep}..${sep}..${sep}x`,
+      'una ruta con ".." que vuelve a la base (sin normalizar)': `${OTRO_MONTAJE}${sep}x${sep}..${sep}optica-e2e-backup-5543`,
+      'una ruta vacía': '',
+    };
+
+    for (const [caso, ruta] of Object.entries(rechazadas)) {
+      test(`${caso}: rechazada, sin repetir la ruta en el mensaje`, () => {
+        assert.throws(
+          () => revisarCarpetaDeBackup(ruta, BASES),
+          (error) => {
+            assert.match(error.message, /temporal propia/);
+            if (ruta !== '') {
+              assert.ok(!error.message.includes(ruta), 'El mensaje no debe repetir la ruta rechazada.');
+            }
+            return true;
+          },
+        );
+      });
+    }
+
+    test('sin bases (por ejemplo, null de baseDeOtroMontaje): las nulas se ignoran y no aceptan nada', () => {
+      assert.throws(() => revisarCarpetaDeBackup(join(OTRO_MONTAJE, 'optica-e2e-backup-5543'), [null]), /temporal propia/);
+    });
+  });
+
+  describe('tratamientoDeSinEscritura (antes de devolverle el permiso para borrarla)', () => {
+    const info = ({ carpeta = false, enlace = false } = {}) => ({
+      isDirectory: () => carpeta,
+      isSymbolicLink: () => enlace,
+    });
+
+    test('una carpeta real: se le devuelve el permiso', () => {
+      assert.equal(tratamientoDeSinEscritura(info({ carpeta: true })), 'carpeta');
+    });
+
+    test('un enlace simbólico: no se le cambian los permisos (se borra solo el enlace)', () => {
+      assert.equal(tratamientoDeSinEscritura(info({ enlace: true })), 'enlace');
+    });
+
+    test('otra cosa (un archivo): ni permisos ni borrado propio', () => {
+      assert.equal(tratamientoDeSinEscritura(info()), 'otro');
+    });
+
+    test('no existe: nada', () => {
+      assert.equal(tratamientoDeSinEscritura(null), 'ninguno');
+    });
+
+    // Con el sistema de archivos real: lstat no sigue el enlace, así que un enlace a una carpeta sigue siendo enlace.
+    test('un enlace simbólico real a una carpeta, leído con lstat: enlace', { skip: process.platform === 'win32' }, () => {
+      const base = mkdtempSync(join(tmpdir(), 'prueba-enlace-'));
+      try {
+        const ajena = join(base, 'ajena');
+        mkdirSync(ajena);
+        const enlace = join(base, 'sin-escritura');
+        symlinkSync(ajena, enlace);
+
+        assert.equal(tratamientoDeSinEscritura(lstatSync(enlace)), 'enlace');
+        assert.equal(tratamientoDeSinEscritura(lstatSync(ajena)), 'carpeta');
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('esDelUsuario (la limpieza solo borra raíces propias)', () => {
+    test('del mismo uid: sí', () => {
+      assert.equal(esDelUsuario({ uid: 1000 }, 1000), true);
+    });
+
+    test('de otro uid (otro usuario de la PC): no', () => {
+      assert.equal(esDelUsuario({ uid: 0 }, 1000), false);
+    });
+
+    test('sin getuid (Windows): no se puede comparar, sí', () => {
+      assert.equal(esDelUsuario({ uid: 0 }, undefined), true);
+    });
+  });
+
+  test('mensajeDeCarpetasEnUso: dice cómo resolverlo, sin ninguna ruta', () => {
+    const mensaje = mensajeDeCarpetasEnUso(5548);
+
+    assert.match(mensaje, /5548/);
+    assert.match(mensaje, /si no hay otra corrida/i);
+    assert.match(mensaje, /optica-e2e-backup-\*/);
+    assert.ok(!mensaje.includes(tmpdir()), 'El mensaje no debe llevar la ruta de la carpeta temporal.');
+  });
+});
+
+describe('corrida viva (pid y hora de inicio del proceso, FEAT-010 Block 8)', () => {
+  const vivo = () => true;
+  const muerto = () => false;
+
+  test('leerArchivoPid: pid y hora de inicio', () => {
+    assert.deepEqual(leerArchivoPid('1234 98765\n'), { pid: 1234, inicio: '98765' });
+  });
+
+  test('leerArchivoPid: un archivo de antes, solo con el pid: sin hora de inicio', () => {
+    assert.deepEqual(leerArchivoPid('1234'), { pid: 1234, inicio: null });
+  });
+
+  test('leerArchivoPid: pid inválido: NaN', () => {
+    assert.ok(Number.isNaN(leerArchivoPid('x 1').pid));
+  });
+
+  test('inicioEnStat: el campo 22 de /proc/<pid>/stat, aunque el nombre tenga espacios y paréntesis', () => {
+    const campos = Array.from({ length: 30 }, (_, i) => String(i + 3));
+    campos[22 - 3] = '424242';
+    const stat = `5678 (node (e2e) x) ${campos.join(' ')}`;
+
+    assert.equal(inicioEnStat(stat), '424242');
+  });
+
+  test('inicioEnStat: texto que no es un stat: null', () => {
+    assert.equal(inicioEnStat('basura'), null);
+  });
+
+  test('corridaViva: el proceso no existe: muerta', () => {
+    assert.equal(corridaViva({ pid: 1234, inicio: '1', vive: muerto, inicioDe: () => '1' }), false);
+  });
+
+  test('corridaViva: el pid existe con la misma hora de inicio: viva', () => {
+    assert.equal(corridaViva({ pid: 1234, inicio: '500', vive: vivo, inicioDe: () => '500' }), true);
+  });
+
+  test('corridaViva: el pid lo reutilizó otro proceso (otra hora de inicio): muerta', () => {
+    assert.equal(corridaViva({ pid: 1234, inicio: '500', vive: vivo, inicioDe: () => '777' }), false);
+  });
+
+  test('corridaViva: sin hora de inicio guardada o sin poder leerla (Windows): decide solo el pid', () => {
+    assert.equal(corridaViva({ pid: 1234, inicio: null, vive: vivo, inicioDe: () => '777' }), true);
+    assert.equal(corridaViva({ pid: 1234, inicio: '500', vive: vivo, inicioDe: () => null }), true);
+  });
+
+  test('debeBorrarse con un pid reutilizado: sí', () => {
+    assert.equal(debeBorrarse({ pid: 1234, vive: vivo, edadMs: 0, inicio: '500', inicioDe: () => '777' }), true);
+  });
+
+  test('debeBorrarse con la misma corrida viva: no', () => {
+    assert.equal(debeBorrarse({ pid: 1234, vive: vivo, edadMs: 0, inicio: '500', inicioDe: () => '500' }), false);
+  });
+});
+
+describe('puntos de montaje (/proc/self/mountinfo), el criterio de la Api', () => {
+  const MOUNTINFO = [
+    '82 67 8:48 / / rw,relatime - ext4 /dev/sdd rw',
+    '112 82 0:6 / /dev rw,nosuid shared:14 - devtmpfs none rw',
+    '120 112 0:65 / /dev/shm rw,nosuid,nodev - tmpfs none rw',
+    '130 82 0:70 / /mnt/con\\040espacio rw - tmpfs none rw',
+  ].join('\n');
+
+  test('montajesDeMountinfo: el quinto campo de cada línea, con los escapes octales decodificados', () => {
+    assert.deepEqual(montajesDeMountinfo(MOUNTINFO), ['/', '/dev', '/dev/shm', '/mnt/con espacio']);
+  });
+
+  test('montajesDeMountinfo: líneas vacías o cortas se ignoran', () => {
+    assert.deepEqual(montajesDeMountinfo('\n12 34\n'), []);
+  });
+
+  test('puntoDeMontajeDe: el de prefijo más largo, por segmentos', () => {
+    const montajes = ['/', '/dev', '/dev/shm'];
+
+    assert.equal(puntoDeMontajeDe('/dev/shm/optica-e2e-backup-5543', montajes), '/dev/shm');
+    assert.equal(puntoDeMontajeDe('/tmp', montajes), '/');
+    // /dev/shmx no está dentro de /dev/shm.
+    assert.equal(puntoDeMontajeDe('/dev/shmx', montajes), '/dev');
+  });
+
+  test('puntoDeMontajeDe sin ningún montaje que la contenga: null', () => {
+    assert.equal(puntoDeMontajeDe('/tmp', ['/dev']), null);
   });
 });
 

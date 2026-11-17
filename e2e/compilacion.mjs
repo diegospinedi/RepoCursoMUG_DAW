@@ -1,8 +1,10 @@
 // Funciones de servidor.mjs separadas para probarlas sin compilar ni levantar nada (compilacion.test.mjs). Todas son
-// puras salvo verificarModulosDeLaWeb, que lee web/node_modules del disco (solo lectura).
+// puras salvo verificarModulosDeLaWeb, que lee web/node_modules del disco, y baseDeOtroMontaje, que consulta el
+// dispositivo de dos carpetas (las dos solo leen).
 
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 /** Antigüedad a partir de la cual un directorio de la suite sin archivo pid se considera abandonado. */
 export const ANTIGUEDAD_SIN_PID_MS = 10 * 60_000;
@@ -77,10 +79,11 @@ export function verificarModulosDeLaWeb(directorioWeb, plataforma = process.plat
  * si tiene {@link ANTIGUEDAD_SIN_PID_MS} o más, porque puede ser de otra corrida que acaba de crearlo y todavía no
  * escribió su pid.
  */
-export function debeBorrarse({ pid, vive, edadMs }) {
+export function debeBorrarse({ pid, vive, edadMs, inicio = null, inicioDe = () => null }) {
   // Un pid vacío, 0 o negativo no es un proceso: process.kill(0, 0) le pega al grupo del proceso actual y "vive".
   if (Number.isInteger(pid) && pid > 0) {
-    return !vive(pid);
+    // FEAT-010: con la hora de inicio guardada, un pid reutilizado por otro proceso no cuenta como la corrida viva.
+    return !corridaViva({ pid, inicio, vive, inicioDe });
   }
   return edadMs >= ANTIGUEDAD_SIN_PID_MS;
 }
@@ -89,6 +92,236 @@ export function debeBorrarse({ pid, vive, edadMs }) {
 export function leerPid(texto) {
   const pid = Number(texto);
   return Number.isInteger(pid) && pid > 0 ? pid : NaN;
+}
+
+/** El comienzo del nombre de la raíz de las carpetas de backup de una instancia: le sigue su puerto (FEAT-010, D-16). */
+export const PREFIJO_BACKUP = 'optica-e2e-backup-';
+
+/** La raíz de backup de una instancia: el prefijo y un puerto de 1 a 5 dígitos, nada más. */
+const NOMBRE_DE_RAIZ_DE_BACKUP = /^optica-e2e-backup-\d{1,5}$/;
+
+/** El punto de montaje en memoria de Linux que hace de "otra unidad" en la suite (D-16). */
+const OTRO_MONTAJE_LINUX = '/dev/shm';
+
+/**
+ * Las carpetas de la ubicación del backup de una instancia (FEAT-010, Block 8, D-16). La raíz se llama
+ * `optica-e2e-backup-<puerto>`: el puerto ya es único entre las Api que corren a la vez, y así la prueba la encuentra
+ * con el puerto de su `baseURL`, sin que servidor.mjs le pase nada. Hay una raíz en `temporal` (la carpeta temporal,
+ * el mismo punto de montaje que los datos de la Api) y otra en `otroMontaje` si hay uno:
+ * - `mismaUnidad`: una carpeta de la misma unidad que la base, fuera de los datos (AC-02).
+ * - `inexistente`: una carpeta que nunca se crea (AC-03).
+ * - `destino`: una carpeta de otra unidad en la que se puede escribir (AC-01); null sin otro punto de montaje.
+ * - `sinEscritura`: una carpeta de otra unidad con permisos 555 (AC-03); null sin otro punto de montaje.
+ * La de la misma unidad no sirve para la carpeta sin escritura: la Api rechaza antes por la unidad.
+ */
+export function carpetasDeBackup({ puerto, temporal, otroMontaje }) {
+  if (!Number.isInteger(puerto) || puerto < 1 || puerto > 65_535) {
+    throw new Error('Carpetas de backup de la suite: el puerto tiene que ser un entero de 1 a 65535.');
+  }
+  for (const base of [temporal, otroMontaje]) {
+    if (base !== null && (typeof base !== 'string' || !isAbsolute(base))) {
+      throw new Error('Carpetas de backup de la suite: cada base tiene que ser una ruta absoluta.');
+    }
+  }
+  const nombre = `${PREFIJO_BACKUP}${puerto}`;
+  const mismoMontaje = join(temporal, nombre);
+  const otra = otroMontaje === null ? null : join(otroMontaje, nombre);
+  return {
+    mismoMontaje,
+    otroMontaje: otra,
+    destino: otra === null ? null : join(otra, 'destino'),
+    sinEscritura: otra === null ? null : join(otra, 'sin-escritura'),
+    mismaUnidad: join(mismoMontaje, 'misma-unidad'),
+    inexistente: join(mismoMontaje, 'no-existe'),
+  };
+}
+
+/**
+ * Qué hacer con `sin-escritura` antes de borrar su raíz, según su `lstat` (que no sigue enlaces), o null si no existe:
+ * - `carpeta`: una carpeta real; se le devuelve el permiso de escritura.
+ * - `enlace`: un enlace simbólico; nunca se le cambian los permisos (chmod los cambiaría en lo apuntado, que puede ser
+ *   ajeno): se borra solo el enlace.
+ * - `otro`: otra cosa (un archivo); ni permisos ni borrado propio, la borra el borrado de la raíz.
+ * - `ninguno`: no existe.
+ */
+export function tratamientoDeSinEscritura(info) {
+  if (info === null || info === undefined) {
+    return 'ninguno';
+  }
+  if (info.isSymbolicLink()) {
+    return 'enlace';
+  }
+  return info.isDirectory() ? 'carpeta' : 'otro';
+}
+
+/**
+ * Si una entrada (su `lstat`) es del usuario que corre la suite: sin `getuid` (Windows), `uidActual` es undefined y no
+ * se puede comparar, así que sí. La limpieza de corridas anteriores ignora las raíces de otro usuario de la PC.
+ */
+export function esDelUsuario(info, uidActual) {
+  return uidActual === undefined || info.uid === uidActual;
+}
+
+/** El error de una raíz de backup que ya existe y es de una corrida viva: cómo resolverlo, sin ninguna ruta. */
+export function mensajeDeCarpetasEnUso(puerto) {
+  return (
+    `Las carpetas de backup del puerto ${puerto} son de otra corrida de la suite que sigue en curso. Si no hay otra ` +
+    `corrida, borrá las carpetas ${PREFIJO_BACKUP}* de la carpeta temporal y de ${OTRO_MONTAJE_LINUX}, o corré la ` +
+    'suite con otro OPTICA_E2E_PUERTO.'
+  );
+}
+
+/**
+ * El contenido de un archivo pid de la suite: `"<pid> <inicio>"`, donde `inicio` es la hora de inicio del proceso
+ * (campo 22 de `/proc/<pid>/stat` en Linux) o falta si no se pudo leer. Un archivo de antes, solo con el pid, da
+ * `inicio` null. El pid inválido es NaN, como en {@link leerPid}.
+ */
+export function leerArchivoPid(texto) {
+  const [pid = '', inicio] = String(texto).trim().split(/\s+/);
+  return { pid: leerPid(pid), inicio: inicio !== undefined && /^\d+$/.test(inicio) ? inicio : null };
+}
+
+/**
+ * La hora de inicio de un proceso (en ticks desde el arranque) del texto de `/proc/<pid>/stat`, o null. El nombre del
+ * proceso va entre paréntesis y puede tener espacios y paréntesis: los campos se cuentan después del último `)`, que es
+ * el campo 2; la hora de inicio es el 22.
+ */
+export function inicioEnStat(texto) {
+  const cierre = String(texto).lastIndexOf(')');
+  if (cierre < 0) {
+    return null;
+  }
+  const campos = String(texto).slice(cierre + 1).trim().split(/\s+/);
+  const inicio = campos[22 - 3];
+  return inicio !== undefined && /^\d+$/.test(inicio) ? inicio : null;
+}
+
+/**
+ * Si la corrida de un archivo pid sigue viva: su proceso existe y, si se guardó su hora de inicio y se puede leer la
+ * del proceso actual con ese pid, coinciden. Si no coinciden, el pid lo reutilizó otro proceso y la corrida terminó.
+ * Sin hora de inicio (un archivo de antes, o Windows, donde no se lee de forma portable), decide solo el pid.
+ */
+export function corridaViva({ pid, inicio = null, vive, inicioDe = () => null }) {
+  if (!vive(pid)) {
+    return false;
+  }
+  if (inicio === null) {
+    return true;
+  }
+  const actual = inicioDe(pid);
+  return actual === null || actual === inicio;
+}
+
+/** Decodifica los escapes octales de mountinfo (`\040` es un espacio). */
+const decodificarMountinfo = (campo) => campo.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+
+/** Los puntos de montaje del texto de `/proc/self/mountinfo`: el quinto campo de cada línea, decodificado. */
+export function montajesDeMountinfo(texto) {
+  return String(texto)
+    .split('\n')
+    .map((linea) => linea.trim().split(' '))
+    .filter((campos) => campos.length >= 5)
+    .map((campos) => decodificarMountinfo(campos[4]));
+}
+
+/** Los segmentos de una ruta de Linux, sin vacíos. */
+const segmentosLinux = (ruta) => ruta.split('/').filter(Boolean);
+
+/**
+ * El punto de montaje de una ruta: el de prefijo más largo por segmentos entre `montajes` (como `InspectorUbicaciones`
+ * de la Api con `DriveInfo.GetDrives`), o null si ninguno la contiene. `/dev/shmx` no está dentro de `/dev/shm`.
+ */
+export function puntoDeMontajeDe(ruta, montajes) {
+  const deLaRuta = segmentosLinux(ruta);
+  let elegido = null;
+  for (const montaje of montajes) {
+    const delMontaje = segmentosLinux(montaje);
+    const contiene =
+      montaje.startsWith('/') &&
+      delMontaje.length <= deLaRuta.length &&
+      delMontaje.every((segmento, i) => segmento === deLaRuta[i]);
+    if (contiene && (elegido === null || delMontaje.length > segmentosLinux(elegido).length)) {
+      elegido = montaje;
+    }
+  }
+  return elegido;
+}
+
+/** Los puntos de montaje del sistema (Linux), o ninguno si `/proc/self/mountinfo` no se puede leer. */
+function montajesDelSistema() {
+  try {
+    return montajesDeMountinfo(readFileSync('/proc/self/mountinfo', 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+/** El dispositivo de una carpeta (`stat().dev`), o null si no existe o no es una carpeta. */
+function dispositivoDe(ruta) {
+  try {
+    const datos = statSync(ruta);
+    return datos.isDirectory() ? datos.dev : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * La base de la carpeta de backup de otra unidad (D-16): `/dev/shm` en Linux si existe y está en otra unidad que la
+ * carpeta temporal (donde están los datos de la Api); null si no hay un segundo punto de montaje (Windows, o un Linux
+ * sin `/dev/shm` aparte). Con null, el caso positivo de AC-01 y la carpeta sin escritura se saltan con su motivo; la
+ * regla de la otra unidad nunca se desactiva.
+ *
+ * "Otra unidad" se decide con el criterio de la Api: el punto de montaje de prefijo más largo de
+ * `/proc/self/mountinfo` (la Api usa `DriveInfo.GetDrives`, que lo lee). Así un subvolumen de btrfs (otro `dev`, el
+ * mismo montaje) no pasa por otra unidad, y un montaje bind (el mismo `dev`, otro montaje) sí. Si mountinfo no se puede
+ * leer, decide `stat().dev`, que puede no coincidir con la Api (README). Lee el disco (solo `stat` y mountinfo);
+ * `dispositivo` y `montajes` se reciben para probarla.
+ */
+export function baseDeOtroMontaje({
+  plataforma = process.platform,
+  temporal = tmpdir(),
+  dispositivo = dispositivoDe,
+  montajes = montajesDelSistema,
+} = {}) {
+  if (plataforma !== 'linux') {
+    return null;
+  }
+  const otro = dispositivo(OTRO_MONTAJE_LINUX);
+  const propio = dispositivo(temporal);
+  if (otro === null || propio === null) {
+    return null;
+  }
+  const lista = montajes();
+  if (lista.length > 0) {
+    const montajeOtro = puntoDeMontajeDe(OTRO_MONTAJE_LINUX, lista);
+    const montajePropio = puntoDeMontajeDe(temporal, lista);
+    return montajeOtro !== null && montajePropio !== null && montajeOtro !== montajePropio ? OTRO_MONTAJE_LINUX : null;
+  }
+  return otro !== propio ? OTRO_MONTAJE_LINUX : null;
+}
+
+/**
+ * Falla si `ruta` no es la raíz de backup temporal propia de una instancia: exactamente `<base>/optica-e2e-backup-<puerto>`
+ * para una de `bases` (las null se ignoran), absoluta y ya normalizada (sin `..` ni separadores de más). servidor.mjs la
+ * llama antes de crear y antes de borrar: así el borrado recursivo nunca alcanza una carpeta que no creó la suite (por
+ * ejemplo, una carpeta de backup real). El mensaje no repite la ruta, que puede llevar el nombre de una persona (D-12).
+ */
+export function revisarCarpetaDeBackup(ruta, bases) {
+  const propias = bases.filter((base) => typeof base === 'string' && isAbsolute(base)).map((base) => resolve(base));
+  const valida =
+    typeof ruta === 'string' &&
+    ruta !== '' &&
+    isAbsolute(ruta) &&
+    resolve(ruta) === ruta &&
+    NOMBRE_DE_RAIZ_DE_BACKUP.test(basename(ruta)) &&
+    propias.includes(dirname(ruta));
+  if (!valida) {
+    throw new Error(
+      `La carpeta de backup de la suite tiene que ser una temporal propia (${PREFIJO_BACKUP}<puerto> en la carpeta ` +
+        `temporal o en ${OTRO_MONTAJE_LINUX}); se rechazó otra y no se creó ni se borró nada.`,
+    );
+  }
 }
 
 /**

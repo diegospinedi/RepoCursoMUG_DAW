@@ -149,3 +149,12 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   modo `delete` se rechaza como dañada. Riesgo residual: un corte entre apartar `-wal`/`-shm` y mover `optica.db` deja la
   base sin su `-wal` (lo apartado queda en `anterior/`). — agente (D-05), señalado por el verificador y el auditor —
   2026-11-17 — Block 7.
+- **D-37 (del agente, Block 8).** El harness crea por puerto `optica-e2e-backup-<puerto>` en la carpeta temporal (misma
+  unidad, inexistente) y en `/dev/shm` (destino, sin escritura 555), con modo 700, y solo acepta borrar rutas con ese
+  patrón exacto bajo esas bases; no sigue enlaces, ignora carpetas de otro usuario y reconoce una corrida viva por pid y
+  hora de inicio (en Windows, solo pid). "Otra unidad" se decide con `/proc/self/mountinfo` como la Api con `DriveInfo`;
+  si no se puede leer, compara `stat().dev` (limitación documentada). AC-15 en pantalla recorre Inicio y las pantallas
+  del menú (lista armada desde los enlaces y comparada con la esperada); las de detalle no se recorren porque la base es
+  nueva, y quedan cubiertas en la Api por `ProteccionTests` y en la web solo por revisión del código. `backup-aviso`
+  probaba comportamiento de los Blocks 6 y 7 y no tuvo rojo propio: se mostró que puede fallar con mutaciones temporales
+  revertidas. — agente (D-05), señalado por el verificador y el auditor — 2026-11-17 — Block 8.
