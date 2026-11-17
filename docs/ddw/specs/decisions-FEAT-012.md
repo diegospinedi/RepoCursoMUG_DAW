@@ -150,3 +150,16 @@ Decisiones del agente bajo la delegación del usuario, salvo que se indique otra
   - que los botones principales y secundarios tengan el mismo alto;
   - que no haya violaciones de CSP.
 - `contraste.test.ts` suma los pares nuevos con las dos marcas.
+
+## D-21: alto de los botones con texto largo
+- **Quién:** agente, 2026-11-17, Block 3.
+- **Decisión:** AC-13 ("mismo alto") se lee como el mismo alto mínimo, relleno y radio.
+  - Un botón cuyo texto se parte en dos renglones en una pantalla angosta, como "Grabar ubicación del backup" con
+    360 px, puede ser más alto.
+  - A 1280 px todos quedan en un renglón y con el mismo alto.
+- **Descarte:** se descartó cortar el texto o achicar la letra, porque empeora la lectura.
+
+## D-22: datos que siembra la e2e
+- **Quién:** agente, 2026-11-17, Block 3.
+- **Decisión:** la e2e `estilo-uniforme` siembra también un presupuesto en Borrador, porque "Modificar presupuesto" de
+  uno Final muestra solo un aviso.
