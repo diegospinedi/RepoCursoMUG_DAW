@@ -76,6 +76,15 @@ import {
   MENSAJE_FACTURA_NO_ENCONTRADA,
   MENSAJE_FACTURA_SIN_DATOS_EMISOR,
 } from './cliente';
+import {
+  actualizarCostosPorPlanilla,
+  MENSAJE_PLANILLA_CAMBIADA,
+  MENSAJE_PLANILLA_GRANDE,
+  MENSAJE_PLANILLA_ILEGIBLE,
+  MENSAJE_PLANILLA_OCUPADA,
+  MENSAJE_PLANILLA_RESULTADO_ILEGIBLE,
+  TAMANO_MAXIMO_PLANILLA,
+} from './cliente';
 import { MENSAJE_PRESUPUESTO_CAMBIADO, MENSAJE_PRESUPUESTO_FINAL } from '../presupuestos/reglas';
 
 afterEach(() => alPerderLaSesion(null));
@@ -2768,5 +2777,214 @@ describe('cliente de la Api: facturas (FEAT-009)', () => {
       expect(await descargarPdfFactura(0)).toEqual({ tipo: 'general', mensaje: MENSAJE_FACTURA_NO_ENCONTRADA });
       expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/presupuestos'))).toEqual([]);
     });
+  });
+});
+
+describe('cliente de la Api: planilla de costos (FEAT-011, Block 5)', () => {
+  const RUTA = '/api/articulos/planilla-costos';
+  const CLAVE = `POST ${RUTA}`;
+  /** El comienzo de un .xlsx (un ZIP) y un byte alto y uno nulo: el base64 tiene que respetar los bytes. */
+  const BYTES = [0x50, 0x4b, 0x03, 0x04, 0xff, 0x00];
+  const planilla = (bytes: number[] | Uint8Array = BYTES) => new File([new Uint8Array(bytes)], 'costos.xlsx');
+  /** Un archivo chico que dice medir `tamano`: el tamaño se controla antes de leer el contenido. */
+  const conTamano = (tamano: number) => {
+    const archivo = planilla();
+    Object.defineProperty(archivo, 'size', { value: tamano });
+    return archivo;
+  };
+  /** Coherente con las invariantes de D-26: 3 aplicadas + 1 no aplicada = 4 leídas. */
+  const RESULTADO = {
+    filasLeidas: 4,
+    aplicadas: 3,
+    noAplicadas: [{ fila: 4, codigo: 'XYZ-9', razon: 'código inexistente' }],
+    revisar: [{ fila: 2, codigo: 'ABC-1', precioCosto: -100, indicaciones: ['actualizado con precio negativo o cero'] }],
+  };
+  const cuerpoEnviado = (servidor: ReturnType<typeof servidorFalso>) =>
+    JSON.parse(String(servidor.pedidosA('POST', RUTA)[0]?.init?.body)) as unknown;
+
+  it('actualizarCostosPorPlanilla_200_EnviaElBase64EnJsonYDevuelveElResultado', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(200, RESULTADO) });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'ok', datos: RESULTADO });
+
+    const pedidos = servidor.pedidosA('POST', RUTA);
+    expect(pedidos).toHaveLength(1);
+    expect(pedidos[0]?.init?.headers).toEqual({ 'Content-Type': 'application/json', Accept: 'application/json' });
+    expect(cuerpoEnviado(servidor)).toEqual({ planilla: 'UEsDBP8A' });
+  });
+
+  it('actualizarCostosPorPlanilla_ArchivoMasGrandeQueUnTrozo_Base64Completo', async () => {
+    // Más de 64 KB: la conversión va por trozos y no puede desbordar la pila ni perder bytes en los cortes.
+    const bytes = Uint8Array.from({ length: 200_003 }, (_, i) => (i * 7 + 3) % 256);
+    const servidor = servidorFalso({ [CLAVE]: json(200, RESULTADO) });
+
+    expect((await actualizarCostosPorPlanilla(planilla(bytes))).tipo).toBe('ok');
+
+    // El esperado, byte a byte: lento pero sin cortes, distinto de la conversión por trozos que se prueba.
+    const esperado = btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
+    expect(esperado).toHaveLength(Math.ceil(bytes.length / 3) * 4);
+    expect(cuerpoEnviado(servidor)).toEqual({ planilla: esperado });
+  });
+
+  it('actualizarCostosPorPlanilla_ArchivoDe10MB_LoEnvia', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(200, RESULTADO) });
+
+    expect(TAMANO_MAXIMO_PLANILLA).toBe(10 * 1024 * 1024);
+    expect((await actualizarCostosPorPlanilla(conTamano(TAMANO_MAXIMO_PLANILLA))).tipo).toBe('ok');
+    expect(servidor.pedidosA('POST', RUTA)).toHaveLength(1);
+  });
+
+  it('actualizarCostosPorPlanilla_ArchivoDeMasDe10MB_RechazadoSinEnviar', async () => {
+    const servidor = servidorFalso({ [CLAVE]: json(200, RESULTADO) });
+
+    expect(MENSAJE_PLANILLA_GRANDE).toBe('La planilla supera los 10 MB.');
+    expect(await actualizarCostosPorPlanilla(conTamano(TAMANO_MAXIMO_PLANILLA + 1))).toEqual({
+      tipo: 'general',
+      mensaje: MENSAJE_PLANILLA_GRANDE,
+    });
+    expect(servidor.llamadas).toEqual([]);
+  });
+
+  it('actualizarCostosPorPlanilla_ArchivoIlegible_MensajeSinEnviar', async () => {
+    // El archivo se borró o se movió después de elegirlo: el navegador no lo puede leer.
+    const servidor = servidorFalso({ [CLAVE]: json(200, RESULTADO) });
+    const archivo = planilla();
+    Object.defineProperty(archivo, 'arrayBuffer', {
+      value: () => Promise.reject(new DOMException('No se puede leer', 'NotReadableError')),
+    });
+
+    expect(MENSAJE_PLANILLA_ILEGIBLE).toBe('No se pudo leer el archivo. Elegilo de nuevo.');
+    expect(await actualizarCostosPorPlanilla(archivo)).toEqual({ tipo: 'general', mensaje: MENSAJE_PLANILLA_ILEGIBLE });
+    expect(servidor.llamadas).toEqual([]);
+  });
+
+  it('actualizarCostosPorPlanilla_400_ErrorDeLaPlanilla', async () => {
+    const mensaje = 'El archivo no es una planilla .xlsx. Guardala como Libro de Excel (.xlsx) y volvé a cargarla.';
+    servidorFalso({ [CLAVE]: problema(400, 'planilla', mensaje) });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'campo', campo: 'planilla', mensaje });
+  });
+
+  it('actualizarCostosPorPlanilla_409Cambiado_TextoPropio', async () => {
+    servidorFalso({
+      [CLAVE]: json(409, { status: 409, motivo: 'cambiado', detail: 'otro texto del servidor' }),
+    });
+
+    expect(MENSAJE_PLANILLA_CAMBIADA).toBe(
+      'Un artículo cambió mientras se cargaba la planilla. No se actualizó ningún costo. Volvé a cargarla.',
+    );
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({
+      tipo: 'conflicto',
+      motivo: 'cambiado',
+      mensaje: MENSAJE_PLANILLA_CAMBIADA,
+    });
+  });
+
+  it('actualizarCostosPorPlanilla_413_LaPlanillaSuperaLos10MB', async () => {
+    servidorFalso({ [CLAVE]: vacia(413) });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({
+      tipo: 'general',
+      mensaje: 'La planilla supera los 10 MB.',
+    });
+  });
+
+  it('actualizarCostosPorPlanilla_429_HayOtraPlanillaEnProceso', async () => {
+    servidorFalso({ [CLAVE]: vacia(429) });
+
+    expect(MENSAJE_PLANILLA_OCUPADA).toBe('Hay otra planilla en proceso. Esperá unos segundos y volvé a cargarla.');
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'general', mensaje: MENSAJE_PLANILLA_OCUPADA });
+  });
+
+  it('actualizarCostosPorPlanilla_401_SinSesion', async () => {
+    const manejador = vi.fn();
+    alPerderLaSesion(manejador);
+    servidorFalso({ [CLAVE]: vacia(401) });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'sinSesion' });
+    expect(manejador).toHaveBeenCalledOnce();
+  });
+
+  it('actualizarCostosPorPlanilla_SinRed_MensajeGeneral', async () => {
+    servidorFalso({ [CLAVE]: sinRed });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'general', mensaje: MENSAJE_SIN_CONEXION });
+  });
+
+  it.each([
+    ['un cuerpo que no es objeto', null],
+    ['filasLeidas no entero', { ...RESULTADO, filasLeidas: 1.5 }],
+    ['aplicadas negativo', { ...RESULTADO, aplicadas: -1 }],
+    ['noAplicadas no arreglo', { ...RESULTADO, noAplicadas: {} }],
+    ['una razón desconocida', { ...RESULTADO, noAplicadas: [{ fila: 4, codigo: 'X', razon: 'otra' }] }],
+    ['un código no texto', { ...RESULTADO, noAplicadas: [{ fila: 4, codigo: 9, razon: 'código inexistente' }] }],
+    ['un precio no número', { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], precioCosto: '-100' }] }],
+    [
+      'un precio fuera del máximo seguro',
+      { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], precioCosto: IMPORTE_MAXIMO_SEGURO * 2 }] },
+    ],
+    ['una fila no entera', { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], fila: 2.5 }] }],
+    ['revisar no arreglo', { ...RESULTADO, revisar: null }],
+    ['una fila no objeto', { ...RESULTADO, noAplicadas: ['XYZ-9'] }],
+    ['una fila para revisar no objeto', { ...RESULTADO, revisar: [null] }],
+    ['una indicación desconocida', { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], indicaciones: ['otra'] }] }],
+    ['indicaciones no arreglo', { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], indicaciones: 'inactivo' }] }],
+    // Invariantes del contrato (D-10, D-14, D-26).
+    [
+      'un código de más de 60 caracteres',
+      { ...RESULTADO, noAplicadas: [{ ...RESULTADO.noAplicadas[0], codigo: 'X'.repeat(61) }] },
+    ],
+    ['una fila de más de 50.001', { ...RESULTADO, revisar: [{ ...RESULTADO.revisar[0], fila: 50_002 }] }],
+    ['aplicadas mayor que filasLeidas', { ...RESULTADO, filasLeidas: 2, aplicadas: 3, noAplicadas: [] }],
+    ['aplicadas más noAplicadas distinto de filasLeidas', { ...RESULTADO, filasLeidas: 5 }],
+    [
+      'más filas para revisar que aplicadas',
+      {
+        ...RESULTADO,
+        filasLeidas: 2,
+        aplicadas: 1,
+        revisar: [RESULTADO.revisar[0], { ...RESULTADO.revisar[0], fila: 3 }],
+      },
+    ],
+    [
+      'una fila repetida en noAplicadas',
+      {
+        ...RESULTADO,
+        filasLeidas: 5,
+        aplicadas: 3,
+        noAplicadas: [RESULTADO.noAplicadas[0], { ...RESULTADO.noAplicadas[0], codigo: 'OTRO' }],
+      },
+    ],
+    [
+      'una fila repetida en revisar',
+      { ...RESULTADO, revisar: [RESULTADO.revisar[0], { ...RESULTADO.revisar[0], codigo: 'OTRO' }] },
+    ],
+  ])('actualizarCostosPorPlanilla_200Con%s_ResultadoIlegible', async (_caso, cuerpo) => {
+    servidorFalso({ [CLAVE]: json(200, cuerpo) });
+
+    // D-26: los costos ya se aplicaron; el texto no dice que falló la conexión.
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({
+      tipo: 'general',
+      mensaje: MENSAJE_PLANILLA_RESULTADO_ILEGIBLE,
+    });
+  });
+
+  it('actualizarCostosPorPlanilla_200EnElLimite_LoDevuelve', async () => {
+    // Los bordes de las invariantes son válidos: código de 60, fila 50.001, todas las aplicadas para revisar.
+    const enElLimite = {
+      filasLeidas: 2,
+      aplicadas: 1,
+      noAplicadas: [{ fila: 50_001, codigo: `${'X'.repeat(59)}…`, razon: 'código repetido en la planilla' }],
+      revisar: [{ fila: 2, codigo: 'Y'.repeat(60), precioCosto: 0, indicaciones: [] }],
+    };
+    servidorFalso({ [CLAVE]: json(200, enElLimite) });
+
+    expect(await actualizarCostosPorPlanilla(planilla())).toEqual({ tipo: 'ok', datos: enElLimite });
+  });
+
+  it('actualizarCostosPorPlanilla_TextoDelResultadoIlegible', () => {
+    expect(MENSAJE_PLANILLA_RESULTADO_ILEGIBLE).toBe(
+      'La planilla se procesó, pero no se pudo mostrar el resultado. Revisá los costos en el listado.',
+    );
   });
 });

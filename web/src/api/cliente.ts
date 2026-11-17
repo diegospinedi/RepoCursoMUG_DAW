@@ -267,6 +267,10 @@ interface Opciones {
   campo413?: string;
   /** Mensaje general de un 413, para un pedido sin un campo al que atribuirlo; tiene prioridad sobre `campo413`. */
   mensaje413?: string;
+  /** Mensaje general de un 429; sin él, {@link MENSAJE_OCUPADO}. */
+  mensaje429?: string;
+  /** Mensaje general de una respuesta exitosa ilegible en {@link pedir}; sin él, {@link MENSAJE_SIN_CONEXION}. */
+  mensajeIlegible?: string;
 }
 
 /** Pedido cuya respuesta exitosa trae datos: `leer` valida la forma del JSON. */
@@ -276,7 +280,9 @@ async function pedir<T>(opciones: Opciones, leer: Lector<T>): Promise<Resultado<
     return respuesta;
   }
   const datos = leer(await leerJson(respuesta.respuesta));
-  return datos === undefined ? { tipo: 'general', mensaje: MENSAJE_SIN_CONEXION } : { tipo: 'ok', datos };
+  return datos === undefined
+    ? { tipo: 'general', mensaje: opciones.mensajeIlegible ?? MENSAJE_SIN_CONEXION }
+    : { tipo: 'ok', datos };
 }
 
 /** Pedido cuya respuesta exitosa no trae datos (204, 201): el cuerpo no se lee. */
@@ -314,7 +320,7 @@ async function hacerPedido({ metodo, ruta, cuerpo }: Opciones): Promise<Response
 
 async function traducirError(
   respuesta: Response,
-  { mensaje409, motivos409, mensaje404, campo413 = CAMPO_CONTRASENA, mensaje413 }: Opciones,
+  { mensaje409, motivos409, mensaje404, campo413 = CAMPO_CONTRASENA, mensaje413, mensaje429 }: Opciones,
 ): Promise<Fallo> {
   switch (respuesta.status) {
     case 400: {
@@ -343,7 +349,7 @@ async function traducirError(
       // El texto es propio, no el `detail` del servidor: la Api no informa hasta cuándo dura el bloqueo.
       return { tipo: 'bloqueado', mensaje: MENSAJE_BLOQUEADO };
     case 429:
-      return { tipo: 'general', mensaje: MENSAJE_OCUPADO };
+      return { tipo: 'general', mensaje: mensaje429 ?? MENSAJE_OCUPADO };
     default:
       return {
         tipo: 'general',
@@ -753,6 +759,157 @@ export const grabarArticulo = (datos: DatosArticulo): Promise<ResultadoAlta> =>
     { metodo: 'POST', ruta: '/api/articulos', cuerpo: datos, mensaje413: MENSAJE_ARTICULO_GRANDE },
     leerArticulo,
   );
+
+/** Tamaño máximo de la planilla: 10 MiB, el mismo límite que el archivo decodificado en la Api (D-14). */
+export const TAMANO_MAXIMO_PLANILLA = 10 * 1024 * 1024;
+/** Planilla de más de {@link TAMANO_MAXIMO_PLANILLA}, en el navegador o por el 413 de la Api (D-25). */
+export const MENSAJE_PLANILLA_GRANDE = 'La planilla supera los 10 MB.';
+/** El 429 del limitador de la planilla (D-25): otra carga está en curso y otra en fila. */
+export const MENSAJE_PLANILLA_OCUPADA = 'Hay otra planilla en proceso. Esperá unos segundos y volvé a cargarla.';
+/** El 409 `cambiado` de la planilla (D-25): texto propio de la pantalla, igual al `detail` del servidor. */
+export const MENSAJE_PLANILLA_CAMBIADA =
+  'Un artículo cambió mientras se cargaba la planilla. No se actualizó ningún costo. Volvé a cargarla.';
+/** El navegador no pudo leer el archivo elegido (se borró o se movió después de elegirlo). */
+export const MENSAJE_PLANILLA_ILEGIBLE = 'No se pudo leer el archivo. Elegilo de nuevo.';
+/** Un 200 que no respeta el contrato (D-26): los costos ya se aplicaron, así que no es un fallo de conexión. */
+export const MENSAJE_PLANILLA_RESULTADO_ILEGIBLE =
+  'La planilla se procesó, pero no se pudo mostrar el resultado. Revisá los costos en el listado.';
+/** Largo máximo del código en la respuesta, con el "…" incluido (D-10). */
+const LARGO_MAXIMO_CODIGO_PLANILLA = 60;
+/** La última fila posible: 50.000 filas de datos después del encabezado (D-14). */
+const FILA_MAXIMA_PLANILLA = 50_001;
+
+/** Las razones de una fila no aplicada (FR-13). */
+export const RAZONES_NO_APLICADA = ['código inexistente', 'precio inválido', 'código repetido en la planilla'] as const;
+export type RazonNoAplicada = (typeof RAZONES_NO_APLICADA)[number];
+/** Las indicaciones de una fila aplicada para revisar (FR-14, FR-15). */
+export const INDICACIONES_REVISAR = ['actualizado con precio negativo o cero', 'inactivo'] as const;
+export type IndicacionRevisar = (typeof INDICACIONES_REVISAR)[number];
+
+/** Una fila de la planilla que no se aplicó: el número de fila, el código acotado a 60 caracteres (D-10) y la razón. */
+export interface FilaNoAplicada {
+  fila: number;
+  codigo: string;
+  razon: RazonNoAplicada;
+}
+
+/** Una fila aplicada que conviene revisar: el costo que quedó y por qué (precio negativo o cero, artículo inactivo). */
+export interface FilaParaRevisar {
+  fila: number;
+  codigo: string;
+  precioCosto: number;
+  indicaciones: IndicacionRevisar[];
+}
+
+/** La respuesta 200 de `POST /api/articulos/planilla-costos` (Block 4). */
+export interface ResultadoPlanilla {
+  filasLeidas: number;
+  aplicadas: number;
+  noAplicadas: FilaNoAplicada[];
+  revisar: FilaParaRevisar[];
+}
+
+/**
+ * Bytes por trozo al pasar a base64: múltiplo de 3, así cada trozo se codifica sin relleno intermedio y los textos se
+ * concatenan. Chico para que `String.fromCharCode(...trozo)` no pase el límite de argumentos ni desborde la pila.
+ */
+const TROZO_BASE64 = 3 * 8192;
+
+/** El base64 de los bytes, por trozos (un archivo de 10 MB en una sola llamada desborda la pila). */
+function aBase64(bytes: Uint8Array): string {
+  const partes: string[] = [];
+  for (let inicio = 0; inicio < bytes.length; inicio += TROZO_BASE64) {
+    partes.push(btoa(String.fromCharCode(...bytes.subarray(inicio, inicio + TROZO_BASE64))));
+  }
+  return partes.join('');
+}
+
+const esRazonNoAplicada = (valor: unknown): valor is RazonNoAplicada => RAZONES_NO_APLICADA.some((r) => r === valor);
+const esIndicacion = (valor: unknown): valor is IndicacionRevisar => INDICACIONES_REVISAR.some((i) => i === valor);
+
+/** Un número de fila de la planilla: entero de 1 a {@link FILA_MAXIMA_PLANILLA}. */
+const esFilaPlanilla = (valor: unknown): valor is number =>
+  esEnteroEntre(valor, 1) && valor <= FILA_MAXIMA_PLANILLA;
+
+/** El código como lo acota la Api: texto de hasta {@link LARGO_MAXIMO_CODIGO_PLANILLA} caracteres (D-10). */
+const esCodigoPlanilla = (valor: unknown): valor is string =>
+  typeof valor === 'string' && valor.length <= LARGO_MAXIMO_CODIGO_PLANILLA;
+
+/** Cada fila aparece una sola vez en su lista: la tabla la usa como clave. */
+const filasUnicas = (filas: readonly { fila: number }[]) => new Set(filas.map(({ fila }) => fila)).size === filas.length;
+
+const leerFilaNoAplicada: Lector<FilaNoAplicada> = (cuerpo) =>
+  esObjeto(cuerpo) && esFilaPlanilla(cuerpo.fila) && esCodigoPlanilla(cuerpo.codigo) && esRazonNoAplicada(cuerpo.razon)
+    ? { fila: cuerpo.fila, codigo: cuerpo.codigo, razon: cuerpo.razon }
+    : undefined;
+
+const leerFilaParaRevisar: Lector<FilaParaRevisar> = (cuerpo) => {
+  if (!esObjeto(cuerpo)) {
+    return undefined;
+  }
+  const indicaciones = leerLista(cuerpo.indicaciones, (valor) => (esIndicacion(valor) ? valor : undefined));
+  return esFilaPlanilla(cuerpo.fila) &&
+    esCodigoPlanilla(cuerpo.codigo) &&
+    esImporte(cuerpo.precioCosto) &&
+    indicaciones !== undefined
+    ? { fila: cuerpo.fila, codigo: cuerpo.codigo, precioCosto: cuerpo.precioCosto, indicaciones }
+    : undefined;
+};
+
+/**
+ * La respuesta 200 con sus invariantes (D-26): cada fila leída es aplicada o no aplicada
+ * (`aplicadas + noAplicadas.length === filasLeidas`), las para revisar son aplicadas (`revisar.length <= aplicadas`) y
+ * ninguna fila se repite dentro de su lista. Una respuesta que no las cumple es ilegible.
+ */
+const leerResultadoPlanilla: Lector<ResultadoPlanilla> = (cuerpo) => {
+  if (!esObjeto(cuerpo)) {
+    return undefined;
+  }
+  const { filasLeidas, aplicadas } = cuerpo;
+  const noAplicadas = leerLista(cuerpo.noAplicadas, leerFilaNoAplicada);
+  const revisar = leerLista(cuerpo.revisar, leerFilaParaRevisar);
+  return esEnteroEntre(filasLeidas, 0) &&
+    esEnteroEntre(aplicadas, 0) &&
+    aplicadas <= filasLeidas &&
+    noAplicadas !== undefined &&
+    revisar !== undefined &&
+    aplicadas + noAplicadas.length === filasLeidas &&
+    revisar.length <= aplicadas &&
+    filasUnicas(noAplicadas) &&
+    filasUnicas(revisar)
+    ? { filasLeidas, aplicadas, noAplicadas, revisar }
+    : undefined;
+};
+
+/**
+ * Actualiza los costos del catálogo con la planilla .xlsx elegida (FEAT-011, D-06): un archivo de más de
+ * {@link TAMANO_MAXIMO_PLANILLA} se rechaza sin leerlo ni enviarlo; si no, lo lee entero, lo pasa a base64 y lo envía
+ * en el cuerpo JSON (`{ planilla }`), nunca en la URL ni en el almacenamiento del navegador. Un 400 trae el texto de
+ * `errors.planilla` (no es .xlsx, formato, límites); 409 `cambiado`, 413 y 429 tienen texto propio (D-25).
+ */
+export async function actualizarCostosPorPlanilla(archivo: File): Promise<Resultado<ResultadoPlanilla>> {
+  if (archivo.size > TAMANO_MAXIMO_PLANILLA) {
+    return { tipo: 'general', mensaje: MENSAJE_PLANILLA_GRANDE };
+  }
+  let planilla: string;
+  try {
+    planilla = aBase64(new Uint8Array(await archivo.arrayBuffer()));
+  } catch {
+    return { tipo: 'general', mensaje: MENSAJE_PLANILLA_ILEGIBLE };
+  }
+  return pedir(
+    {
+      metodo: 'POST',
+      ruta: '/api/articulos/planilla-costos',
+      cuerpo: { planilla },
+      motivos409: { cambiado: MENSAJE_PLANILLA_CAMBIADA },
+      mensaje413: MENSAJE_PLANILLA_GRANDE,
+      mensaje429: MENSAJE_PLANILLA_OCUPADA,
+      mensajeIlegible: MENSAJE_PLANILLA_RESULTADO_ILEGIBLE,
+    },
+    leerResultadoPlanilla,
+  );
+}
 
 /**
  * Un artículo por su código, con su estado y su versión. Un código que no es un entero positivo no se consulta (no

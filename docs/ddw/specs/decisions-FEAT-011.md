@@ -80,3 +80,14 @@ agente bajo la delegación del usuario ("la recomendada y la que menos tiempo in
   - un archivo decodificado de más de 10 MB responde 400 "La planilla supera los 10 MB." (el mismo texto que el 413 en
     la pantalla);
   - un JSON ilegible o una planilla que no es texto responde 400 con el mensaje "no es .xlsx".
+- **D-26 — agente, bajo la delegación del usuario — 2026-11-17 — Block 5:**
+  - 409 con el texto de D-25 (constante propia del cliente, no el `detail`);
+  - un archivo que el navegador no puede leer muestra "No se pudo leer el archivo. Elegilo de nuevo.";
+  - una tabla sin filas no se muestra;
+  - cada tabla muestra las primeras 500 filas con el aviso "Se muestran 500 de N filas. Corregí la planilla y volvé a
+    cargarla." (una planilla de 50.000 filas congelaría la pantalla);
+  - un 200 que no respeta el contrato muestra "La planilla se procesó, pero no se pudo mostrar el resultado. Revisá los
+    costos en el listado." (los costos ya se aplicaron);
+  - el resumen usa el texto literal de la spec, sin singular.
+  Deuda fuera de alcance: las regiones `role="status"` del proyecto se montan junto con su texto y algunos lectores de
+  pantalla no las anuncian (mismo patrón que SeccionBackup y NuevoArticulo).

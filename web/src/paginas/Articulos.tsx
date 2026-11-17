@@ -246,6 +246,9 @@ export function Articulos() {
         <Link to="/articulos/nuevo">Nuevo artículo</Link>
       </p>
       <p>
+        <Link to="/articulos/actualizar-costos">Actualizar costos con planilla</Link>
+      </p>
+      <p>
         <Link to="/">Volver al inicio</Link>
       </p>
     </section>
