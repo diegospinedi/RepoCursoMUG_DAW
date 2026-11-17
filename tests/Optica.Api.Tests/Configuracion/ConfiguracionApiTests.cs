@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Optica.Api.Controllers;
+using Optica.Application.Backup;
 using Optica.Application.Catalogo;
 using Optica.Application.Configuracion;
 using Optica.Infrastructure.Persistencia;
@@ -579,6 +580,50 @@ public sealed class ConfiguracionApiTests
         Assert.Equal(
             "Information",
             configuracion["Logging:EventLog:LogLevel:Optica.Application.Configuracion"]);
+        Assert.Null(configuracion["Logging:EventLog:LogLevel:Default"]);
+    }
+
+    /// <summary>
+    /// Spec FEAT-010, Block 5: el éxito diario del backup (categoría <c>Optica.Application.Backup</c>, la constante del caso
+    /// de uso, nivel Information) va al Registro de eventos de Windows; las fallas ya llegan por Warning y Error. El
+    /// Debug del backup (inicio, sin ubicación, D-25) no llega, y las demás categorías siguen con el valor por defecto.
+    /// Misma técnica que <see cref="Appsettings_GrabacionDeConfiguracion_VaAlRegistroDeEventos"/>.
+    /// </summary>
+    [Fact]
+    public void Appsettings_Backup_VaAlRegistroDeEventos()
+    {
+        Assert.Equal("Optica.Application.Backup", HacerBackup.CategoriaRegistro);
+
+        var archivo = Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "appsettings.json");
+        var configuracion = new ConfigurationBuilder().AddJsonFile(archivo, optional: false).Build();
+        var registroDeEventos = new RegistroDeEventosSimulado();
+        using (var servicios = new ServiceCollection()
+            .AddLogging(log =>
+            {
+                // Como HostingHostBuilderExtensions en Windows: EventLog en Warning, luego la configuración.
+                log.AddFilter<RegistroDeEventosSimulado>(nivel => nivel >= LogLevel.Warning);
+                log.AddConfiguration(configuracion.GetSection("Logging"));
+                log.AddProvider(registroDeEventos);
+            })
+            .BuildServiceProvider())
+        {
+            var fabricaRegistros = servicios.GetRequiredService<ILoggerFactory>();
+            var backup = fabricaRegistros.CreateLogger(HacerBackup.CategoriaRegistro);
+            backup.LogInformation("backup-hecho");
+            backup.LogError("backup-fallido");
+            backup.LogDebug("backup-debug");
+            fabricaRegistros.CreateLogger("Optica.Prueba").LogInformation("otra-categoria-information");
+            fabricaRegistros.CreateLogger("Optica.Prueba").LogWarning("otra-categoria-warning");
+        }
+
+        Assert.Contains("backup-hecho", registroDeEventos.Mensajes);
+        Assert.Contains("backup-fallido", registroDeEventos.Mensajes);
+        Assert.DoesNotContain("backup-debug", registroDeEventos.Mensajes);
+        Assert.DoesNotContain("otra-categoria-information", registroDeEventos.Mensajes);
+        Assert.Contains("otra-categoria-warning", registroDeEventos.Mensajes);
+        Assert.Equal("Information", configuracion["Logging:EventLog:LogLevel:Optica.Application.Backup"]);
+        // La clave hermana sigue igual.
+        Assert.Equal("Information", configuracion["Logging:EventLog:LogLevel:Optica.Application.Configuracion"]);
         Assert.Null(configuracion["Logging:EventLog:LogLevel:Default"]);
     }
 

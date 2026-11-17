@@ -500,6 +500,93 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-010 (D-12): la ubicación del backup puede llevar el nombre de una persona; ninguna respuesta de
+    /// <c>/api/configuracion/backup</c> queda en caché: 401, GET sin y con ubicación, 200 y 400 del POST, 400 ilegible y 413.
+    /// </summary>
+    [Fact]
+    public async Task RutasBackup_NoStore()
+    {
+        const string ruta = "/api/configuracion/backup";
+        var cuerpo = "{\"ruta\":" + JsonSerializer.Serialize(Path.Combine(Path.GetTempPath(), "PendriveFicticio", "Backups")) + "}";
+        using var fabrica = new FabricaApi(reemplazos: servicios =>
+        {
+            servicios.RemoveAll<Optica.Application.Backup.IInspectorUbicaciones>();
+            servicios.AddSingleton<Optica.Application.Backup.IInspectorUbicaciones, InspectorOtraUnidad>();
+        });
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, ruta);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del backup");
+
+        var cookie = await Http.DefinirAsync(cliente);
+
+        var sinUbicacion = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, sinUbicacion.StatusCode);
+        AfirmarNoStore(sinUbicacion, "GET del backup sin ubicación");
+
+        var grabada = await Http.PostJsonAsync(cliente, ruta, cuerpo, cookie);
+        Assert.Equal(HttpStatusCode.OK, grabada.StatusCode);
+        AfirmarNoStore(grabada, "POST del backup");
+
+        var conUbicacion = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, conUbicacion.StatusCode);
+        Assert.NotNull((await Http.JsonAsync(conUbicacion)).GetProperty("ruta").GetString());
+        AfirmarNoStore(conUbicacion, "GET del backup con ubicación");
+
+        var invalida = await Http.PostJsonAsync(cliente, ruta, "{\"ruta\":\"relativa/Backups\"}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, invalida.StatusCode);
+        AfirmarNoStore(invalida, "400 del backup");
+
+        var ilegible = await Http.PostJsonAsync(cliente, ruta, "{\"ruta\":1}", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, ilegible.StatusCode);
+        AfirmarNoStore(ilegible, "400 de un cuerpo del backup ilegible");
+
+        var grande = await Http.PostJsonAsync(cliente, ruta, cuerpo[..^1] + ",\"r\":\"" + new string('a', 2100) + "\"}", cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 del backup");
+    }
+
+    /// <summary>
+    /// FEAT-010, Block 6: el estado del backup tampoco queda en caché (el aviso tiene que ver el estado de cada ingreso):
+    /// ni el 401 ni el 200.
+    /// </summary>
+    [Fact]
+    public async Task RutasEstadoBackup_NoStore()
+    {
+        const string ruta = "/api/backup/estado";
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+
+        var sinSesion = await Http.GetAsync(cliente, ruta);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 del estado del backup");
+
+        var cookie = await Http.DefinirAsync(cliente);
+        var estado = await Http.GetAsync(cliente, ruta, cookie);
+        Assert.Equal(HttpStatusCode.OK, estado.StatusCode);
+        AfirmarNoStore(estado, "GET del estado del backup");
+    }
+
+    /// <summary>Inspector que toma toda ruta como de otra unidad, existente y escribible: la prueba no depende del disco.</summary>
+    private sealed class InspectorOtraUnidad : Optica.Application.Backup.IInspectorUbicaciones
+    {
+        public string? Normalizar(string ruta) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(ruta));
+
+        public bool Superpuestas(string rutaA, string rutaB) => false;
+
+        public bool EsLocal(string ruta) => true;
+
+        public bool MismaUnidad(string rutaA, string rutaB) => false;
+
+        public bool EnNubeConocida(string ruta) => false;
+
+        public bool Existe(string ruta) => true;
+
+        public bool PuedeEscribir(string ruta) => true;
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>

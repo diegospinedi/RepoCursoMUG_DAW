@@ -47,6 +47,12 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
     /// <summary>El registro de descartes de emisiones pendientes (FEAT-008, FR-10, ADR-026): solo se agrega.</summary>
     public DbSet<DescarteEmisionFila> DescartesEmision => Set<DescarteEmisionFila>();
 
+    /// <summary>La ubicación del backup (FEAT-010, FR-01): una fila como máximo, con <c>Id = 1</c>.</summary>
+    public DbSet<ConfiguracionBackupFila> ConfiguracionesBackup => Set<ConfiguracionBackupFila>();
+
+    /// <summary>El historial de backups verificados (FEAT-010, D-08, ADR-029): solo se agrega.</summary>
+    public DbSet<BackupRealizadoFila> BackupsRealizados => Set<BackupRealizadoFila>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<CredencialAccesoFila>(credencial =>
@@ -516,6 +522,38 @@ public sealed class OpticaDbContext(DbContextOptions<OpticaDbContext> opciones) 
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<ConfiguracionBackupFila>(configuracion =>
+        {
+            // FEAT-010 (FR-01): fila única, sin fila inicial (null mientras no se elija). Los CHECK son la segunda barrera
+            // detrás de UbicacionBackup; la migración Backup los crea con el mismo nombre y la misma expresión.
+            configuracion.ToTable("ConfiguracionBackup", tabla =>
+            {
+                tabla.HasCheckConstraint("CK_ConfiguracionBackup_Id", "\"Id\" = 1");
+                tabla.HasCheckConstraint("CK_ConfiguracionBackup_Ruta", "length(\"Ruta\") BETWEEN 1 AND 260");
+            });
+            configuracion.HasKey(c => c.Id);
+            configuracion.Property(c => c.Id).ValueGeneratedNever();
+            configuracion.Property(c => c.Ruta).IsRequired();
+        });
+
+        modelBuilder.Entity<BackupRealizadoFila>(backup =>
+        {
+            // ADVERTENCIA (ADR-012): esta tabla no se reconstruye; perdería TR_BackupRealizado_Inmutable y
+            // TR_BackupRealizado_NoSeBorra. FEAT-010 (D-08, ADR-029): solo se agrega. Sin rutas ni datos de personas.
+            backup.ToTable("BackupRealizado", tabla =>
+                tabla.HasCheckConstraint(
+                    "CK_BackupRealizado_Fecha", "\"Fecha\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"));
+            backup.HasKey(b => b.Id);
+            backup.Property(b => b.Id).ValueGeneratedOnAdd();
+
+            // Texto yyyy-MM-dd, que interpreta el repositorio; se compara como texto para buscar la última.
+            backup.Property(b => b.Fecha).IsRequired();
+            backup.Property(b => b.MomentoUtc).IsRequired().HasConversion(FechaUtcIso8601);
+
+            // Puede haber más de una copia por día (la de las 20:00 reemplaza la del arranque, D-20): índice no único.
+            backup.HasIndex(b => b.Fecha);
+        });
+
         // Las funciones de las búsquedas, registradas en cada conexión por FabricaConexion (ADR-011; FEAT-009, D-27).
         modelBuilder.HasDbFunction(typeof(FuncionesSqlite).GetMethod(nameof(FuncionesSqlite.Plegar))!)
             .HasName(FuncionesSqlite.NombrePlegar);
@@ -599,6 +637,31 @@ public sealed class DatosEmisorFila
 
     /// <summary>La fecha de inicio de actividades como <c>yyyy-MM-dd</c>.</summary>
     public string InicioActividades { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Fila de la tabla <c>ConfiguracionBackup</c> (única, <c>Id = 1</c>, FEAT-010): la ruta de la carpeta de backup.
+/// </summary>
+public sealed class ConfiguracionBackupFila
+{
+    public int Id { get; set; }
+
+    /// <summary>Absoluta, de 1 a 260 caracteres. Nunca va al log (D-12).</summary>
+    public string Ruta { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Fila de la tabla <c>BackupRealizado</c> (FEAT-010, D-08, ADR-029): un backup verificado. Solo se agrega.
+/// </summary>
+public sealed class BackupRealizadoFila
+{
+    public long Id { get; set; }
+
+    /// <summary>La fecha del nombre de la copia, como <c>yyyy-MM-dd</c>.</summary>
+    public string Fecha { get; set; } = string.Empty;
+
+    /// <summary>Fecha y hora UTC en que se hizo, guardada como ISO 8601 de ida y vuelta.</summary>
+    public DateTime MomentoUtc { get; set; }
 }
 
 /// <summary>

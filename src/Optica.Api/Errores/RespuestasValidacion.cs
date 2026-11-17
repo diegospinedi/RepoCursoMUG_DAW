@@ -38,6 +38,13 @@ public static class RespuestasValidacion
     public const string AccionCuerpoIlegibleBusqueda =
         "No se pudieron leer los filtros enviados. Revisalos y buscá de nuevo.";
 
+    /// <summary>
+    /// Acción para un cuerpo de la ubicación del backup que no se pudo leer (FEAT-010): JSON roto, un cuerpo que no es un
+    /// objeto, o un número, un arreglo o un objeto donde va la ruta. No repite lo recibido (D-12).
+    /// </summary>
+    public const string AccionCuerpoIlegibleBackup =
+        "No se pudo leer la carpeta del backup enviada. Escribila de nuevo y grabá.";
+
     /// <summary>400 con <c>errors.{campo}</c> y la acción de cada error.</summary>
     public static ActionResult Invalido(this ControllerBase controller, params ErrorValidacion[] errores) =>
         controller.ConErrores(StatusCodes.Status400BadRequest, detalle: null, errores);

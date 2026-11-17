@@ -17,47 +17,51 @@ uno con su Api, su puerto y su base nueva:
 | `chrome-acceso` | `chrome` | `acceso.spec.ts` | 5543 |
 | `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5544 |
 | `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
-| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5546 |
-| `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5547 |
-| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5548 |
-| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5549 |
-| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5550 |
-| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5551 |
-| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5552 |
-| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5553 |
-| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5554 |
-| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5555 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5556 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5557 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5558 |
-| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5559 |
-| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5560 |
-| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5561 |
-| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5562 |
-| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5563 |
-| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5564 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5565 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5566 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5567 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5568 |
-| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5569 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5570 |
-| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5571 |
-| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5572 |
-| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5573 |
-| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5574 |
-| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5575 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5576 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5577 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5578 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5579 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5580 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5581 |
-| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5582 |
-| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5583 |
-| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5584 |
-| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5585 |
-| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5586 |
+| `chrome-backup-aviso` | `chrome` | `backup-aviso.spec.ts` | 5546 |
+| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5547 |
+| `chrome-configuracion-backup` | `chrome` | `configuracion-backup.spec.ts` | 5548 |
+| `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5549 |
+| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5550 |
+| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5551 |
+| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5552 |
+| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5553 |
+| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5554 |
+| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5555 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5556 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5557 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5558 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5559 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5560 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5561 |
+| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5562 |
+| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5563 |
+| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5564 |
+| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5565 |
+| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5566 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5567 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5568 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5569 |
+| `msedge-backup-aviso` | `msedge` | `backup-aviso.spec.ts` | 5570 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5571 |
+| `msedge-configuracion-backup` | `msedge` | `configuracion-backup.spec.ts` | 5572 |
+| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5573 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5574 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5575 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5576 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5577 |
+| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5578 |
+| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5579 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5580 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5581 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5582 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5583 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5584 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5585 |
+| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5586 |
+| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5587 |
+| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5588 |
+| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5589 |
+| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5590 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -79,8 +83,61 @@ de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec
 5562–5575 y tienen los suyos en 5576–5580; y `configuracion-emisor.spec.ts`, `facturas-busqueda.spec.ts` y
 `facturas-pdf.spec.ts` (FEAT-009) ocupan 5547, 5552 y 5553 en Chrome, mueven `chrome-configuracion-recalculo` y los
 `chrome-facturacion*` a 5548–5551 y los `chrome-presupuestos-*` y `chrome-verificacion-*` a 5554–5564, y los de Edge a
-5565–5568, 5570–5573 y 5576–5586, con los suyos en 5569, 5574 y 5575. Son 44 proyectos, de 5543 a 5586. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
+5565–5568, 5570–5573 y 5576–5586, con los suyos en 5569, 5574 y 5575; y `backup-aviso.spec.ts` y
+`configuracion-backup.spec.ts` (FEAT-010) ocupan 5546 y 5548 en Chrome, mueven `chrome-configuracion` a 5547 y los que
+siguen en Chrome a 5549–5566, y los de Edge a 5567–5569, 5571 y 5573–5590, con los suyos en 5570 y 5572. Son 48
+proyectos, de 5543 a 5590. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
 `[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
+
+**Carpetas de backup (FEAT-010, D-16).** La ubicación del backup tiene que estar en otra unidad que la base (FR-02).
+Para probarlo, `servidor.mjs` crea por cada Api, antes de levantarla, una raíz `optica-e2e-backup-<puerto>` en la
+carpeta temporal (el mismo punto de montaje que los datos de la Api) y otra en un segundo punto de montaje, `/dev/shm`
+en Linux, si está en otro dispositivo que la carpeta temporal (`carpetasDeBackup` y `baseDeOtroMontaje` en
+`compilacion.mjs`). El nombre lleva el puerto, que ya es único entre las Api que corren a la vez: así la prueba encuentra
+sus carpetas con el puerto de su `baseURL`. Adentro están la carpeta de la misma unidad (`misma-unidad`, AC-02), la
+de otra unidad en la que se puede escribir (`destino`, AC-01) y una sin permiso de escritura (`sin-escritura`, 555,
+AC-03); la carpeta inexistente de AC-03 (`no-existe`) nunca se crea. Sin un segundo punto de montaje (Windows), el caso
+positivo de AC-01 y la carpeta sin escritura se saltan con su motivo (los cubren las pruebas de .NET); la carpeta sin
+escritura también se salta como root. La regla de la otra unidad nunca se desactiva con configuración.
+
+Antes de crear o borrar una raíz, `revisarCarpetaDeBackup` comprueba que sea una temporal propia: exactamente
+`<carpeta temporal o /dev/shm>/optica-e2e-backup-<puerto>`, absoluta y sin `..`. Cualquier otra ruta (por ejemplo, una
+carpeta de backup real) se rechaza sin crear ni borrar nada y sin repetir la ruta en el mensaje. Una vez que
+`configuracion-backup.spec.ts` graba el destino, el programador de esa Api puede hacer una copia ahí dentro de los 5
+minutos siguientes: `servidor.mjs` borra las raíces después de detener las Api, y al arrancar borra las de corridas
+anteriores que ya terminaron. Las raíces y `destino` se crean con permisos 700 (solo el usuario que corre la suite).
+Antes de borrar, a `sin-escritura` se le devuelve el permiso de escritura solo si es una carpeta real (`lstat`): si es
+un enlace simbólico no se le cambian los permisos (cambiarían los de lo apuntado) y se borra solo el enlace.
+
+**Corridas anteriores.** Cada archivo `pid` (el del directorio temporal y el de cada raíz de backup) guarda el pid de
+`servidor.mjs` y, en Linux, la hora de inicio de ese proceso (campo 22 de `/proc/<pid>/stat`). Una corrida sigue viva si
+el proceso existe y su hora de inicio coincide: así un pid que otro proceso reutilizó no la hace pasar por viva. En
+Windows no hay una forma portable de leer la hora de inicio y decide solo el pid. La limpieza ignora las carpetas de otro
+usuario de la PC (`lstat().uid` distinto de `process.getuid()`, cuando existe). Si una raíz de backup es de una corrida
+viva, `servidor.mjs` se detiene con un mensaje que dice cómo resolverlo: si no hay otra corrida, borrar las carpetas
+`optica-e2e-backup-*` de la carpeta temporal y de `/dev/shm`, o correr con otro `OPTICA_E2E_PUERTO`.
+
+**"Otra unidad" en el harness y en la Api.** La Api decide la unidad por el punto de montaje de prefijo más largo de
+`DriveInfo.GetDrives`, que en Linux lee `/proc/self/mountinfo`. `baseDeOtroMontaje` usa el mismo criterio: lee
+mountinfo y acepta `/dev/shm` solo si su punto de montaje es otro que el de la carpeta temporal. Si mountinfo no se
+puede leer, compara `stat().dev`, y ese criterio puede no coincidir con el de la Api con btrfs (subvolúmenes con otro
+`dev` en el mismo montaje), overlay o montajes bind (el mismo `dev` en otro montaje): en ese caso el harness puede creer
+que hay otra unidad cuando la Api ve la misma, y AC-01 falla con el mensaje de la misma unidad (o se salta sin
+necesidad). La solución es correr donde mountinfo se pueda leer.
+
+`configuracion-backup.spec.ts` (AC-01 a AC-03) va en orden: primero los rechazos (misma unidad, inexistente y sin
+escritura), cada uno con el mensaje junto al campo y sin ubicación grabada al volver a abrir la configuración, y al final
+el destino de otra unidad, que se graba y se ve al volver a abrir y al recargar. `backup-aviso.spec.ts` (AC-10 y AC-15)
+no elige ninguna ubicación: con la base nueva sin backups, el inicio muestra "Falta el backup de ayer. No hay ningún
+backup disponible. No hay una ubicación de backup elegida." (`role="status"`, sin enlaces, D-13 y D-26), también al
+volver a ingresar, y ni el inicio ni ninguna pantalla de su menú tiene un texto de restaurar o restablecer, un control
+que combine backup o copia con cargar, importar, subir o volver, ni un campo para subir un archivo. La lista de
+pantallas sale de los enlaces del inicio y se compara con la esperada, así una pantalla nueva del menú hace fallar la
+prueba hasta que se suma. Las pantallas de detalle (presupuesto, factura, editar artículo) no se recorren porque la base
+está vacía: las cubren `ProteccionTests` en la Api y, en la web, una búsqueda de texto en el código (`restaur` no
+aparece en `web/src` fuera de las pruebas); esa búsqueda no es una prueba automática.
+Como todas las bases nuevas de la suite muestran ese aviso en el inicio, una prueba que busque `getByRole('status')`
+tiene que filtrarlo por su texto (como `acceso.spec.ts`).
 
 **ARCA en la suite (FEAT-007).** Todas las Api de la suite arrancan con ARCA simulada (`Arca__Entorno=Simulado`), con
 un tiempo máximo de 2 s (`Arca__TiempoMaximoSegundos=2`) y sin CUIT ni certificado (`Arca__Cuit`,
@@ -251,7 +308,7 @@ hay advertencias.
 
 Dentro de un proyecto las pruebas corren en orden y de a una porque así lo fija `playwright.config.ts`
 (`workers: 1`, `fullyParallel: false`): comparten la base del proyecto. Solo algunos archivos dependen además de lo que
-dejó la prueba anterior (`articulos.spec.ts`, `configuracion-recalculo.spec.ts`, `facturacion.spec.ts`,
+dejó la prueba anterior (`articulos.spec.ts`, `configuracion-backup.spec.ts`, `configuracion-recalculo.spec.ts`, `facturacion.spec.ts`,
 `verificacion-recupera.spec.ts` y la primera prueba de `presupuestos-alta.spec.ts`, por ejemplo); `articulos-edicion.spec.ts`, `presupuestos-busqueda.spec.ts`,
 `presupuestos-calculos.spec.ts`, `presupuestos-concurrencia.spec.ts`, `presupuestos-edicion.spec.ts` y
 `presupuestos-pdf.spec.ts` no dependen del orden, como se describe arriba.

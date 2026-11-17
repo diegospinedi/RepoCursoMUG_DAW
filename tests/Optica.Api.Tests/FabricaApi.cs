@@ -6,8 +6,10 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Optica.Api.Backup;
 using Optica.Infrastructure.Arca;
 using Optica.Infrastructure.Persistencia;
 
@@ -16,7 +18,7 @@ namespace Optica.Api.Tests;
 /// <summary>
 /// La Api completa sobre un servidor de pruebas: base SQLite en un directorio temporal propio (también las claves
 /// de Data Protection y el candado de instancia), reloj controlable y un registro en memoria para inspeccionar el log.
-/// Al descartarla se libera el candado y se borra el directorio.
+/// Sin el programador del backup (D-25 de FEAT-010). Al descartarla se libera el candado y se borra el directorio.
 /// </summary>
 public sealed class FabricaApi : WebApplicationFactory<Program>
 {
@@ -272,6 +274,15 @@ public sealed class FabricaApi : WebApplicationFactory<Program>
         });
         builder.ConfigureTestServices(servicios =>
         {
+            // D-25 de FEAT-010: la suite de la Api no hace backups. El programador se prueba aparte, con su reloj
+            // (ProgramadorBackupTests).
+            foreach (var programador in servicios
+                .Where(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(ProgramadorBackup))
+                .ToList())
+            {
+                servicios.Remove(programador);
+            }
+
             servicios.RemoveAll<TimeProvider>();
             servicios.AddSingleton<TimeProvider>(Reloj);
             _reemplazos?.Invoke(servicios);

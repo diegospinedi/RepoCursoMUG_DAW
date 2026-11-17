@@ -6,7 +6,13 @@ import {
   type DatosEmisor,
 } from '../api/cliente';
 import { esFecha } from '../api/fechas';
-import { IMPORTE_MAXIMO_SEGURO, leerDecimal, PUNTO_VENTA_MAXIMO, PUNTO_VENTA_MINIMO } from './numeros';
+import {
+  IMPORTE_MAXIMO_SEGURO,
+  LARGO_MAXIMO_RUTA_BACKUP,
+  leerDecimal,
+  PUNTO_VENTA_MAXIMO,
+  PUNTO_VENTA_MINIMO,
+} from './numeros';
 
 /**
  * Las reglas de la configuración de negocio (Block 1: `PoliticaConfiguracionNegocio`) con los mensajes de la Api
@@ -329,4 +335,32 @@ export function validarDatosEmisor(textos: TextosDatosEmisor, hoy: string): Vali
     };
   }
   return { tipo: 'errores', errores };
+}
+
+// ---- Ubicación del backup (FEAT-010) ----
+
+/** Definido en `numeros.ts`, que no importa nada, para que `api/cliente.ts` lo use sin un ciclo de módulos. */
+export { LARGO_MAXIMO_RUTA_BACKUP };
+
+/** Los mismos textos que `ValidacionUbicacionBackup` de la Api para las dos reglas que se validan en el navegador. */
+export const MENSAJE_RUTA_BACKUP_FALTANTE = 'Ingresá la carpeta del backup.';
+export const MENSAJE_RUTA_BACKUP_LARGA = 'La ruta de la carpeta del backup puede tener hasta 260 caracteres.';
+
+export type ValidacionRutaBackup = { tipo: 'ok'; ruta: string } | { tipo: 'error'; mensaje: string };
+
+/**
+ * El espejo de las reglas de `UbicacionBackup` que no dependen del equipo: la ruta, recortada como en el servidor, es
+ * obligatoria y tiene hasta {@link LARGO_MAXIMO_RUTA_BACKUP} caracteres. Lo demás (caracteres de control, ruta completa,
+ * unidad, permisos, carpeta de los datos) lo decide la Api. Devuelve la ruta recortada a enviar o el mensaje del campo.
+ * Es una comodidad: la validación que vale es la del servidor.
+ */
+export function validarRutaBackup(escrita: string): ValidacionRutaBackup {
+  const ruta = recortar(escrita);
+  if (ruta === '') {
+    return { tipo: 'error', mensaje: MENSAJE_RUTA_BACKUP_FALTANTE };
+  }
+  if (ruta.length > LARGO_MAXIMO_RUTA_BACKUP) {
+    return { tipo: 'error', mensaje: MENSAJE_RUTA_BACKUP_LARGA };
+  }
+  return { tipo: 'ok', ruta };
 }

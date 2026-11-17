@@ -174,7 +174,8 @@ test('cambia la contraseña e ingresa con la nueva', async ({ page }) => {
 
   // Vuelve al inicio con el aviso, y ninguna contraseña quedó en la URL.
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('status')).toHaveText(MENSAJE_CAMBIADA);
+  // Filtrado por su texto: en una base nueva el inicio también muestra el aviso de backup (FEAT-010, D-13).
+  await expect(page.getByRole('status').filter({ hasText: MENSAJE_CAMBIADA })).toHaveText(MENSAJE_CAMBIADA);
   expect(page.url()).not.toContain(CONTRASENA);
   expect(page.url()).not.toContain(CONTRASENA_NUEVA);
 

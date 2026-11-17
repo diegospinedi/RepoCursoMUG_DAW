@@ -66,6 +66,67 @@ public sealed class ProteccionTests
             .Distinct()
             .ToList();
 
+    /// <summary>
+    /// AC-15 (FR-14, spec FEAT-010, Block 7): la restauración existe solo como comando de consola. El caso de uso está en
+    /// la composición (lo usa el comando), pero ningún controlador lo recibe, ni a él ni a su puerto; ninguna ruta
+    /// registrada ni anónima habla de restaurar; y las direcciones que podrían hacerlo responden 401 sin sesión y 404 con
+    /// sesión, sin cambiar la base.
+    /// </summary>
+    [Fact]
+    public async Task Api_NingunaRutaRestaura()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        using (var alcance = fabrica.Services.CreateScope())
+        {
+            Assert.NotNull(alcance.ServiceProvider.GetService<Optica.Application.Backup.RestaurarBackup>());
+            Assert.NotNull(alcance.ServiceProvider.GetService<Optica.Application.Backup.IRestauradorBase>());
+        }
+
+        var prohibidos = new[] { typeof(Optica.Application.Backup.RestaurarBackup), typeof(Optica.Application.Backup.IRestauradorBase) };
+        var controladores = typeof(Program).Assembly.GetTypes()
+            .Where(tipo => typeof(Microsoft.AspNetCore.Mvc.ControllerBase).IsAssignableFrom(tipo))
+            .ToList();
+        Assert.NotEmpty(controladores);
+        foreach (var controlador in controladores)
+        {
+            var dependencias = controlador.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType)
+                .Concat(controlador.GetMethods().SelectMany(m => m.GetParameters()).Select(p => p.ParameterType))
+                .Concat(controlador.GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public).Select(f => f.FieldType));
+            Assert.DoesNotContain(dependencias, prohibidos.Contains);
+        }
+
+        Assert.DoesNotContain(
+            EndpointsRegistrados(fabrica), e => e.Ruta.Contains("restaur", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(RutasAnonimas.Todas, r => r.Ruta.Contains("restaur", StringComparison.OrdinalIgnoreCase));
+
+        var rutas = new[]
+        {
+            "/api/backup/restaurar",
+            "/api/backup/restauracion",
+            "/api/backup/restaurar-backup",
+            "/api/restaurar-backup",
+            "/api/configuracion/backup/restaurar",
+        };
+        foreach (var ruta in rutas)
+        {
+            foreach (var metodo in new[] { HttpMethod.Get, HttpMethod.Post, HttpMethod.Put })
+            {
+                Assert.Equal(
+                    HttpStatusCode.Unauthorized, (await EnviarJsonAsync(cliente, metodo, ruta, "{}")).StatusCode);
+                Assert.Equal(
+                    HttpStatusCode.NotFound, (await EnviarJsonAsync(cliente, metodo, ruta, "{}", cookie)).StatusCode);
+            }
+        }
+
+        // La base no cambió: la contraseña sigue definida y no se apartó nada.
+        var estado = await Http.JsonAsync(await Http.GetAsync(cliente, "/api/acceso/estado"));
+        Assert.True(estado.GetProperty("contrasenaDefinida").GetBoolean());
+        Assert.False(Directory.Exists(Path.Combine(fabrica.DirectorioDatos, "anterior")));
+    }
+
     private const string RutaArticulos = "/api/articulos";
 
     /// <summary>
@@ -422,6 +483,94 @@ public sealed class ProteccionTests
         var cuerpo = CuerpoEmisor[..^1] + ",\"relleno\":\"" + new string('a', faltan) + "\"}";
         Assert.Equal(bytes, Encoding.UTF8.GetByteCount(cuerpo));
         return cuerpo;
+    }
+
+    // FEAT-010: la ubicación del backup.
+
+    private const string RutaBackup = "/api/configuracion/backup";
+
+    /// <summary>Una ubicación ficticia, absoluta en Windows y en Linux.</summary>
+    private static readonly string CuerpoBackup =
+        "{\"ruta\":" + System.Text.Json.JsonSerializer.Serialize(Path.Combine(Path.GetTempPath(), "Zq7Pendrive", "Backups")) + "}";
+
+    /// <summary>
+    /// Sad path (D-12): sin sesión, el GET y el POST de <c>/api/configuracion/backup</c> responden 401 sin cuerpo; el POST,
+    /// antes de leer el cuerpo y antes del 415 y del 413. Las rutas existen, no son anónimas y no se grabó nada. Con
+    /// sesión, el POST sin JSON es 415 sin cuerpo.
+    /// </summary>
+    [Fact]
+    public async Task RutasBackup_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        foreach (var metodo in new[] { HttpMethods.Get, HttpMethods.Post })
+        {
+            Assert.Contains((metodo, RutaBackup), endpoints);
+            Assert.False(RutasAnonimas.Contiene(metodo, RutaBackup), $"{metodo} {RutaBackup} no puede ser anónima.");
+        }
+
+        var pedidos = new List<(string Descripcion, HttpMethod Metodo, HttpContent? Contenido)>
+        {
+            ("GET", HttpMethod.Get, null),
+            ("POST", HttpMethod.Post, new StringContent(CuerpoBackup, Encoding.UTF8, "application/json")),
+            ("POST ilegible", HttpMethod.Post, new StringContent("esto no es json", Encoding.UTF8, "application/json")),
+            ("POST texto plano", HttpMethod.Post, new StringContent(CuerpoBackup, Encoding.UTF8, "text/plain")),
+            ("POST grande", HttpMethod.Post, new StringContent(
+                CuerpoBackup[..^1] + ",\"relleno\":\"" + new string('a', 2 * 1024) + "\"}", Encoding.UTF8, "application/json")),
+            ("POST sin cuerpo", HttpMethod.Post, null),
+        };
+        foreach (var (descripcion, metodo, contenido) in pedidos)
+        {
+            var respuesta = await Http.EnviarAsync(cliente, metodo, RutaBackup, contenido);
+
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.Unauthorized,
+                $"{descripcion} respondió {(int)respuesta.StatusCode} sin sesión; se esperaba 401.");
+            Assert.Null(respuesta.Headers.Location);
+            Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        // Nada se grabó: con sesión, el GET sigue sin ubicación.
+        var leido = await Http.JsonAsync(await Http.GetAsync(cliente, RutaBackup, cookie));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, leido.GetProperty("ruta").ValueKind);
+
+        // Con sesión, sin Content-Type JSON: 415 sin cuerpo.
+        var sinJson = await Http.EnviarAsync(
+            cliente, HttpMethod.Post, RutaBackup, new StringContent(CuerpoBackup, Encoding.UTF8, "text/plain"), cookie);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, sinJson.StatusCode);
+        Assert.Equal(string.Empty, await sinJson.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>FEAT-010, Block 6: el estado del backup para el aviso al ingresar.</summary>
+    private const string RutaEstadoBackup = "/api/backup/estado";
+
+    /// <summary>
+    /// Sad path: sin sesión, <c>GET /api/backup/estado</c> responde 401 sin cuerpo. La ruta existe, solo con GET, y no es
+    /// anónima: dice si hay backups y cuándo fue el último. Con sesión responde 200.
+    /// </summary>
+    [Fact]
+    public async Task RutasEstado_SinSesion_401()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        // Con una contraseña definida, para que el 401 no se deba a que todavía no hay acceso.
+        var cookie = await Http.DefinirAsync(cliente);
+        var endpoints = EndpointsRegistrados(fabrica);
+        Assert.Contains((HttpMethods.Get, RutaEstadoBackup), endpoints);
+        Assert.Equal([HttpMethods.Get], endpoints.Where(e => e.Ruta == RutaEstadoBackup).Select(e => e.Metodo));
+        Assert.False(RutasAnonimas.Contiene(HttpMethods.Get, RutaEstadoBackup), $"{RutaEstadoBackup} no puede ser anónima.");
+
+        var respuesta = await Http.GetAsync(cliente, RutaEstadoBackup);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+        Assert.Null(respuesta.Headers.Location);
+        Assert.Equal(string.Empty, await respuesta.Content.ReadAsStringAsync());
+
+        var conSesion = await Http.GetAsync(cliente, RutaEstadoBackup, cookie);
+        Assert.Equal(HttpStatusCode.OK, conSesion.StatusCode);
     }
 
     // FEAT-006: la búsqueda de presupuestos (ADR-019).
