@@ -63,3 +63,20 @@ agente bajo la delegación del usuario ("la recomendada y la que menos tiempo in
   función del dominio, `PlanillaCostos.TextoDeCodigoNumerico`, que usan el lector y el dominio. La spec decía
   `ToString(CultureInfo.InvariantCulture)`, que conservaría "100.0" y no coincidiría con el artículo "100"; prevalece
   D-10 (comparar el código como lo ve la operadora).
+- **D-23 — agente, bajo la delegación del usuario — 2026-11-17 — Block 4:** las cargas de planilla se serializan con un
+  único `SemaphoreSlim(1)` estático en `ActualizarCostosPorPlanilla` (esperan en fila, sin mensaje nuevo): acota la
+  memoria transitoria de D-20 a una carga por vez y coincide con el único escritor de SQLite (R-02, R-04).
+- **D-24 — agente, bajo la delegación del usuario — 2026-11-17 — Block 4:** el mensaje de "excede límites" agrega la
+  causa más probable en una planilla legítima (formato en muchas celdas vacías): "La planilla supera las 50.000 filas o
+  tiene celdas demasiado largas. Dividila y cargala por partes. Si tiene formato en celdas vacías, quitáselo.".
+- **D-25 — agente, bajo la delegación del usuario — 2026-11-17 — Block 4:**
+  - limitador de concurrencia de ASP.NET para el endpoint (1 en curso, 1 en fila), que corre antes de leer el cuerpo:
+    el pedido que excede responde 429 sin leerlo, y la pantalla muestra "Hay otra planilla en proceso. Esperá unos
+    segundos y volvé a cargarla.". Cada pedido retiene hasta unos 50 MB (cuerpo UTF-8, texto base64 y archivo
+    decodificado), así que el pico queda acotado a dos pedidos. El semáforo de D-23 queda como segunda barrera,
+    inyectado como singleton `CandadoCargaPlanilla`;
+  - 409 con el texto "Un artículo cambió mientras se cargaba la planilla. No se actualizó ningún costo. Volvé a
+    cargarla.";
+  - un archivo decodificado de más de 10 MB responde 400 "La planilla supera los 10 MB." (el mismo texto que el 413 en
+    la pantalla);
+  - un JSON ilegible o una planilla que no es texto responde 400 con el mensaje "no es .xlsx".

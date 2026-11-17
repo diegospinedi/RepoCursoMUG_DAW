@@ -100,6 +100,10 @@ public abstract record ResultadoPlanillaCostos
 /// hora UTC (D-16, R-07): nunca códigos, precios, textos de celdas ni el nombre del archivo, que son datos comerciales de
 /// la empresa y de sus proveedores (R-05).
 /// </para>
+/// <para>
+/// Las cargas se serializan con el <see cref="CandadoCargaPlanilla"/> único (singleton en la Api) alrededor de la lectura
+/// y la transacción (D-23, D-25).
+/// </para>
 /// </remarks>
 public sealed partial class ActualizarCostosPorPlanilla(
     ILectorPlanillaCostos lector,
@@ -107,7 +111,8 @@ public sealed partial class ActualizarCostosPorPlanilla(
     IArticuloRepository articulos,
     IUnidadDeTrabajo unidadDeTrabajo,
     TimeProvider reloj,
-    ILoggerFactory fabricaRegistros)
+    ILoggerFactory fabricaRegistros,
+    CandadoCargaPlanilla candado)
 {
     /// <summary>
     /// La categoría del registro de cada carga confirmada (D-16). <c>appsettings.json</c> la envía también al Registro
@@ -119,15 +124,37 @@ public sealed partial class ActualizarCostosPorPlanilla(
 
     private const string MensajeLecturaDesconocida = "El lector de la planilla devolvió una lectura desconocida.";
 
+    private readonly CandadoCargaPlanilla _candado = candado ?? throw new ArgumentNullException(nameof(candado));
+
     private readonly ILogger _registro =
         (fabricaRegistros ?? throw new ArgumentNullException(nameof(fabricaRegistros))).CreateLogger(CategoriaRegistro);
 
-    /// <summary>Carga la planilla: el controlador ya exigió bytes no vacíos y acotó el tamaño.</summary>
+    /// <summary>
+    /// Carga la planilla: el controlador ya exigió bytes no vacíos y acotó el tamaño. Si otra carga está en curso,
+    /// espera su turno en fila, sin mensaje nuevo (D-23).
+    /// </summary>
     /// <exception cref="ConflictoAlConfirmarException">
     /// Un artículo cambió de versión o de estado entre la lectura y la confirmación: no se aplicó nada (D-15).
     /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// Se canceló mientras esperaba su turno (no leyó ni tocó la base) o durante la transacción (se revirtió).
+    /// </exception>
     public async Task<ResultadoPlanillaCostos> EjecutarAsync(
         ReadOnlyMemory<byte> archivo, CancellationToken cancelacion = default)
+    {
+        await _candado.TomarAsync(cancelacion);
+        try
+        {
+            return await LeerYAplicarAsync(archivo, cancelacion);
+        }
+        finally
+        {
+            _candado.Liberar();
+        }
+    }
+
+    private async Task<ResultadoPlanillaCostos> LeerYAplicarAsync(
+        ReadOnlyMemory<byte> archivo, CancellationToken cancelacion)
     {
         // Fuera de la transacción: leer el archivo no toma el bloqueo de escritura (R-04).
         ContenidoPlanilla contenido;

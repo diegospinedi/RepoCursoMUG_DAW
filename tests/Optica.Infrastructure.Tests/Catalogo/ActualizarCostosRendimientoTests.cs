@@ -52,7 +52,7 @@ public sealed class ActualizarCostosRendimientoTests(ITestOutputHelper salida)
         var unidad = new UnidadCronometrada(new UnidadDeTrabajoEf(contexto));
         var caso = new ActualizarCostosPorPlanilla(
             new LectorPlanillaCostosXlsx(), new ConfiguracionNegocioRepository(contexto), new ArticuloRepository(contexto),
-            unidad, TimeProvider.System, NullLoggerFactory.Instance);
+            unidad, TimeProvider.System, NullLoggerFactory.Instance, new CandadoCargaPlanilla());
 
         var reloj = Stopwatch.StartNew();
         var resultado = await caso.EjecutarAsync(archivo);

@@ -167,6 +167,8 @@ public sealed class ProteccionTests
             (HttpMethods.Get, RutaEmisionesPendientes),
             // FEAT-009: la búsqueda de facturas lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (R-01).
             (HttpMethods.Post, RutaBusquedaFacturas),
+            // FEAT-011: la planilla cambia los costos de todo el catálogo y responde códigos y costos (R-01, R-05).
+            (HttpMethods.Post, Catalogo.PlanillaCostosApiTests.Ruta),
         };
         foreach (var (metodo, patron) in nuevas)
         {

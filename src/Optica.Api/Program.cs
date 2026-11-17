@@ -202,6 +202,8 @@ public partial class Program
         // FEAT-011: la actualización de costos por planilla .xlsx, en su transacción de escritura (D-15); el lector es el
         // singleton de Infrastructure (ADR-031).
         builder.Services.AddScoped<ActualizarCostosPorPlanilla>();
+        // D-23 y D-25: una carga de planilla por vez en todo el proceso; el candado vive lo que vive la Api.
+        builder.Services.AddSingleton<CandadoCargaPlanilla>();
 
         // Presupuestos (FEAT-003a), con sesión: llevan datos personales del cliente (D-17). El alta lee los artículos, el
         // último número y la fecha local del día dentro de su transacción de escritura (ADR-013, D-06, D-07).
@@ -303,6 +305,15 @@ public partial class Program
             {
                 limitador.PermitLimit = 2;
                 limitador.QueueLimit = 10;
+                limitador.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+            });
+
+            // FEAT-011 (D-25): la carga de planilla retiene hasta unos 50 MB por pedido; 1 en curso y 1 en fila, el resto
+            // 429 sin leer el cuerpo (corre antes del model binding). Sin sesión, 401 antes de ocupar un lugar.
+            opciones.AddConcurrencyLimiter(PlanillaCostosController.LimitadorPlanilla, limitador =>
+            {
+                limitador.PermitLimit = 1;
+                limitador.QueueLimit = 1;
                 limitador.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             });
         });

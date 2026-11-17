@@ -17,12 +17,15 @@ public class ActualizarCostosPorPlanillaTests
     private readonly FabricaRegistrosFalsa _registros = new();
     private readonly RelojFijo _reloj = new();
 
+    /// <summary>El candado compartido por las cargas de cada prueba, como el singleton de la Api (D-25).</summary>
+    private readonly CandadoCargaPlanilla _candado = new();
+
     private ArticulosEnMemoria Articulos => _almacen.Articulos;
 
     private static readonly ReadOnlyMemory<byte> Archivo = new byte[] { 0x50, 0x4B, 0x03, 0x04 };
 
     private ActualizarCostosPorPlanilla CrearCasoDeUso(LectorFijo lector) =>
-        new(lector, _almacen, _almacen.Articulos, _almacen, _reloj, _registros);
+        new(lector, _almacen, _almacen.Articulos, _almacen, _reloj, _registros, _candado);
 
     // ---- Aplicada (AC-02, D-13, FR-14, FR-15) ----
 
@@ -256,6 +259,115 @@ public class ActualizarCostosPorPlanillaTests
         {
             Assert.All(textos, texto => Assert.DoesNotContain(prohibido, texto, StringComparison.Ordinal));
         }
+    }
+
+    // ---- Cargas simultáneas (D-23, R-02, R-04) ----
+
+    /// <summary>
+    /// D-23: mientras una carga está dentro de su transacción, otra espera en fila sin leer su planilla; al terminar la
+    /// primera, la segunda lee, aplica y confirma. Las dos usan instancias distintas del caso de uso (como dos pedidos de
+    /// la Api, cada uno con su alcance) y el mismo <see cref="CandadoCargaPlanilla"/>, como el singleton de la Api (D-25).
+    /// La espera se observa con la señal del candado, sin demoras por tiempo.
+    /// </summary>
+    [Fact]
+    public async Task Ejecutar_DosCargasSimultaneas_NoSeSolapan()
+    {
+        Articulos.Sembrar("ABC-1", costo: 1210m);
+        Articulos.Sembrar("DEF-2", costo: 100m);
+        using var dentroDeLaTransaccion = new ManualResetEventSlim();
+        using var liberar = new ManualResetEventSlim();
+        using var esperando = new ManualResetEventSlim();
+        _candado.EsperaIniciada += (_, _) => esperando.Set();
+        var confirmaciones = 0;
+        Articulos.AntesDeConfirmar = () =>
+        {
+            // Solo la primera confirmación se detiene, dentro de la transacción de la primera carga.
+            if (Interlocked.Increment(ref confirmaciones) == 1)
+            {
+                dentroDeLaTransaccion.Set();
+                liberar.Wait(TimeSpan.FromSeconds(30));
+            }
+        };
+        var primerLector = LectorDe(Fila(2, "ABC-1", 2420m));
+        var segundoLector = LectorDe(Fila(2, "DEF-2", 200m));
+
+        var primera = Task.Run(() => CrearCasoDeUso(primerLector).EjecutarAsync(Archivo));
+        Task<ResultadoPlanillaCostos>? segunda = null;
+        try
+        {
+            Assert.True(dentroDeLaTransaccion.Wait(TimeSpan.FromSeconds(30)), "La primera carga no llegó a confirmar.");
+            segunda = Task.Run(() => CrearCasoDeUso(segundoLector).EjecutarAsync(Archivo));
+
+            // La segunda espera el candado: ni leyó su planilla ni terminó mientras la primera sigue en su transacción.
+            Assert.True(esperando.Wait(TimeSpan.FromSeconds(30)), "La segunda carga no quedó esperando el candado.");
+            Assert.Equal(0, segundoLector.Lecturas);
+            Assert.False(segunda.IsCompleted);
+        }
+        finally
+        {
+            liberar.Set();
+        }
+
+        var resultados = await Task.WhenAll(primera, segunda);
+
+        Assert.All(resultados, resultado => Assert.Equal(1, Assert.IsType<ResultadoPlanillaCostos.Aplicada>(resultado).CantidadAplicadas));
+        Assert.Equal((1, 1), (primerLector.Lecturas, segundoLector.Lecturas));
+        Assert.Equal(2, Articulos.OperacionesConfirmadas);
+        Assert.Equal(
+            [2420m, 200m],
+            Articulos.Guardados.OrderBy(a => a.CodigoProveedor).Select(a => a.PrecioCosto));
+    }
+
+    /// <summary>
+    /// D-23: una carga que espera su turno y se cancela (el navegador cerró el pedido) termina con
+    /// <see cref="OperationCanceledException"/> sin leer la planilla ni tocar la base; la que tenía el turno sigue y lo
+    /// libera.
+    /// </summary>
+    [Fact]
+    public async Task Ejecutar_CanceladaMientrasEspera_NoLeeNiTocaLaBase()
+    {
+        Articulos.Sembrar("ABC-1", costo: 1210m);
+        using var dentroDeLaTransaccion = new ManualResetEventSlim();
+        using var liberar = new ManualResetEventSlim();
+        using var esperando = new ManualResetEventSlim();
+        _candado.EsperaIniciada += (_, _) => esperando.Set();
+        var confirmaciones = 0;
+        Articulos.AntesDeConfirmar = () =>
+        {
+            if (Interlocked.Increment(ref confirmaciones) == 1)
+            {
+                dentroDeLaTransaccion.Set();
+                liberar.Wait(TimeSpan.FromSeconds(30));
+            }
+        };
+        var primerLector = LectorDe(Fila(2, "ABC-1", 2420m));
+        var segundoLector = LectorDe(Fila(2, "ABC-1", 3000m));
+        using var cancelacion = new CancellationTokenSource();
+
+        var primera = Task.Run(() => CrearCasoDeUso(primerLector).EjecutarAsync(Archivo));
+        try
+        {
+            Assert.True(dentroDeLaTransaccion.Wait(TimeSpan.FromSeconds(30)), "La primera carga no llegó a confirmar.");
+            var segunda = Task.Run(() => CrearCasoDeUso(segundoLector).EjecutarAsync(Archivo, cancelacion.Token));
+            Assert.True(esperando.Wait(TimeSpan.FromSeconds(30)), "La segunda carga no quedó esperando el candado.");
+            await cancelacion.CancelAsync();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => segunda);
+            Assert.Equal(0, segundoLector.Lecturas);
+        }
+        finally
+        {
+            liberar.Set();
+        }
+
+        Assert.IsType<ResultadoPlanillaCostos.Aplicada>(await primera);
+        Assert.Equal(1, Articulos.Operaciones);
+        Assert.Equal(2420m, Assert.Single(Articulos.Guardados).PrecioCosto);
+
+        // El turno quedó libre: otra carga entra sin esperar.
+        var tercera = await CrearCasoDeUso(LectorDe(Fila(2, "ABC-1", 2500m))).EjecutarAsync(Archivo)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.IsType<ResultadoPlanillaCostos.Aplicada>(tercera);
     }
 
     // ---- Auxiliares ----

@@ -587,6 +587,55 @@ public sealed class SinCacheTests : IDisposable
     }
 
     /// <summary>
+    /// FEAT-011 (R-05): el resultado de la planilla de costos lleva códigos y precios de costo de los proveedores; el 200,
+    /// los 400 (faltante, base64 inválido, no .xlsx y formato inesperado), el 413, el 415 y el 401 sin sesión responden
+    /// con <c>no-store</c>. Códigos y precios ficticios.
+    /// </summary>
+    [Fact]
+    public async Task PlanillaCostos_NoStore()
+    {
+        const string ruta = Catalogo.PlanillaCostosApiTests.Ruta;
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cuerpo = Catalogo.PlanillaCostosApiTests.Cuerpo(Catalogo.PlanillaCostosApiTests.Planilla(("ABC-1", 2420m)));
+
+        var sinSesion = await Http.PostJsonAsync(cliente, ruta, cuerpo);
+        Assert.Equal(HttpStatusCode.Unauthorized, sinSesion.StatusCode);
+        AfirmarNoStore(sinSesion, "401 de la planilla");
+
+        var cookie = await Http.DefinirAsync(cliente);
+        await Catalogo.PlanillaCostosApiTests.GrabarArticuloAsync(cliente, cookie, "ABC-1");
+
+        var aplicada = await Http.PostJsonAsync(cliente, ruta, cuerpo, cookie);
+        Assert.Equal(HttpStatusCode.OK, aplicada.StatusCode);
+        AfirmarNoStore(aplicada, "200 de la planilla");
+
+        foreach (var (rechazado, caso) in new[]
+        {
+            ("{}", "400 de la planilla faltante"),
+            ("{\"planilla\":\"no-base64!\"}", "400 de base64 inválido"),
+            (Catalogo.PlanillaCostosApiTests.Cuerpo(Encoding.UTF8.GetBytes("a;b\r\n")), "400 de no .xlsx"),
+            (Catalogo.PlanillaCostosApiTests.Cuerpo(Catalogo.PlanillaCostosApiTests.PlanillaConEncabezados("Codigo", "Precio")),
+                "400 de formato inesperado"),
+        })
+        {
+            var respuesta = await Http.PostJsonAsync(cliente, ruta, rechazado, cookie);
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            AfirmarNoStore(respuesta, caso);
+        }
+
+        var grande = await Http.PostJsonAsync(
+            cliente, ruta, Catalogo.PlanillaCostosApiTests.CuerpoDeBytes((14 * 1024 * 1024) + 1), cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, grande.StatusCode);
+        AfirmarNoStore(grande, "413 de la planilla");
+
+        var textoPlano = await Http.EnviarAsync(
+            cliente, HttpMethod.Post, ruta, new StringContent(cuerpo, Encoding.UTF8, "text/plain"), cookie);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, textoPlano.StatusCode);
+        AfirmarNoStore(textoPlano, "415 de la planilla");
+    }
+
+    /// <summary>
     /// Exige la directiva <c>no-store</c>. No exige que sea la única: una respuesta que pasa por el manejador de
     /// errores ya trae <c>no-cache,no-store</c> de ASP.NET Core, y el middleware no la pisa.
     /// </summary>
