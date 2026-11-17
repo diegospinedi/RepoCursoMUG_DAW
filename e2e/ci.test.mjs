@@ -928,6 +928,45 @@ describe('pruebas sin servicios externos', () => {
       assert.deepEqual(hostsExternos(`'${url('https', resto)}'`), ['www.w3.org'], `${resto} tiene que ser externo.`);
     }
 
+    // FEAT-011 (D-27): los espacios de nombres OOXML que escriben las pruebas del lector de planillas y el generador de
+    // e2e/tests/xlsx-minimo.ts. Son nombres, nunca se piden: valen solo esos pares exactos de host y ruta.
+    for (const resto of [
+      'schemas.openxmlformats.org/spreadsheetml/2006/main',
+      'schemas.openxmlformats.org/officeDocument/2006/relationships',
+      'schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
+      'schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet',
+      'schemas.openxmlformats.org/package/2006/content-types',
+      'schemas.openxmlformats.org/package/2006/relationships',
+      'schemas.openxmlformats.org/package/2006/metadata/core-properties',
+      'schemas.openxmlformats.org/markup-compatibility/2006',
+      'purl.org/dc/elements/1.1/',
+      'schemas.microsoft.com/office/spreadsheetml/2009/9/ac',
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('http', resto)}"`), [], `${resto} vale.`);
+    }
+    for (const [resto, host] of [
+      ['schemas.openxmlformats.org/', 'schemas.openxmlformats.org'],
+      ['schemas.openxmlformats.org/spreadsheetml/2006/main/otra', 'schemas.openxmlformats.org'],
+      ['schemas.openxmlformats.org/wordprocessingml/2006/main', 'schemas.openxmlformats.org'],
+      ['purl.org/dc/terms/', 'purl.org'],
+      ['schemas.microsoft.com/office/2006/xmlPackage', 'schemas.microsoft.com'],
+      ['evil.openxmlformats.org/spreadsheetml/2006/main', 'evil.openxmlformats.org'],
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('http', resto)}"`), [host], `${resto} tiene que ser externo.`);
+    }
+    // El TLD reservado .invalid (RFC 6761) nunca se resuelve: vale con cualquier ruta. Un nombre que solo lo contiene,
+    // no.
+    for (const resto of ['example.invalid/', 'example.invalid/x', 'otro.invalid']) {
+      assert.deepEqual(hostsExternos(`"${url('http', resto)}"`), [], `${resto} vale.`);
+    }
+    for (const [resto, host] of [
+      ['example.invalid.com/', 'example.invalid.com'],
+      ['invalid.evil.net', 'invalid.evil.net'],
+      ['notinvalid', 'notinvalid'],
+    ]) {
+      assert.deepEqual(hostsExternos(`"${url('http', resto)}"`), [host], `${resto} tiene que ser externo.`);
+    }
+
     // ARCA (FEAT-007): las pruebas del cliente de WSAA y WSFEv1 escriben espacios de nombres SOAP y las direcciones de
     // homologación, que nunca piden (un HttpMessageHandler falso responde). Valen solo esos pares exactos de host y ruta.
     for (const resto of [

@@ -91,3 +91,14 @@ agente bajo la delegación del usuario ("la recomendada y la que menos tiempo in
   - el resumen usa el texto literal de la spec, sin singular.
   Deuda fuera de alcance: las regiones `role="status"` del proyecto se montan junto con su texto y algunos lectores de
   pantalla no las anuncian (mismo patrón que SeccionBackup y NuevoArticulo).
+- **D-27 — agente, bajo la delegación del usuario — 2026-11-17 — Block 6:**
+  - **Hosts de las pruebas de .NET.** Las pruebas del lector (Block 2) escribían URLs de espacios de nombres OOXML
+    (`schemas.openxmlformats.org`, `purl.org`, `schemas.microsoft.com`) y `example.invalid`, y
+    `Pruebas_SinHostsExternos` de `npm run test:unidad` quedó en rojo desde ese bloque. No se detectó antes porque el
+    `/ddw-test` por bloque no corría `test:unidad` de e2e cuando el bloque tocaba solo `tests/**/*.cs`. Como en W3
+    (`RUTAS_W3`) y ARCA (`RUTAS_ARCA`, ADR-027), los identificadores que no se piden por red van a la lista permitida
+    de `e2e/ci.mjs` (`RUTAS_OOXML`, con ruta exacta) y el TLD reservado `.invalid` (RFC 6761) se acepta; las URLs se
+    escriben enteras. El cierre de CODE corre `test:unidad` siempre.
+  - **Campo de archivo en la pantalla nueva.** `backup-aviso.spec.ts` (AC-15 de FEAT-010) recorre también "Artículos →
+    Actualizar costos con planilla" y admite ahí un único campo de archivo `accept=".xlsx"` con la etiqueta "Planilla de
+    costos (.xlsx)". Esa pantalla no restaura backups.

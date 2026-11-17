@@ -11,11 +11,14 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * AC-15 en pantalla: la restauración es solo el comando de consola `restaurar-backup` con la Api detenida (FR-14), así
  * que ninguna pantalla con sesión (el inicio y las del menú) tiene un texto, un botón o un enlace de restaurar, ni un
- * control que cargue o importe una copia. La lista de pantallas sale de los enlaces del inicio y se compara con la
- * esperada: una pantalla nueva en el menú hace fallar la prueba en lugar de quedar sin revisar. Las pantallas de detalle
- * (un presupuesto, una factura, editar un artículo) no se recorren porque esta base está vacía; las cubren las pruebas
- * de la Api (`ProteccionTests`), que recorren también todas las operaciones, y una búsqueda de texto en el código de la
- * web (que no es una prueba automática).
+ * control que cargue o importe una copia, ni un campo de archivo. La lista de pantallas sale de los enlaces del inicio
+ * y se compara con la esperada: una pantalla nueva en el menú hace fallar la prueba en lugar de quedar sin revisar.
+ * También se recorre "Artículos → Actualizar costos con planilla" (FEAT-011, D-27), que no está en el menú: ahí se
+ * admite un único campo de archivo, `accept=".xlsx"` con la etiqueta "Planilla de costos (.xlsx)", porque carga una
+ * planilla de costos y no restaura backups; los textos y controles de restaurar se revisan igual. Las pantallas de
+ * detalle (un presupuesto, una factura, editar un artículo) no se recorren porque esta base está vacía; las cubren las
+ * pruebas de la Api (`ProteccionTests`), que recorren también todas las operaciones, y una búsqueda de texto en el
+ * código de la web (que no es una prueba automática).
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -43,6 +46,26 @@ const PANTALLAS_DEL_MENU = [
   { enlace: 'Nuevo presupuesto', titulo: 'Nuevo presupuesto' },
   { enlace: 'Buscar presupuestos', titulo: 'Buscar presupuestos' },
   { enlace: 'Facturas', titulo: 'Buscar facturas' },
+];
+
+/** El único campo de archivo que admite una pantalla: su etiqueta y su `accept`. */
+interface CampoDeArchivo {
+  etiqueta: string;
+  accept: string;
+}
+
+/**
+ * Pantallas fuera del menú del inicio que tienen un campo de archivo, y el único que admiten (D-27 de FEAT-011): se
+ * llega desde la pantalla `desde` del menú por su enlace. "Actualizar costos" carga una planilla .xlsx de costos, no
+ * restaura backups.
+ */
+const PANTALLAS_CON_ARCHIVO: { desde: string; enlace: string; titulo: string; campo: CampoDeArchivo }[] = [
+  {
+    desde: 'Artículos',
+    enlace: 'Actualizar costos con planilla',
+    titulo: 'Actualizar costos',
+    campo: { etiqueta: 'Planilla de costos (.xlsx)', accept: '.xlsx' },
+  },
 ];
 
 let violacionesCsp: string[] = [];
@@ -85,8 +108,11 @@ async function cargada(page: Page, titulo: string) {
   await expect(page.getByText(/^Cargando/)).toHaveCount(0);
 }
 
-/** Ningún texto ni control de la pantalla ofrece restaurar la base o cargar una copia. */
-async function sinRestaurar(page: Page, pantalla: string) {
+/**
+ * Ningún texto ni control de la pantalla ofrece restaurar la base o cargar una copia. Sin `campo`, la pantalla no
+ * tiene ningún campo de archivo; con `campo`, tiene exactamente uno, y es ese: su etiqueta y su `accept`.
+ */
+async function sinRestaurar(page: Page, pantalla: string, campo?: CampoDeArchivo) {
   await expect(page.locator('body'), `${pantalla}: ningún texto de restaurar`).not.toContainText(RESTAURAR);
   for (const nombre of [RESTAURAR, CARGAR_COPIA]) {
     for (const rol of ['button', 'link', 'menuitem'] as const) {
@@ -94,7 +120,21 @@ async function sinRestaurar(page: Page, pantalla: string) {
     }
   }
   // Restaurar desde el navegador obligaría a subir el archivo de la copia.
-  await expect(page.locator('input[type="file"]'), `${pantalla}: ningún campo para subir un archivo`).toHaveCount(0);
+  const camposDeArchivo = page.locator('input[type="file"]');
+  if (campo === undefined) {
+    await expect(camposDeArchivo, `${pantalla}: ningún campo para subir un archivo`).toHaveCount(0);
+    return;
+  }
+  await expect(camposDeArchivo, `${pantalla}: un único campo para subir un archivo`).toHaveCount(1);
+  await expect(camposDeArchivo, `${pantalla}: el campo de archivo admite solo ${campo.accept}`).toHaveAttribute(
+    'accept',
+    campo.accept,
+  );
+  // El campo de archivo es el de la etiqueta esperada (y no otro con la misma forma).
+  await expect(
+    page.getByLabel(campo.etiqueta, { exact: true }).and(camposDeArchivo),
+    `${pantalla}: el campo de archivo tiene la etiqueta "${campo.etiqueta}"`,
+  ).toHaveCount(1);
 }
 
 test('AC-10: sin ningún backup, el inicio avisa al ingresar que no hay ninguno disponible', async ({ page }) => {
@@ -133,6 +173,17 @@ test('AC-15: ninguna pantalla con sesión ofrece restaurar la base', async ({ pa
     await page.getByRole('link', { name: enlace, exact: true }).click();
     await cargada(page, titulo);
     await sinRestaurar(page, titulo);
+    await page.goto('/');
+    await expect(tituloDelInicio(page)).toBeVisible();
+  }
+
+  // Las pantallas que no están en el menú del inicio y tienen un campo de archivo (D-27 de FEAT-011).
+  for (const { desde, enlace, titulo, campo } of PANTALLAS_CON_ARCHIVO) {
+    await page.getByRole('link', { name: desde, exact: true }).click();
+    await cargada(page, desde);
+    await page.getByRole('link', { name: enlace, exact: true }).click();
+    await cargada(page, titulo);
+    await sinRestaurar(page, titulo, campo);
     await page.goto('/');
     await expect(tituloDelInicio(page)).toBeVisible();
   }

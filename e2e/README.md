@@ -4,7 +4,10 @@
 `servidor.mjs` compila la web y la Api y levanta **una Api por navegador y por archivo de pruebas**, cada una con su
 base y su marca de prueba en directorios temporales. `npm run test:unidad` corre las pruebas unitarias de
 `compilacion.mjs` (sin navegador ni Api) y las de `ci.mjs`, que fijan las reglas de la integración continua (por
-ejemplo, que cada proyecto de .NET tenga su `packages.lock.json` y que la CI restaure en modo bloqueado).
+ejemplo, que cada proyecto de .NET tenga su `packages.lock.json` y que la CI restaure en modo bloqueado), y la de
+`tests/xlsx-minimo.ts` (`tests/xlsx-minimo.test.mjs`): el generador de planillas .xlsx de `actualizar-costos.spec.ts`
+(FEAT-011, D-18), que arma el ZIP con `node:zlib` sin paquetes npm y cuyo CRC y tamaños se verifican con un lector
+propio de la prueba. Como no termina en `.spec.ts`, el generador no es un proyecto de Playwright.
 
 ## Proyectos, Api y bases
 
@@ -15,53 +18,55 @@ uno con su Api, su puerto y su base nueva:
 | Proyecto | Navegador (canal) | Archivo | Puerto (con `OPTICA_E2E_PUERTO` por defecto) |
 |---|---|---|---|
 | `chrome-acceso` | `chrome` | `acceso.spec.ts` | 5543 |
-| `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5544 |
-| `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5545 |
-| `chrome-backup-aviso` | `chrome` | `backup-aviso.spec.ts` | 5546 |
-| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5547 |
-| `chrome-configuracion-backup` | `chrome` | `configuracion-backup.spec.ts` | 5548 |
-| `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5549 |
-| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5550 |
-| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5551 |
-| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5552 |
-| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5553 |
-| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5554 |
-| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5555 |
-| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5556 |
-| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5557 |
-| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5558 |
-| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5559 |
-| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5560 |
-| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5561 |
-| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5562 |
-| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5563 |
-| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5564 |
-| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5565 |
-| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5566 |
-| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5567 |
-| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5568 |
-| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5569 |
-| `msedge-backup-aviso` | `msedge` | `backup-aviso.spec.ts` | 5570 |
-| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5571 |
-| `msedge-configuracion-backup` | `msedge` | `configuracion-backup.spec.ts` | 5572 |
-| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5573 |
-| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5574 |
-| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5575 |
-| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5576 |
-| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5577 |
-| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5578 |
-| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5579 |
-| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5580 |
-| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5581 |
-| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5582 |
-| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5583 |
-| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5584 |
-| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5585 |
-| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5586 |
-| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5587 |
-| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5588 |
-| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5589 |
-| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5590 |
+| `chrome-actualizar-costos` | `chrome` | `actualizar-costos.spec.ts` | 5544 |
+| `chrome-articulos` | `chrome` | `articulos.spec.ts` | 5545 |
+| `chrome-articulos-edicion` | `chrome` | `articulos-edicion.spec.ts` | 5546 |
+| `chrome-backup-aviso` | `chrome` | `backup-aviso.spec.ts` | 5547 |
+| `chrome-configuracion` | `chrome` | `configuracion.spec.ts` | 5548 |
+| `chrome-configuracion-backup` | `chrome` | `configuracion-backup.spec.ts` | 5549 |
+| `chrome-configuracion-emisor` | `chrome` | `configuracion-emisor.spec.ts` | 5550 |
+| `chrome-configuracion-recalculo` | `chrome` | `configuracion-recalculo.spec.ts` | 5551 |
+| `chrome-facturacion` | `chrome` | `facturacion.spec.ts` | 5552 |
+| `chrome-facturacion-rechazo` | `chrome` | `facturacion-rechazo.spec.ts` | 5553 |
+| `chrome-facturacion-sin-respuesta` | `chrome` | `facturacion-sin-respuesta.spec.ts` | 5554 |
+| `chrome-facturas-busqueda` | `chrome` | `facturas-busqueda.spec.ts` | 5555 |
+| `chrome-facturas-pdf` | `chrome` | `facturas-pdf.spec.ts` | 5556 |
+| `chrome-presupuestos-alta` | `chrome` | `presupuestos-alta.spec.ts` | 5557 |
+| `chrome-presupuestos-busqueda` | `chrome` | `presupuestos-busqueda.spec.ts` | 5558 |
+| `chrome-presupuestos-calculos` | `chrome` | `presupuestos-calculos.spec.ts` | 5559 |
+| `chrome-presupuestos-concurrencia` | `chrome` | `presupuestos-concurrencia.spec.ts` | 5560 |
+| `chrome-presupuestos-edicion` | `chrome` | `presupuestos-edicion.spec.ts` | 5561 |
+| `chrome-presupuestos-pdf` | `chrome` | `presupuestos-pdf.spec.ts` | 5562 |
+| `chrome-verificacion-consulta-sin-respuesta` | `chrome` | `verificacion-consulta-sin-respuesta.spec.ts` | 5563 |
+| `chrome-verificacion-emite` | `chrome` | `verificacion-emite.spec.ts` | 5564 |
+| `chrome-verificacion-importe-distinto` | `chrome` | `verificacion-importe-distinto.spec.ts` | 5565 |
+| `chrome-verificacion-recupera` | `chrome` | `verificacion-recupera.spec.ts` | 5566 |
+| `chrome-verificacion-sin-respuesta` | `chrome` | `verificacion-sin-respuesta.spec.ts` | 5567 |
+| `msedge-acceso` | `msedge` | `acceso.spec.ts` | 5568 |
+| `msedge-actualizar-costos` | `msedge` | `actualizar-costos.spec.ts` | 5569 |
+| `msedge-articulos` | `msedge` | `articulos.spec.ts` | 5570 |
+| `msedge-articulos-edicion` | `msedge` | `articulos-edicion.spec.ts` | 5571 |
+| `msedge-backup-aviso` | `msedge` | `backup-aviso.spec.ts` | 5572 |
+| `msedge-configuracion` | `msedge` | `configuracion.spec.ts` | 5573 |
+| `msedge-configuracion-backup` | `msedge` | `configuracion-backup.spec.ts` | 5574 |
+| `msedge-configuracion-emisor` | `msedge` | `configuracion-emisor.spec.ts` | 5575 |
+| `msedge-configuracion-recalculo` | `msedge` | `configuracion-recalculo.spec.ts` | 5576 |
+| `msedge-facturacion` | `msedge` | `facturacion.spec.ts` | 5577 |
+| `msedge-facturacion-rechazo` | `msedge` | `facturacion-rechazo.spec.ts` | 5578 |
+| `msedge-facturacion-sin-respuesta` | `msedge` | `facturacion-sin-respuesta.spec.ts` | 5579 |
+| `msedge-facturas-busqueda` | `msedge` | `facturas-busqueda.spec.ts` | 5580 |
+| `msedge-facturas-pdf` | `msedge` | `facturas-pdf.spec.ts` | 5581 |
+| `msedge-presupuestos-alta` | `msedge` | `presupuestos-alta.spec.ts` | 5582 |
+| `msedge-presupuestos-busqueda` | `msedge` | `presupuestos-busqueda.spec.ts` | 5583 |
+| `msedge-presupuestos-calculos` | `msedge` | `presupuestos-calculos.spec.ts` | 5584 |
+| `msedge-presupuestos-concurrencia` | `msedge` | `presupuestos-concurrencia.spec.ts` | 5585 |
+| `msedge-presupuestos-edicion` | `msedge` | `presupuestos-edicion.spec.ts` | 5586 |
+| `msedge-presupuestos-pdf` | `msedge` | `presupuestos-pdf.spec.ts` | 5587 |
+| `msedge-verificacion-consulta-sin-respuesta` | `msedge` | `verificacion-consulta-sin-respuesta.spec.ts` | 5588 |
+| `msedge-verificacion-emite` | `msedge` | `verificacion-emite.spec.ts` | 5589 |
+| `msedge-verificacion-importe-distinto` | `msedge` | `verificacion-importe-distinto.spec.ts` | 5590 |
+| `msedge-verificacion-recupera` | `msedge` | `verificacion-recupera.spec.ts` | 5591 |
+| `msedge-verificacion-sin-respuesta` | `msedge` | `verificacion-sin-respuesta.spec.ts` | 5592 |
 
 Los puertos son consecutivos desde `OPTICA_E2E_PUERTO`, en el orden de la tabla: primero los navegadores y, dentro de
 cada uno, los archivos en el orden de `sort()` de JavaScript sobre el nombre sin `.spec.ts` (por eso `articulos` va
@@ -85,9 +90,11 @@ de Edge a 5552–5558 y 5560, con el suyo en 5559; y `presupuestos-busqueda.spec
 `chrome-facturacion*` a 5548–5551 y los `chrome-presupuestos-*` y `chrome-verificacion-*` a 5554–5564, y los de Edge a
 5565–5568, 5570–5573 y 5576–5586, con los suyos en 5569, 5574 y 5575; y `backup-aviso.spec.ts` y
 `configuracion-backup.spec.ts` (FEAT-010) ocupan 5546 y 5548 en Chrome, mueven `chrome-configuracion` a 5547 y los que
-siguen en Chrome a 5549–5566, y los de Edge a 5567–5569, 5571 y 5573–5590, con los suyos en 5570 y 5572. Son 48
-proyectos, de 5543 a 5590. Si tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea
-`[e2e] Listo: …` que escribe `servidor.mjs` al arrancar.
+siguen en Chrome a 5549–5566, y los de Edge a 5567–5569, 5571 y 5573–5590, con los suyos en 5570 y 5572; y
+`actualizar-costos.spec.ts` (FEAT-011) ocupa 5544 en Chrome, entre `acceso` y `articulos`, mueve los que siguen en
+Chrome a 5545–5567 y los de Edge a 5568 y 5570–5592, con el suyo en 5569. Son 50 proyectos, de 5543 a 5592. Si
+tenés algo fijado a un puerto, buscá el actual en esta tabla o en la línea `[e2e] Listo: …` que escribe `servidor.mjs`
+al arrancar.
 
 **Carpetas de backup (FEAT-010, D-16).** La ubicación del backup tiene que estar en otra unidad que la base (FR-02).
 Para probarlo, `servidor.mjs` crea por cada Api, antes de levantarla, una raíz `optica-e2e-backup-<puerto>` en la
@@ -133,9 +140,11 @@ backup disponible. No hay una ubicación de backup elegida." (`role="status"`, s
 volver a ingresar, y ni el inicio ni ninguna pantalla de su menú tiene un texto de restaurar o restablecer, un control
 que combine backup o copia con cargar, importar, subir o volver, ni un campo para subir un archivo. La lista de
 pantallas sale de los enlaces del inicio y se compara con la esperada, así una pantalla nueva del menú hace fallar la
-prueba hasta que se suma. Las pantallas de detalle (presupuesto, factura, editar artículo) no se recorren porque la base
-está vacía: las cubren `ProteccionTests` en la Api y, en la web, una búsqueda de texto en el código (`restaur` no
-aparece en `web/src` fuera de las pruebas); esa búsqueda no es una prueba automática.
+prueba hasta que se suma. También recorre "Artículos → Actualizar costos con planilla" (FEAT-011, D-27), fuera del
+menú, donde admite un único campo de archivo: `accept=".xlsx"` con la etiqueta "Planilla de costos (.xlsx)", que carga
+costos y no restaura backups. Las pantallas de detalle (presupuesto, factura, editar artículo) no se recorren porque
+la base está vacía: las cubren `ProteccionTests` en la Api y, en la web, una búsqueda de texto en el código
+(`restaur` no aparece en `web/src` fuera de las pruebas); esa búsqueda no es una prueba automática.
 Como todas las bases nuevas de la suite muestran ese aviso en el inicio, una prueba que busque `getByRole('status')`
 tiene que filtrarlo por su texto (como `acceso.spec.ts`).
 
