@@ -114,6 +114,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 ### Changed
 - [FEAT-007] Configuración: la alícuota de IVA se elige de una lista con las que acepta ARCA (0, 2,5, 5, 10,5, 21 y 27); una alícuota guardada antes que no esté en la lista se sigue leyendo y la pantalla pide elegir otra. Se suma el punto de venta (entero de 1 a 99999), editable en la pantalla de configuración; sin punto de venta ni tope cargados no se factura.
 - [FEAT-008] Emisión de la factura: pide a ARCA el próximo número y lo graba en la emisión pendiente antes de enviar, para poder consultarlo si ARCA no responde. La pantalla deja de ofrecer "Facturar" mientras haya una emisión pendiente.
+- [FEAT-012] Menú de Inicio moderno y estilo uniforme:
+  - Inicio muestra las opciones en tarjetas agrupadas en Ventas, Catálogo y Sistema. Cada tarjeta tiene un ícono, una descripción breve y foco visible, y se puede hacer clic en toda su superficie. "Salir" queda aparte, como botón secundario, y los avisos siguen arriba.
+  - Las 15 pantallas comparten el mismo estilo, tomado de la marca instalada:
+    - el contenido va en una tarjeta;
+    - los campos tienen foco visible y el error se muestra junto al campo;
+    - hay dos estilos de botón, principal y secundario, del mismo alto;
+    - las tablas tienen encabezado destacado y desplazamiento propio en el celular;
+    - los mensajes van en bloques con ícono (error, confirmación y aviso);
+    - los diálogos se muestran como tarjeta.
+  - Contraste accesible (WCAG AA) probado con la marca de ejemplo y la real, movimiento reducido respetado y sin dependencias nuevas.
+  - Pruebas de punta a punta del menú y de las 15 pantallas a 360 y 1280 px en Chrome y Edge. Pendiente manual: probar la versión anterior de los navegadores.
 
 ### Fixed
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
