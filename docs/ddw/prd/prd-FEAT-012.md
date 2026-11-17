@@ -1,11 +1,11 @@
-# PRD FEAT-012: Menú de Inicio moderno
+# PRD FEAT-012: Menú de Inicio moderno y estilo uniforme
 
 | Campo | Valor |
 |-------|-------|
 | Ticket | FEAT-012 |
 | Tracker | ninguno |
 | Fecha | 2026-11-17 |
-| PRD loops | 1 |
+| PRD loops | 2 |
 | Loops since last human decision | 0 |
 
 > **Origen.** El 2026-11-17 el usuario pidió "hacer este menú un poco más moderno y atractivo y no tan feo y aburrido"
@@ -15,6 +15,12 @@
 >
 > **Alcance decidido.** El 2026-11-17 el usuario decidió hacerlo en un solo ticket, con sus 10 AC (W-PRD-06
 > aceptado): es una sola pantalla y las partes no se pueden entregar por separado.
+>
+> **Ampliación (vuelta de CODE, decisión del usuario del 2026-11-17).** Con el menú ya implementado, el usuario
+> señaló que "las pantallas están horribles, salvo el menú que cambiaste" y pidió que el sitio sea uniforme. Ante la
+> pregunta, eligió ampliar este ticket en lugar de abrir otro. Se suman FR-09 a FR-13 y AC-11 a AC-16. Las demás
+> pantallas dejan de estar fuera de alcance, solo en su aspecto: textos, flujos y datos no cambian. Sigue siendo un
+> solo ticket (W-PRD-06 aceptado por la misma decisión).
 
 ## Context and Problem
 Después de ingresar, la pantalla de Inicio muestra las siete opciones del sistema como enlaces de texto subrayados en
@@ -54,10 +60,31 @@ cuesta encontrar de un vistazo lo que usa todos los días.
   sesión) antes de las secciones del menú.
 - FR-08: El sistema debe ofrecer "Salir" como una acción separada de las tarjetas del menú.
 
+### Estilo uniforme en todas las pantallas
+- FR-09: El sistema debe mostrar el contenido principal de cada pantalla dentro de una tarjeta con el mismo fondo,
+  borde, radio y sombra que las tarjetas del menú. Esto vale para las 15 pantallas: ingreso, definir y cambiar la
+  contraseña, Inicio, configuración, artículos, alta, edición y actualización de costos, búsqueda, alta, detalle y
+  edición de presupuestos, y búsqueda y detalle de facturas.
+- FR-10: El sistema debe mostrar los campos y desplegables con un mismo estilo en todas las pantallas:
+  - borde y radio iguales;
+  - indicador de foco visible del color primario;
+  - en un campo con error, el borde en el color de error y el mensaje junto al campo.
+- FR-11: El sistema debe mostrar los botones con dos estilos únicos en todas las pantallas: principal (relleno del
+  primario) y secundario (borde del primario). Los dos tienen el mismo alto y radio, hover, foco visible y estado
+  deshabilitado.
+- FR-12: El sistema debe mostrar las tablas con un mismo estilo en todas las pantallas:
+  - encabezado destacado;
+  - separación entre filas;
+  - resaltado de la fila al pasar el puntero;
+  - importes alineados a la derecha;
+  - desplazamiento horizontal dentro de su contenedor, sin que se desplace la página.
+- FR-13: El sistema debe mostrar los avisos, los mensajes de error y los mensajes de confirmación con un mismo estilo
+  de bloque en todas las pantallas, distinguibles entre sí por color y sin depender solo del color.
+
 ## Non-Functional Requirements
-- NFR-01: El texto de las tarjetas debe tener un contraste de al menos 4,5:1 contra su fondo, y el indicador de foco
+- NFR-01: El texto de las tarjetas, de los campos, de los botones, de las tablas y de los mensajes debe tener un contraste de al menos 4,5:1 contra su fondo, y el indicador de foco
   de al menos 3:1 (WCAG 2.1 AA), con la marca de ejemplo y con la marca real (primario #0903A0 sobre fondo #FFFFFF).
-- NFR-02: La pantalla debe verse y funcionar igual en la versión estable vigente de Chrome y de Edge, con anchos de
+- NFR-02: Las pantallas deben verse y funcionar igual en la versión estable vigente de Chrome y de Edge, con anchos de
   ventana de 360 px y de 1280 px.
 - NFR-03: El cambio no debe agregar ninguna dependencia nueva a la interfaz web (0 paquetes nuevos).
 
@@ -79,11 +106,24 @@ cuesta encontrar de un vistazo lo que usa todos los días.
 - AC-08 (FR-07): IF falta el backup de ayer o hay emisiones pendientes, THEN THE sistema SHALL mostrar esos avisos
   antes de la primera sección del menú.
 - AC-09 (FR-08): WHEN la operadora activa "Salir", THE sistema SHALL cerrar la sesión y volver al ingreso, como hoy.
-- AC-10 (NFR-02): WHEN se ejecutan AC-01 a AC-09 en Chrome y en Edge, en su versión estable vigente, THE sistema SHALL
+- AC-11 (FR-09): WHEN se abre cualquiera de las 15 pantallas de FR-09, THE sistema SHALL mostrar su contenido principal
+  dentro de una tarjeta con el fondo, el borde, el radio y la sombra de las tarjetas del menú.
+- AC-12 (FR-10): IF un campo tiene un error de validación, THEN THE sistema SHALL mostrar su borde en el color de error y
+  el mensaje junto al campo, y al recibir el foco un contorno del color primario, igual en todas las pantallas.
+- AC-13 (FR-11): WHEN una pantalla muestra un botón principal o secundario, THE sistema SHALL dibujarlo con el mismo
+  alto, radio y colores que el mismo tipo de botón en las demás pantallas.
+- AC-14 (FR-12): WHILE la ventana mide 360 px de ancho, THE sistema SHALL mostrar las tablas con su desplazamiento
+  horizontal dentro del contenedor, sin barra de desplazamiento horizontal en la página.
+- AC-15 (FR-13): IF una pantalla muestra un mensaje de error, THEN THE sistema SHALL dibujarlo con el mismo bloque, un
+  borde lateral y un fondo del color de error, que en las demás pantallas.
+- AC-16 (FR-09, NFR-01): WHEN se recorren las 15 pantallas con la marca real, THE sistema SHALL cumplir el contraste de
+  NFR-01 en textos, campos, botones y mensajes, sin violaciones de la política de seguridad de contenido.
+- AC-10 (NFR-02): WHEN se ejecutan AC-01 a AC-09 y AC-11 a AC-16 en Chrome y en Edge, en su versión estable vigente, THE sistema SHALL
   cumplirlos en los dos navegadores.
 
 ## Out of Scope
-- Cambiar las demás pantallas (Artículos, Presupuestos, Facturas, Configuración y otras).
+- Cambiar textos, flujos, datos o el orden de los campos de las demás pantallas: solo cambia su aspecto.
+- Cambiar el PDF de presupuestos y facturas.
 - Agregar opciones nuevas al menú o quitar alguna, por ejemplo "Actualizar costos con planilla", que se sigue
   abriendo desde Artículos.
 - Cambiar el título "Sesión iniciada", el encabezado con el logo o los textos de los avisos.
