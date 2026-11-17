@@ -7,7 +7,8 @@
 | Tier | FEATURE |
 | Date | 2026-11-17 |
 
-El cambio es solo de presentación en la web: cambia la forma en que se dibujan las siete opciones de Inicio. No hay
+El cambio es solo de presentación en la web: cambia la forma en que se dibujan las siete opciones de Inicio y, con la
+ampliación, el aspecto de las 15 pantallas desde la hoja de estilos global. No hay
 endpoints, datos ni permisos nuevos. Los modelos de FEAT-001a (sesión, CSP) y FEAT-010 (aviso de backup) siguen
 vigentes.
 
@@ -17,7 +18,8 @@ vigentes.
 | `web/src/paginas/MenuInicio.tsx` | Block 1 |
 | `web/src/componentes/IconoMenu.tsx` | Block 1 |
 | `web/src/paginas/Inicio.tsx` | Block 1 |
-| `web/src/estilos.css` | Block 1 |
+| `web/src/estilos.css` | Block 1, Block 2 |
+| `e2e/tests/estilo-uniforme.spec.ts` | Block 3 |
 
 ## Trust boundaries
 - Api → navegador: `GET /api/marca` entrega los colores de la marca instalada. Los aplica `MarcaProvider` como
@@ -61,6 +63,15 @@ vigentes.
 - **Denial of Service:** no aplica.
 - **Elevation of Privilege:** no aplica.
 
+### `e2e/tests/estilo-uniforme.spec.ts`
+- **Spoofing:** usa una Api y una base temporales del harness, con una contraseña de prueba.
+- **Tampering:** siembra sus propios datos ficticios por la Api y no toca datos reales.
+- **Repudiation:** no aplica.
+- **Information Disclosure:** las capturas de pantalla quedan en `test-results/`, que git ignora, y solo muestran datos
+  ficticios (R-04).
+- **Denial of Service:** no aplica.
+- **Elevation of Privilege:** no aplica.
+
 ## Data classification
 | Data | Class | At rest | In transit |
 |---|---|---|---|
@@ -72,6 +83,7 @@ vigentes.
 |---|---|---|---|---|---|
 | R-01 | Una descripción nombra datos de ARCA o de clientes en la pantalla de Inicio | I | L | L | Descripciones fijas revisadas (D-09) y prueba `Pantallas_NingunaMuestraDatosArca` |
 | R-02 | Un estilo en línea relaja la CSP o falla en producción sin que se note en desarrollo | T | L | M | Solo clases en `estilos.css`; la e2e falla ante cualquier violación de CSP |
+| R-04 | Una captura de la e2e muestra datos de clientes reales | I | L | M | La e2e siembra solo datos ficticios en una base temporal; `test-results/` está fuera de git |
 | R-03 | Una marca con un primario claro deja el contorno del foco con poco contraste | I | L | L | Texto en `--color-texto` (D-04); NFR-01 verificado con las dos marcas conocidas (D-10); riesgo residual documentado para marcas nuevas |
 
 ## Supply chain

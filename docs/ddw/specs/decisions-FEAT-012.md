@@ -86,3 +86,67 @@ las tomó el agente bajo la delegación del usuario, que pidió "la recomendada 
     antes que `.tsx`.
   - Ese import rompía Inicio.
   - Las referencias a `menuInicio.ts` en la spec, en D-03 y en el modelo de amenazas se leen como `seccionesMenu.ts`.
+
+## Ampliación al estilo uniforme (vuelta de CODE, 2026-11-17)
+
+Decisiones del agente bajo la delegación del usuario, salvo que se indique otra cosa.
+
+### D-13: el estilo de todas las pantallas sale de la hoja global
+- El estilo uniforme sale de `web/src/estilos.css`: variables de diseño sobre `:root`, con colores de error, éxito,
+  bordes, radios, sombras y espaciados, y reglas para las clases que las pantallas ya usan.
+- Se mantienen los nombres `--color-primario`, `--color-fondo` y `--color-texto`, porque los lee
+  `acceso.spec.ts`.
+- El markup se toca solo donde falta una clase.
+- Ningún estilo va en línea: lo impide la CSP.
+
+### D-14: botones secundarios marcados en el código
+- Los botones secundarios por su función llevan la clase `boton-secundario` en el markup. Son 18 en 8 archivos:
+  - paginación;
+  - Desactivar y Activar;
+  - Agregar y Quitar;
+  - Volver a abrir;
+  - Descargar PDF;
+  - Descartar;
+  - Cancelar.
+- Se descartaron reglas que adivinan por el contexto, porque fallan con botones nuevos.
+- Se quita `.tabla td button { padding }`, que achicaba los botones de las filas (AC-13).
+
+### D-15: Inicio no lleva tarjeta exterior
+- En Inicio, la tarjeta de FR-09 es cada opción del menú: `.pantalla--menu` no lleva la tarjeta exterior, para no
+  quedar con tarjetas dentro de otra tarjeta.
+- Las demás 14 pantallas se dibujan como tarjeta (`.pantalla`, `.pantalla--ancha`).
+
+### D-16: "Cargando" también como tarjeta
+- `.cargando` se dibuja como tarjeta con el mismo estilo de `.pantalla`.
+- Así las 6 pantallas que muestran "Cargando…" fuera de la sección no necesitan cambios de markup.
+
+### D-17: mensajes separados por tipo
+- `.campo__error` deja de compartir regla con `.mensaje-general`: es texto de error junto al campo, sin bloque, y así
+  no alcanza a los mensajes dentro de celdas.
+- `.mensaje-general` es un bloque de error: borde lateral y fondo de error, con ícono de texto "✕" por CSS `::before`
+  para no depender solo del color.
+- `.mensaje-exito` es un bloque de éxito con "✓".
+- `.aviso` es un bloque neutro con el primario.
+- Los dos mensajes de estado sin clase de `Presupuesto.tsx` pasan a `.mensaje-estado`, un bloque neutro.
+- Los "sin resultados" quedan como texto común.
+- `div.mensaje-general` con un `p` adentro anula el margen interno.
+
+### D-18: inputs de las tablas
+- `.tabla input` recibe borde, radio, foco y el borde de error con `aria-invalid`, igual que `.campo input`.
+- Los campos de solo lectura usan fondo gris y borde punteado, para que no parezcan editables.
+- `input[type=file]` se dibuja con el botón del selector estilizado vía `::file-selector-button`.
+
+### D-19: elementos que hoy no tienen estilo
+- `<dialog>`: tarjeta centrada con sombra y fondo oscurecido (`::backdrop`).
+- `fieldset` y `legend`: borde y radio, con la leyenda en negrita.
+- `.pantalla h2`: el mismo estilo que los títulos de sección del menú.
+- `dl.datos`: grilla de dos columnas, conservando `dl.datos > div > dt + dd`.
+
+### D-20: verificación del estilo
+- Una e2e nueva, `estilo-uniforme`, recorre las 15 pantallas en Chrome y Edge con 360 y 1280 px.
+- Comprueba:
+  - que la página no tenga desplazamiento horizontal;
+  - que la tarjeta tenga el fondo, el radio y la sombra computados;
+  - que los botones principales y secundarios tengan el mismo alto;
+  - que no haya violaciones de CSP.
+- `contraste.test.ts` suma los pares nuevos con las dos marcas.
