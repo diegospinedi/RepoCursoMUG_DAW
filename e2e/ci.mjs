@@ -642,11 +642,40 @@ const RUTAS_ARCA = new Map([
   ['www.afip.gob.ar', new Set(['/fe/qr/'])],
 ]);
 
-/** Hosts que una prueba puede escribir: la propia máquina, la red privada y los dominios reservados para ejemplos. */
+/**
+ * OOXML (FEAT-011, D-27): pares exactos de host y ruta de los espacios de nombres y tipos de relación que escriben las
+ * pruebas del lector de planillas (`LectorPlanillaCostosXlsxTests.cs`) y el generador de la suite
+ * (`e2e/tests/xlsx-minimo.ts`). Son identificadores dentro del XML de un .xlsx: ni el SDK de OpenXml ni las pruebas
+ * los piden por red. Cualquier otra ruta de esos hosts sigue siendo externa.
+ */
+const RUTAS_OOXML = new Map([
+  [
+    'schemas.openxmlformats.org',
+    new Set([
+      '/spreadsheetml/2006/main',
+      '/officeDocument/2006/relationships',
+      '/officeDocument/2006/relationships/officeDocument',
+      '/officeDocument/2006/relationships/worksheet',
+      '/package/2006/content-types',
+      '/package/2006/relationships',
+      '/package/2006/metadata/core-properties',
+      '/markup-compatibility/2006',
+    ]),
+  ],
+  ['purl.org', new Set(['/dc/elements/1.1/'])],
+  ['schemas.microsoft.com', new Set(['/office/spreadsheetml/2009/9/ac'])],
+]);
+
+/**
+ * Hosts que una prueba puede escribir: la propia máquina, la red privada, los dominios reservados para ejemplos y el
+ * TLD reservado `.invalid` (RFC 6761, que nunca se resuelve; D-27 de FEAT-011).
+ */
 function esHostPermitido(host, ruta) {
   if (['localhost', '127.0.0.1', '::1'].includes(host)) return true;
   if (host === 'www.w3.org') return RUTAS_W3.has(ruta);
   if (RUTAS_ARCA.has(host)) return RUTAS_ARCA.get(host).has(ruta);
+  if (RUTAS_OOXML.has(host)) return RUTAS_OOXML.get(host).has(ruta);
+  if (host.endsWith('.invalid')) return true;
   const ipv4 = IPV4.exec(host);
   if (ipv4) {
     const [primero, segundo] = [Number(ipv4[1]), Number(ipv4[2])];
@@ -660,9 +689,9 @@ function esHostPermitido(host, ruta) {
  * Hosts externos nombrados en URL del texto (FR-10). Permitidos: `localhost`, `127.0.0.1` y `::1` (sin corchetes),
  * las IPv4 `10.*`, `192.168.*` y `172.16.*` a `172.31.*` (en decimal, sin ceros iniciales), los terminados en
  * `.example`, `example.com` y sus subdominios, `www.w3.org` solo con las rutas de `RUTAS_W3` y los hosts de ARCA de
- * `RUTAS_ARCA` solo con sus rutas (homologación, espacios de nombres y la URL del QR; nunca producción de emisión).
- * Cualquier otra IP o nombre es externo. El host es lo que sigue al último `@` de la autoridad, como lo lee el
- * parser de URL.
+ * `RUTAS_ARCA` solo con sus rutas (homologación, espacios de nombres y la URL del QR; nunca producción de emisión),
+ * los de OOXML de `RUTAS_OOXML` solo con sus rutas y los terminados en `.invalid`. Cualquier otra IP o nombre es
+ * externo. El host es lo que sigue al último `@` de la autoridad, como lo lee el parser de URL.
  * @param {string} texto contenido de un archivo.
  * @returns {string[]} hosts externos en minúsculas, sin repetir, en el orden en que aparecen.
  */

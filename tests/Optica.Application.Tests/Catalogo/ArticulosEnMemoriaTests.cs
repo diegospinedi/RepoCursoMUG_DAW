@@ -1,3 +1,4 @@
+using Optica.Application.Comun;
 using Optica.Domain.Catalogo;
 
 namespace Optica.Application.Tests.Catalogo;
@@ -14,6 +15,7 @@ public class ArticulosEnMemoriaTests
         "Actualizar",
         "CambiarEstado",
         "RegistrarPrecioRecalculado",
+        "RegistrarCostoActualizado",
     };
 
     /// <summary>
@@ -63,6 +65,47 @@ public class ArticulosEnMemoriaTests
         Assert.Single(articulos.Guardados);
     }
 
+    /// <summary>
+    /// Como el repositorio real (Block 3 de FEAT-011): el costo actualizado cambia solo el costo, la venta y la versión;
+    /// un inactivo sigue inactivo, y con una versión o un estado que ya no son los leídos, nada se guarda.
+    /// </summary>
+    [Fact]
+    public async Task RegistrarCostoActualizado_TokensYSoloCostoVentaYVersion()
+    {
+        var articulos = new ArticulosEnMemoria();
+        var inactivo = articulos.Sembrar("ABC-1", "Armazón", costo: 1210m, activo: false, version: 2);
+        var codigo = inactivo.Codigo!.Value;
+
+        articulos.RegistrarCostoActualizado(
+            new Articulo(codigo, "ZZZ-9", "Otra", 2420m, 10m, 3630m, activo: false, version: 2));
+        await articulos.ConfirmarAsync();
+
+        var guardado = articulos.Guardado(codigo);
+        Assert.Equal(
+            ("ABC-1", "Armazón", 2420m, 50m, 3630m, false, 3L),
+            (guardado.CodigoProveedor, guardado.Descripcion, guardado.PrecioCosto, guardado.MargenUtilidad,
+                guardado.PrecioVenta, guardado.Activo, guardado.Version));
+        Assert.Single(articulos.CostosActualizadosRegistrados);
+
+        articulos.RegistrarCostoActualizado(
+            new Articulo(codigo, "ABC-1", "Armazón", 1m, 50m, 1.5m, activo: false, version: 2));
+        var porVersion = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(() => articulos.ConfirmarAsync());
+        articulos.RegistrarCostoActualizado(
+            new Articulo(codigo, "ABC-1", "Armazón", 1m, 50m, 1.5m, activo: true, version: 3));
+        var porEstado = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(() => articulos.ConfirmarAsync());
+
+        Assert.Equal(MotivoConflicto.Concurrencia, porVersion.Motivo);
+        Assert.Equal(MotivoConflicto.Concurrencia, porEstado.Motivo);
+        Assert.Equal((2420m, 3L), (articulos.Guardado(codigo).PrecioCosto, articulos.Guardado(codigo).Version));
+
+        // Como el real: la versión siguiente se calcula con checked al registrar, y si desborda no queda nada registrado.
+        Assert.Throws<OverflowException>(() => articulos.RegistrarCostoActualizado(
+            new Articulo(codigo, "ABC-1", "Armazón", 1m, 50m, 1.5m, activo: false, version: long.MaxValue)));
+        Assert.Equal(3, articulos.CostosActualizadosRegistrados.Count);
+        await articulos.ConfirmarAsync();
+        Assert.Equal((2420m, 3L), (articulos.Guardado(codigo).PrecioCosto, articulos.Guardado(codigo).Version));
+    }
+
     private static void Registrar(ArticulosEnMemoria articulos, string registro, Articulo existente)
     {
         switch (registro)
@@ -82,6 +125,10 @@ public class ArticulosEnMemoriaTests
             case "RegistrarPrecioRecalculado":
                 articulos.RegistrarPrecioRecalculado(new Articulo(
                     existente.Codigo, "ABC-1", "Armazón", 1210m, 50m, 1850m, existente.Activo, existente.Version));
+                break;
+            case "RegistrarCostoActualizado":
+                articulos.RegistrarCostoActualizado(new Articulo(
+                    existente.Codigo, "ABC-1", "Armazón", 2420m, 50m, 3630m, existente.Activo, existente.Version));
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(registro));

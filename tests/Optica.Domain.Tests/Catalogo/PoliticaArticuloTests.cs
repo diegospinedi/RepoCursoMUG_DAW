@@ -246,6 +246,42 @@ public class PoliticaArticuloTests
     }
 
     [Fact]
+    public void EsCodigoAdmisible_VacioInvalidoOLargo_Falso()
+    {
+        // D-10 de FEAT-011: la misma regla que Evaluar aplica al código.
+        Assert.False(PoliticaArticulo.EsCodigoAdmisible(new string('A', PoliticaArticulo.LargoMaximoCodigo + 1)));
+        Assert.False(PoliticaArticulo.EsCodigoAdmisible("AB\uD800"));
+        Assert.False(PoliticaArticulo.EsCodigoAdmisible("  "));
+        Assert.False(PoliticaArticulo.EsCodigoAdmisible(string.Empty));
+    }
+
+    [Fact]
+    public void EsCodigoAdmisible_CincuentaCaracteresConEspacios_Verdadero()
+    {
+        Assert.True(PoliticaArticulo.EsCodigoAdmisible(" " + new string('A', PoliticaArticulo.LargoMaximoCodigo) + " "));
+        Assert.True(PoliticaArticulo.EsCodigoAdmisible("ABC-1"));
+    }
+
+    [Fact]
+    public void EvaluarCostoNuevo_FueraDeRangoYConTresDecimales_Infraccion()
+    {
+        // D-09 de FEAT-011: la misma regla que Evaluar aplica al costo.
+        Assert.Equal(InfraccionArticulo.CostoFueraDeRango, PoliticaArticulo.EvaluarCostoNuevo(decimal.MinValue));
+        Assert.Equal(
+            InfraccionArticulo.CostoFueraDeRango, PoliticaArticulo.EvaluarCostoNuevo(ReglasImporte.ImporteMaximo + 0.01m));
+        Assert.Equal(InfraccionArticulo.CostoConMasDeDosDecimales, PoliticaArticulo.EvaluarCostoNuevo(1234.565m));
+    }
+
+    [Fact]
+    public void EvaluarCostoNuevo_MaximoCeroYNegativo_SinInfraccion()
+    {
+        // FR-09 de FEAT-011: cero y negativos son válidos.
+        Assert.Null(PoliticaArticulo.EvaluarCostoNuevo(ReglasImporte.ImporteMaximo));
+        Assert.Null(PoliticaArticulo.EvaluarCostoNuevo(0m));
+        Assert.Null(PoliticaArticulo.EvaluarCostoNuevo(-100m));
+    }
+
+    [Fact]
     public void Evaluar_VariosCamposInvalidos_DevuelveUnaInfraccionPorCampo()
     {
         var infracciones = PoliticaArticulo.Evaluar(new string('A', 51), " ", 1.555m, 1000.01m);

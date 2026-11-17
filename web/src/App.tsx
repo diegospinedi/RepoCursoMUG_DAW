@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router';
 import { alPerderLaSesion } from './api/cliente';
 import { Encabezado } from './componentes/Encabezado';
 import { MarcaProvider } from './marca/MarcaProvider';
+import { ActualizarCostos } from './paginas/ActualizarCostos';
 import { Articulos } from './paginas/Articulos';
 import { BuscarFacturas } from './paginas/BuscarFacturas';
 import { BuscarPresupuestos } from './paginas/BuscarPresupuestos';
@@ -45,6 +46,8 @@ export function App() {
             <Route path="/articulos" element={<Articulos />} />
             {/* El alta antes que la edición: "nuevo" no es un código (react-router ya prefiere el segmento fijo). */}
             <Route path="/articulos/nuevo" element={<NuevoArticulo />} />
+            {/* FEAT-011: como "nuevo", "actualizar-costos" es un segmento fijo y no un código de artículo. */}
+            <Route path="/articulos/actualizar-costos" element={<ActualizarCostos />} />
             <Route path="/articulos/:codigo" element={<EditarArticulo />} />
             {/* La búsqueda (FEAT-006): los filtros viven en la pantalla, nunca en la URL (R-02). */}
             <Route path="/presupuestos" element={<BuscarPresupuestos />} />

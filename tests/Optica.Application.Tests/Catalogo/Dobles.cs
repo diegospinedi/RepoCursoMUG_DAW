@@ -29,6 +29,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
     private readonly List<(Articulo Articulo, long VersionLeida)> _actualizaciones = [];
     private readonly List<(long Codigo, bool Activo, long VersionLeida)> _cambiosDeEstado = [];
     private readonly List<Articulo> _preciosRecalculados = [];
+    private readonly List<Articulo> _costosActualizados = [];
     private long _ultimoCodigo;
     private bool _enOperacion;
 
@@ -260,6 +261,36 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         _preciosRecalculados.Add(articulo);
     }
 
+    /// <summary>Cada artículo recibido por <see cref="RegistrarCostoActualizado"/>, en orden, se haya guardado o no.</summary>
+    public List<Articulo> CostosActualizadosRegistrados { get; } = [];
+
+    /// <summary>
+    /// Registra el costo actualizado de la planilla (FEAT-011); al confirmar, falla por concurrencia si el estado o la
+    /// versión del artículo ya no son los guardados, y si no, cambia solo el costo y el precio de venta e incrementa la
+    /// versión. Un inactivo sigue inactivo (D-12). Como el real, la versión siguiente se calcula con <c>checked</c> al
+    /// registrar: si desborda, lanza <see cref="OverflowException"/> sin registrar nada.
+    /// </summary>
+    /// <remarks>
+    /// Diferencias con <c>ArticuloRepository</c>: no tiene la guarda <c>SoloCostoPrecioYVersionModificados</c> (no sigue
+    /// entidades, así que no rechaza un artículo con otros cambios registrados sin confirmar), y registrar dos veces el
+    /// mismo artículo sin confirmar no se fusiona en una entrada: cada registro se valida contra lo guardado al confirmar,
+    /// en orden, así que el segundo choca por versión con el primero y la confirmación falla por concurrencia, mientras
+    /// que el real conserva los últimos valores.
+    /// </remarks>
+    public void RegistrarCostoActualizado(Articulo articulo)
+    {
+        ArgumentNullException.ThrowIfNull(articulo);
+        if (articulo.Codigo is null)
+        {
+            throw new ArgumentException("El artículo no tiene código.", nameof(articulo));
+        }
+
+        _ = checked(articulo.Version + 1);
+        Anotar(nameof(RegistrarCostoActualizado));
+        CostosActualizadosRegistrados.Add(articulo);
+        _costosActualizados.Add(articulo);
+    }
+
     public async Task<T> EjecutarEnTransaccionAsync<T>(
         Func<CancellationToken, Task<T>> operacion, CancellationToken cancelacion = default)
     {
@@ -277,7 +308,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         {
             var resultado = await operacion(cancelacion);
             if (_pendientes.Count > 0 || _actualizaciones.Count > 0 || _cambiosDeEstado.Count > 0 ||
-                _preciosRecalculados.Count > 0)
+                _preciosRecalculados.Count > 0 || _costosActualizados.Count > 0)
             {
                 // Como UnidadDeTrabajoEf: lo registrado sin confirmar no se confirma; se revierte todo.
                 throw new InvalidOperationException("La operación terminó con cambios sin confirmar.");
@@ -386,6 +417,27 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
                 checked(actual.Version + 1)));
         }
 
+        foreach (var conCosto in _costosActualizados)
+        {
+            // Los tokens son el estado y la versión leídos; un inactivo también se actualiza y sigue inactivo (D-12).
+            var actual = resultado.SingleOrDefault(guardado => guardado.Codigo == conCosto.Codigo);
+            if (actual is null || actual.Version != conCosto.Version || actual.Activo != conCosto.Activo)
+            {
+                throw Conflicto(MotivoConflicto.Concurrencia);
+            }
+
+            resultado.Remove(actual);
+            resultado.Add(new Articulo(
+                actual.Codigo,
+                actual.CodigoProveedor,
+                actual.Descripcion,
+                conCosto.PrecioCosto,
+                actual.MargenUtilidad,
+                conCosto.PrecioVenta,
+                actual.Activo,
+                checked(actual.Version + 1)));
+        }
+
         foreach (var pendiente in _pendientes)
         {
             if (resultado.Any(guardado => guardado.CodigoProveedorClave == pendiente.CodigoProveedorClave))
@@ -415,6 +467,7 @@ internal sealed class ArticulosEnMemoria : IArticuloRepository, IUnidadDeTrabajo
         _actualizaciones.Clear();
         _cambiosDeEstado.Clear();
         _preciosRecalculados.Clear();
+        _costosActualizados.Clear();
     }
 
     private static ConflictoAlConfirmarException Conflicto(MotivoConflicto motivo) =>

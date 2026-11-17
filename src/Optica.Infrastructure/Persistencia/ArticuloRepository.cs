@@ -17,6 +17,9 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
     private const string MensajeEntradaConOtrosCambios =
         "El artículo a recalcular ya tiene otros cambios registrados en el contexto.";
 
+    private const string MensajeCostoConOtrosCambios =
+        "El artículo con el costo actualizado ya tiene otros cambios registrados en el contexto.";
+
     private const long ValorActivo = 1;
     private const long ValorInactivo = 0;
 
@@ -259,17 +262,80 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
         }
     }
 
+    /// <summary>
+    /// El costo nuevo de la planilla (FR-06 de FEAT-011), con el patrón de <see cref="RegistrarPrecioRecalculado"/>:
+    /// reutiliza la entrada que el contexto ya sigue o adjunta una, y solo se escriben el precio de costo, el precio de
+    /// venta y la versión, que pasa a <see cref="Articulo.Version"/> + 1 (con <c>checked</c>). El <c>UPDATE</c> filtra por
+    /// la versión y el estado leídos: un inactivo se actualiza y sigue inactivo (FR-11, D-12), y si otra escritura
+    /// confirmó en el medio afecta 0 filas y la unidad de trabajo lo informa como conflicto de concurrencia (D-15).
+    /// </summary>
+    /// <remarks>
+    /// Como <see cref="RegistrarPrecioRecalculado"/>, apaga la detección automática de cambios mientras registra y la deja
+    /// como estaba, también si lanza: con 10.000 filas, recorrer el contexto en cada llamada volvería cuadrática la carga
+    /// (NFR-01, R-04).
+    /// </remarks>
+    /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
+    /// <exception cref="OverflowException">La versión siguiente no entra en un <c>long</c>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// El contexto ya sigue la fila con otros cambios (otras columnas modificadas, o un estado que no es sin cambios ni
+    /// modificado): error de programación, porque el listado del catálogo no sigue entidades. El mensaje no lleva valores.
+    /// </exception>
+    public void RegistrarCostoActualizado(Articulo articulo)
+    {
+        ArgumentNullException.ThrowIfNull(articulo);
+        if (articulo.Codigo is not { } codigo)
+        {
+            throw new ArgumentException("El artículo con el costo actualizado no tiene código.", nameof(articulo));
+        }
+
+        // Antes de tocar el contexto, así una versión que no se puede incrementar no deja nada registrado.
+        var versionSiguiente = checked(articulo.Version + 1);
+        var activoLeido = articulo.Activo ? ValorActivo : ValorInactivo;
+
+        var seguimiento = contexto.ChangeTracker;
+        var detectaba = seguimiento.AutoDetectChangesEnabled;
+        seguimiento.AutoDetectChangesEnabled = false;
+        try
+        {
+            var entrada = EntradaParaImportes(
+                articulo, codigo, activoLeido, SoloCostoPrecioYVersionModificados, MensajeCostoConOtrosCambios);
+            FijarTokens(entrada, articulo.Version, versionSiguiente, activoLeido);
+            Modificar(entrada.Property(a => a.PrecioCosto), articulo.PrecioCosto);
+            Modificar(entrada.Property(a => a.PrecioVenta), articulo.PrecioVenta);
+        }
+        finally
+        {
+            seguimiento.AutoDetectChangesEnabled = detectaba;
+        }
+    }
+
     private void Registrar(Articulo articulo, long codigo, long versionSiguiente, long activoLeido)
+    {
+        var entrada = EntradaParaImportes(
+            articulo, codigo, activoLeido, SoloPrecioYVersionModificados, MensajeEntradaConOtrosCambios);
+        FijarTokens(entrada, articulo.Version, versionSiguiente, activoLeido);
+        Modificar(entrada.Property(a => a.PrecioVenta), articulo.PrecioVenta);
+    }
+
+    /// <summary>
+    /// La entrada sobre la que se registran importes: la que el contexto ya sigue (revisada sola, sin recorrer el
+    /// contexto) si <paramref name="admisible"/> la acepta, o una adjuntada con los datos del artículo, el estado y la
+    /// versión leídos. Si la guarda la rechaza lanza <see cref="InvalidOperationException"/> con
+    /// <paramref name="mensaje"/>, que no lleva valores.
+    /// </summary>
+    private Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<ArticuloFila> EntradaParaImportes(
+        Articulo articulo, long codigo, long activoLeido,
+        Func<Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<ArticuloFila>, bool> admisible, string mensaje)
     {
         var seguida = contexto.Articulos.Local.FindEntry(codigo);
         seguida?.DetectChanges();
-        if (seguida is not null && !SoloPrecioYVersionModificados(seguida))
+        if (seguida is not null && !admisible(seguida))
         {
-            // El listado del recálculo no sigue entidades: llegar acá es un error de programación. Sin valores.
-            throw new InvalidOperationException(MensajeEntradaConOtrosCambios);
+            // El listado del catálogo no sigue entidades: llegar acá es un error de programación. Sin valores.
+            throw new InvalidOperationException(mensaje);
         }
 
-        var entrada = seguida
+        return seguida
             ?? contexto.Articulos.Attach(new ArticuloFila
             {
                 Id = codigo,
@@ -282,7 +348,12 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
                 Activo = activoLeido,
                 Version = articulo.Version,
             });
+    }
 
+    private static void FijarTokens(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<ArticuloFila> entrada, long versionLeida,
+        long versionSiguiente, long activoLeido)
+    {
         // Activo no se escribe: solo condiciona el UPDATE, con el valor leído como original.
         var activo = entrada.Property(a => a.Activo);
         activo.OriginalValue = activoLeido;
@@ -291,11 +362,9 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
 
         // El valor original es el leído, no el que tenga la entrada: el contexto podría seguir una versión vieja.
         var version = entrada.Property(a => a.Version);
-        version.OriginalValue = articulo.Version;
+        version.OriginalValue = versionLeida;
         version.CurrentValue = versionSiguiente;
         version.IsModified = true;
-
-        Modificar(entrada.Property(a => a.PrecioVenta), articulo.PrecioVenta);
     }
 
     /// <summary>
@@ -310,6 +379,23 @@ public sealed class ArticuloRepository(OpticaDbContext contexto) : IArticuloRepo
             EntityState.Modified => entrada.Properties
                 .Where(propiedad => propiedad.IsModified)
                 .All(propiedad => propiedad.Metadata.Name is nameof(ArticuloFila.PrecioVenta) or nameof(ArticuloFila.Version)),
+            _ => false,
+        };
+
+    /// <summary>
+    /// Verdadero si la entrada seguida está sin cambios, o modificada solo en el precio de costo, el precio de venta y
+    /// la versión: sobre ella, el <c>UPDATE</c> del costo actualizado sigue escribiendo solo esas tres columnas (Block 3
+    /// de FEAT-011). Cualquier otra columna modificada, o un alta o una baja de la entrada, la rechaza.
+    /// </summary>
+    private static bool SoloCostoPrecioYVersionModificados(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<ArticuloFila> entrada) =>
+        entrada.State switch
+        {
+            EntityState.Unchanged => true,
+            EntityState.Modified => entrada.Properties
+                .Where(propiedad => propiedad.IsModified)
+                .All(propiedad => propiedad.Metadata.Name
+                    is nameof(ArticuloFila.PrecioCosto) or nameof(ArticuloFila.PrecioVenta) or nameof(ArticuloFila.Version)),
             _ => false,
         };
 

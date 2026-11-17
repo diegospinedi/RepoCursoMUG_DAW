@@ -154,6 +154,8 @@ public sealed class ArticulosConEncuentro(OpticaDbContext contexto, EncuentroDeA
         _real.ListarParaRecalculoAsync(cancelacion);
 
     public void RegistrarPrecioRecalculado(Articulo articulo) => _real.RegistrarPrecioRecalculado(articulo);
+
+    public void RegistrarCostoActualizado(Articulo articulo) => _real.RegistrarCostoActualizado(articulo);
 }
 
 /// <summary>

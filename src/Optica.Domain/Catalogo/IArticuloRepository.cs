@@ -58,4 +58,14 @@ public interface IArticuloRepository
     /// </summary>
     /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
     void RegistrarPrecioRecalculado(Articulo articulo);
+
+    /// <summary>
+    /// Registra el costo nuevo de <paramref name="articulo"/> (la copia de <see cref="Articulo.ConCostoNuevo"/>) que trajo
+    /// la planilla de costos (FR-06 de FEAT-011): solo cambian el precio de costo, el precio de venta y la versión, que se
+    /// incrementa. El estado y la versión del artículo son los leídos: un inactivo se actualiza y sigue inactivo (FR-11,
+    /// D-12), y si alguno cambió antes de confirmar, la unidad de trabajo lo informa como conflicto de concurrencia
+    /// (D-15). Se guarda al confirmar la unidad de trabajo.
+    /// </summary>
+    /// <exception cref="ArgumentException">El artículo no tiene código.</exception>
+    void RegistrarCostoActualizado(Articulo articulo);
 }

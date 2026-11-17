@@ -39,6 +39,8 @@ describe('App', () => {
     ['/articulos/7', 'Editar artículo'],
     // La ruta del alta sigue siendo el alta, no la edición de un artículo con código "nuevo".
     ['/articulos/nuevo', 'Nuevo artículo'],
+    // FEAT-011: tampoco es la edición de un artículo con código "actualizar-costos".
+    ['/articulos/actualizar-costos', 'Actualizar costos'],
     ['/presupuestos/nuevo', 'Nuevo presupuesto'],
     // El alta tampoco es el presupuesto número "nuevo".
     ['/presupuestos/155', 'Presupuesto'],
@@ -354,6 +356,29 @@ const PANTALLAS: Pantalla[] = [
       fireEvent.change(screen.getByLabelText('Margen de utilidad (%)'), { target: { value: '50' } });
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
       expect(await screen.findByText('Artículo grabado con el código 1.')).toBeTruthy();
+    },
+  },
+  {
+    // FEAT-011: la actualización de costos con la planilla, con el resultado a la vista.
+    ruta: '/articulos/actualizar-costos',
+    descripcion: 'actualización de costos con planilla',
+    preparar: () =>
+      servidorFalso({
+        'GET /api/sesion': vacia(204),
+        'POST /api/articulos/planilla-costos': json(200, {
+          filasLeidas: 3,
+          aplicadas: 2,
+          noAplicadas: [{ fila: 4, codigo: 'XYZ-9', razon: 'código inexistente' }],
+          revisar: [{ fila: 2, codigo: 'ABC-1', precioCosto: 0, indicaciones: ['actualizado con precio negativo o cero'] }],
+        }),
+      }),
+    titulo: 'Actualizar costos',
+    interactuar: async () => {
+      fireEvent.change(await screen.findByLabelText('Planilla de costos (.xlsx)'), {
+        target: { files: [new File([new Uint8Array([0x50, 0x4b])], 'costos.xlsx')] },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Actualizar costos' }));
+      expect(await screen.findByText('Se actualizaron 2 artículos de 3 filas.')).toBeTruthy();
     },
   },
   {

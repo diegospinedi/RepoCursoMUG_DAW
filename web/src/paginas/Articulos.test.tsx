@@ -133,8 +133,8 @@ describe('Articulos', () => {
       ]),
     );
     expect(screen.queryByText('Lente orgánico')).toBeNull();
-    // D-12: ni costo ni margen en el listado.
-    expect(screen.queryByText(/costo|margen/i)).toBeNull();
+    // D-12: ni costo ni margen en el listado (la tabla; fuera de ella está el enlace a la planilla de FEAT-011).
+    expect(within(screen.getByRole('table')).queryByText(/costo|margen/i)).toBeNull();
     // Enlace al artículo y botón con el código y la descripción en su nombre accesible.
     expect(within(filaDe(7)).getByRole('link', { name: 'Editar 7 Armazón metálico' }).getAttribute('href')).toBe(
       '/articulos/7',
@@ -311,6 +311,24 @@ describe('Articulos', () => {
     fireEvent.click(within(filaDe(7)).getByRole('button', { name: DESACTIVAR_7 }));
 
     expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
+  });
+
+  it('Articulos tiene el enlace a Actualizar costos', async () => {
+    // FEAT-011: junto a "Nuevo artículo", y con el listado vacío también (la planilla no depende de lo buscado).
+    servidorFalso({ ...conSesion, 'GET /api/articulos?pagina=1': json(200, pagina([])) });
+    await abrir();
+    await screen.findByText('No hay artículos que coincidan con la búsqueda.');
+
+    const enlace = screen.getByRole('link', { name: 'Actualizar costos con planilla' });
+    expect(enlace.getAttribute('href')).toBe('/articulos/actualizar-costos');
+    // Junto a "Nuevo artículo": su párrafo es el hermano siguiente del párrafo del alta.
+    const nuevo = screen.getByRole('link', { name: 'Nuevo artículo' });
+    expect(nuevo.parentElement?.nextElementSibling).toBe(enlace.parentElement);
+
+    fireEvent.click(enlace);
+
+    expect(await screen.findByRole('heading', { name: 'Actualizar costos' })).toBeTruthy();
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos/actualizar-costos');
   });
 
   it('Articulos_SinCoincidencias_Aviso', async () => {

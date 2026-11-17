@@ -167,6 +167,8 @@ public sealed class ProteccionTests
             (HttpMethods.Get, RutaEmisionesPendientes),
             // FEAT-009: la búsqueda de facturas lleva Apellido, Nombre y DNI en el cuerpo y en la respuesta (R-01).
             (HttpMethods.Post, RutaBusquedaFacturas),
+            // FEAT-011: la planilla cambia los costos de todo el catálogo y responde códigos y costos (R-01, R-05).
+            (HttpMethods.Post, Catalogo.PlanillaCostosApiTests.Ruta),
         };
         foreach (var (metodo, patron) in nuevas)
         {
@@ -1253,6 +1255,131 @@ public sealed class ProteccionTests
                 .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
                 .Select(usado => (Tipo: t, Usado: usado)))
             .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith("QRCoder", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
+            .ToList();
+        Assert.Empty(usos);
+    }
+
+    /// <summary>
+    /// ADR-031: el SDK de planillas (DocumentFormat.OpenXml) es un detalle de Infrastructure, como QuestPDF y QRCoder.
+    /// La Api no compila contra él ni lo declara en su proyecto: la planilla le llega leída por
+    /// <c>ILectorPlanillaCostos</c>. Ningún tipo de la Api usa un tipo del SDK en su firma.
+    /// </summary>
+    /// <summary>
+    /// D-20 de FEAT-011: el recorrido de bytes del lector de la planilla supone que XmlReader solo conoce las
+    /// codificaciones incluidas en .NET (UTF-8, UTF-16, UTF-32 y las compatibles con ASCII). Registrar
+    /// <c>CodePagesEncodingProvider</c> (o cualquier proveedor) le sumaría EBCDIC y otras que el recorrido no entiende.
+    /// Ningún ensamblado de src llama a <see cref="Encoding.RegisterProvider"/>: se busca la llamada en el IL de cada
+    /// método, y también el texto en los fuentes.
+    /// </summary>
+    [Fact]
+    public void Src_NoRegistraProveedoresDeCodificacion()
+    {
+        var registrar = typeof(Encoding).GetMethod(nameof(Encoding.RegisterProvider))!;
+        var ensamblados = new[]
+        {
+            typeof(Program).Assembly,
+            typeof(Optica.Infrastructure.ConfiguracionInfraestructura).Assembly,
+            typeof(Optica.Application.Catalogo.ILectorPlanillaCostos).Assembly,
+            typeof(Optica.Domain.Catalogo.PlanillaCostos).Assembly,
+        };
+
+        // Control: la búsqueda en el IL encuentra una llamada que sí existe (la Api registra la infraestructura).
+        var agregarInfraestructura = typeof(Optica.Infrastructure.ConfiguracionInfraestructura)
+            .GetMethod(nameof(Optica.Infrastructure.ConfiguracionInfraestructura.AgregarInfraestructura))!;
+        Assert.NotEmpty(LlamadasA(typeof(Program).Assembly, agregarInfraestructura));
+
+        Assert.Empty(ensamblados.SelectMany(e => LlamadasA(e, registrar)));
+
+        var fuentes = Directory.EnumerateFiles(Path.Combine(Repositorio.Raiz(), "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(f => File.ReadAllText(f).Contains("RegisterProvider", StringComparison.Ordinal))
+            .ToList();
+        Assert.Empty(fuentes);
+    }
+
+    /// <summary>
+    /// Los métodos de <paramref name="ensamblado"/> cuyo IL llama a <paramref name="buscado"/>. Prueba cada posición
+    /// como un <c>call</c> o <c>callvirt</c> y resuelve el token que sigue: una posición que no es una instrucción no
+    /// resuelve al método buscado, y toda llamada real queda mirada.
+    /// </summary>
+    private static List<string> LlamadasA(System.Reflection.Assembly ensamblado, System.Reflection.MethodBase buscado)
+    {
+        const System.Reflection.BindingFlags Todos = System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly;
+        var llamadas = new List<string>();
+        foreach (var tipo in ensamblado.GetTypes())
+        {
+            var metodos = tipo.GetMethods(Todos).Cast<System.Reflection.MethodBase>().Concat(tipo.GetConstructors(Todos));
+            foreach (var metodo in metodos)
+            {
+                var il = metodo.GetMethodBody()?.GetILAsByteArray();
+                if (il is null)
+                {
+                    continue;
+                }
+
+                for (var i = 0; i + 4 < il.Length; i++)
+                {
+                    if (il[i] is not (0x28 or 0x6F))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var llamado = metodo.Module.ResolveMethod(BitConverter.ToInt32(il, i + 1));
+                        if (llamado is not null && llamado.MetadataToken == buscado.MetadataToken
+                            && llamado.Module == buscado.Module)
+                        {
+                            llamadas.Add($"{tipo.FullName}.{metodo.Name}");
+                        }
+                    }
+                    catch (Exception error) when (error is ArgumentException or BadImageFormatException
+                        or TypeLoadException or IOException or MissingMemberException)
+                    {
+                        // No era una instrucción de llamada: el token no resuelve.
+                    }
+                }
+            }
+        }
+
+        return llamadas;
+    }
+
+    [Fact]
+    public void Api_NoReferenciaOpenXml()
+    {
+        const string Prefijo = "DocumentFormat.OpenXml";
+        var api = typeof(Program).Assembly;
+
+        var referencias = api.GetReferencedAssemblies().Select(r => r.Name).ToList();
+        Assert.DoesNotContain(referencias, r => r!.StartsWith(Prefijo, StringComparison.OrdinalIgnoreCase));
+
+        // Control: la enumeración ve las referencias reales de la Api.
+        Assert.Contains("Optica.Application", referencias);
+
+        var proyecto = File.ReadAllText(Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "Optica.Api.csproj"));
+        Assert.DoesNotContain("OpenXml", proyecto, StringComparison.OrdinalIgnoreCase);
+
+        // Control: el SDK sí es una dependencia de Infrastructure, que es quien lee la planilla; si no lo fuera, su
+        // ausencia en la Api no probaría nada.
+        var infraestructura = typeof(Optica.Infrastructure.ConfiguracionInfraestructura).Assembly;
+        Assert.Contains(
+            infraestructura.GetReferencedAssemblies(),
+            r => r.Name?.StartsWith(Prefijo, StringComparison.OrdinalIgnoreCase) == true);
+
+        var usos = api.GetTypes()
+            .SelectMany(t => t.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.DeclaredOnly)
+                .SelectMany(m => m.GetParameters().Select(p => p.ParameterType).Append(m.ReturnType))
+                .Concat(t.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
+                .Select(usado => (Tipo: t, Usado: usado)))
+            .Where(u => u.Usado.Assembly.GetName().Name?.StartsWith(Prefijo, StringComparison.OrdinalIgnoreCase) == true)
             .Select(u => $"{u.Tipo.Name} usa {u.Usado.Name}")
             .ToList();
         Assert.Empty(usos);
