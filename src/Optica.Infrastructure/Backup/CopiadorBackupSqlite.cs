@@ -18,8 +18,9 @@ namespace Optica.Infrastructure.Backup;
 /// <c>journal_mode=DELETE</c> para que no deje <c>-wal</c> ni <c>-shm</c> en la carpeta del backup.
 /// </para>
 /// <para>
-/// La verificación abre la copia en solo lectura y exige <c>journal_mode</c> <c>delete</c> y
-/// <c>PRAGMA integrity_check</c> igual a <c>ok</c> (FR-07). Lo que libera el archivo para el renombre y el borrado (en
+/// La verificación es la de <see cref="VerificacionSqlite.EsCopiaCompleta"/>, la misma que usa la restauración: abre la
+/// copia en solo lectura, con <c>trusted_schema = OFF</c>, y exige <c>journal_mode</c> <c>delete</c> (también en el
+/// encabezado) y <c>PRAGMA integrity_check</c> igual a <c>ok</c> (FR-07). Lo que libera el archivo para el renombre y el borrado (en
 /// Windows, un archivo abierto no se puede renombrar) es el cierre explícito de cada conexión: sin pool, cerrar cierra el
 /// archivo de verdad, y no queda una conexión agrupada que lo retenga.
 /// </para>
@@ -36,8 +37,6 @@ namespace Optica.Infrastructure.Backup;
 /// </remarks>
 public sealed class CopiadorBackupSqlite(FabricaConexion fabrica) : ICopiadorBackup
 {
-    private const string ModoDiarioReversion = "delete";
-    private const string IntegridadCorrecta = "ok";
 
     private readonly FabricaConexion _fabrica = fabrica ?? throw new ArgumentNullException(nameof(fabrica));
 
@@ -63,7 +62,7 @@ public sealed class CopiadorBackupSqlite(FabricaConexion fabrica) : ICopiadorBac
             Mode = SqliteOpenMode.ReadWrite,
             Pooling = false,
         }.ToString();
-        var cadenaDestino = CadenaPropia(rutaTemporal, SqliteOpenMode.ReadWriteCreate);
+        var cadenaDestino = VerificacionSqlite.CadenaPropia(rutaTemporal, SqliteOpenMode.ReadWriteCreate);
 
         using var origen = new SqliteConnection(cadenaOrigen);
         using var destino = new SqliteConnection(cadenaDestino);
@@ -73,9 +72,7 @@ public sealed class CopiadorBackupSqlite(FabricaConexion fabrica) : ICopiadorBac
             destino.Open();
             origen.BackupDatabase(destino);
 
-            using var comando = destino.CreateCommand();
-            comando.CommandText = "PRAGMA journal_mode=DELETE;";
-            if (!string.Equals(comando.ExecuteScalar() as string, ModoDiarioReversion, StringComparison.OrdinalIgnoreCase))
+            if (!VerificacionSqlite.CambiarModoDiario(destino, VerificacionSqlite.ModoDiarioReversion))
             {
                 throw new InvalidOperationException("La copia del backup no quedó en modo de diario de reversión.");
             }
@@ -87,54 +84,8 @@ public sealed class CopiadorBackupSqlite(FabricaConexion fabrica) : ICopiadorBac
         }
     }
 
-    private static bool Verificar(string rutaTemporal)
-    {
-        if (!File.Exists(rutaTemporal))
-        {
-            return false;
-        }
-
-        using var copia = new SqliteConnection(CadenaPropia(rutaTemporal, SqliteOpenMode.ReadOnly));
-        try
-        {
-            copia.Open();
-            using var modo = copia.CreateCommand();
-            modo.CommandText = "PRAGMA journal_mode;";
-            if (!string.Equals(modo.ExecuteScalar() as string, ModoDiarioReversion, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            // integrity_check devuelve una sola fila "ok", o una fila por problema encontrado.
-            using var integridad = copia.CreateCommand();
-            integridad.CommandText = "PRAGMA integrity_check;";
-            using var lector = integridad.ExecuteReader();
-            var filas = new List<string>();
-            while (lector.Read() && filas.Count < 2)
-            {
-                filas.Add(lector.IsDBNull(0) ? string.Empty : lector.GetString(0));
-            }
-
-            return filas is [IntegridadCorrecta];
-        }
-        catch (SqliteException)
-        {
-            // Intencional: no es una base o está dañada ("file is not a database", "malformed"). No cuenta (FR-07).
-            return false;
-        }
-        finally
-        {
-            Cerrar(copia);
-        }
-    }
-
-    private static string CadenaPropia(string ruta, SqliteOpenMode modo) =>
-        new SqliteConnectionStringBuilder
-        {
-            DataSource = ruta,
-            Mode = modo,
-            Pooling = false,
-        }.ToString();
+    // La misma verificación que la restauración (VerificacionSqlite): modo de diario de reversión e integridad completa.
+    private static bool Verificar(string rutaTemporal) => VerificacionSqlite.EsCopiaCompleta(rutaTemporal);
 
     // Sin pool, Close cierra el archivo: es lo que lo libera antes del renombre (y del borrado de un temporal fallido).
     private static void Cerrar(SqliteConnection conexion) => conexion.Close();

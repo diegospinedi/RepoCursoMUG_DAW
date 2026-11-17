@@ -421,6 +421,72 @@ public sealed class ComandoRestablecerContrasenaTests
         Assert.Equal(AppContext.BaseDirectory, Program.OpcionesDelComando().ContentRootPath);
     }
 
+    /// <summary>
+    /// Spec FEAT-010, Block 7 (ADR-030): el selector de comandos suma <c>restaurar-backup</c> sin cambiar cómo se elige
+    /// <c>restablecer-contrasena</c>; cualquier otro primer argumento levanta la Api.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { "restablecer-contrasena" }, true, false)]
+    [InlineData(new[] { "restablecer-contrasena", "--forzar" }, true, false)]
+    [InlineData(new[] { "restaurar-backup", "optica-2026-10-30.db" }, false, true)]
+    [InlineData(new[] { "restaurar-backup" }, false, true)]
+    [InlineData(new[] { "RESTAURAR-BACKUP", "optica-2026-10-30.db" }, false, false)]
+    [InlineData(new[] { "RESTABLECER-CONTRASENA" }, false, false)]
+    [InlineData(new[] { "--urls=https://localhost:5001" }, false, false)]
+    [InlineData(new string[0], false, false)]
+    public void Program_SelectorDeComandos_RestablecerSigueIgual(string[] argumentos, bool restablecer, bool restaurar)
+    {
+        Assert.Equal(restablecer, Program.EsComandoRestablecer(argumentos));
+        Assert.Equal(restaurar, Program.EsComandoRestaurar(argumentos));
+        Assert.Equal(restablecer || restaurar, Program.EsComando(argumentos));
+        Assert.Equal(AppContext.BaseDirectory, Program.OpcionesDelComando().ContentRootPath);
+    }
+
+    /// <summary>
+    /// Por el mismo punto de entrada, <c>restablecer-contrasena</c> sigue restableciendo y <c>restaurar-backup</c> no toca
+    /// la contraseña aunque se escriba RESTABLECER.
+    /// </summary>
+    [Fact]
+    public async Task Program_EjecutarComando_CadaComandoPorSuRama()
+    {
+        var directorio = FabricaApi.NuevoDirectorioTemporal();
+        try
+        {
+            var antes = await PrepararBaseConContrasenaAsync(directorio);
+
+            using (var salidaRestaurar = new StringWriter())
+            {
+                var codigo = await Program.EjecutarComandoAsync(
+                    () => ConstruirComando(directorio),
+                    ["restaurar-backup", Path.Combine(directorio, "optica-2026-10-30.db")],
+                    new StringReader("RESTABLECER\n"),
+                    salidaRestaurar);
+                FabricaApi.LiberarConexiones(directorio);
+
+                // La rama de la restauración: busca la copia (que no existe) y no habla de restablecer.
+                Assert.Equal(2, codigo);
+                Assert.Contains("No se encontró la copia optica-2026-10-30.db", salidaRestaurar.ToString(), StringComparison.Ordinal);
+                Assert.DoesNotContain("restablec", salidaRestaurar.ToString(), StringComparison.OrdinalIgnoreCase);
+                AfirmarSinCambios(directorio, antes);
+            }
+
+            using var salida = new StringWriter();
+            var restablecido = await Program.EjecutarComandoAsync(
+                () => ConstruirComando(directorio),
+                [ComandoRestablecerContrasena.Nombre],
+                new StringReader("RESTABLECER\n"),
+                salida);
+            FabricaApi.LiberarConexiones(directorio);
+
+            Assert.Equal(0, restablecido);
+            Assert.Empty(Consultar(directorio, "SELECT Hash FROM CredencialAcceso"));
+        }
+        finally
+        {
+            BorrarDirectorio(directorio);
+        }
+    }
+
     [Fact]
     public async Task Comando_CandadoSinDirectorio_BaseInexistente()
     {

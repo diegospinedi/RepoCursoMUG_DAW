@@ -32,10 +32,11 @@ using Optica.Infrastructure.Persistencia;
 // cambiar traen contraseñas en claro) ni el de las respuestas (D-32 de FEAT-008: la descripción de un rechazo de ARCA en
 // un 409 puede repetir datos de la solicitud): no agregar HttpLogging de cuerpos.
 //
-// `Optica.Api restablecer-contrasena` no levanta la Api: con la misma configuración (raíz del contenido fija en la
-// carpeta de la aplicación, para leer su appsettings.json desde donde se lo ejecute) restablece la contraseña por
-// consola y termina (FR-04, ADR-007). No hay endpoint ni pantalla de restablecimiento (FR-05).
-if (Program.EsComandoRestablecer(args))
+// `Optica.Api restablecer-contrasena` y `Optica.Api restaurar-backup <copia>` no levantan la Api: con la misma
+// configuración (raíz del contenido fija en la carpeta de la aplicación, para leer su appsettings.json desde donde se lo
+// ejecute) restablecen la contraseña (FR-04, ADR-007) o restauran la base desde una copia (FEAT-010, FR-13, ADR-030) por
+// consola y terminan. No hay endpoint ni pantalla para ninguno de los dos (FR-05; FR-14 de FEAT-010).
+if (Program.EsComando(args))
 {
     return await Program.EjecutarComandoAsync(
         () =>
@@ -99,6 +100,17 @@ public partial class Program
     /// <summary>Verdadero si el primer argumento es exactamente <see cref="ComandoRestablecerContrasena.Nombre"/>.</summary>
     public static bool EsComandoRestablecer(IReadOnlyList<string> argumentos) =>
         argumentos.Count > 0 && string.Equals(argumentos[0], ComandoRestablecerContrasena.Nombre, StringComparison.Ordinal);
+
+    /// <summary>Verdadero si el primer argumento es exactamente <see cref="ComandoRestaurarBackup.Nombre"/>.</summary>
+    public static bool EsComandoRestaurar(IReadOnlyList<string> argumentos) =>
+        argumentos.Count > 0 && string.Equals(argumentos[0], ComandoRestaurarBackup.Nombre, StringComparison.Ordinal);
+
+    /// <summary>
+    /// El selector de comandos (ADR-030, que generaliza el de ADR-007): verdadero si el primer argumento nombra uno de los
+    /// comandos de consola. Con cualquier otro, o sin argumentos, se levanta la Api.
+    /// </summary>
+    public static bool EsComando(IReadOnlyList<string> argumentos) =>
+        EsComandoRestablecer(argumentos) || EsComandoRestaurar(argumentos);
 
     /// <summary>
     /// Opciones del builder del comando: la raíz del contenido es la carpeta de la aplicación, no la carpeta desde
@@ -175,6 +187,9 @@ public partial class Program
         builder.Services.AddScoped<ConsultarBackupProgramado>();
         // Block 6: el estado del backup para el aviso al ingresar (GET /api/backup/estado, con sesión), sin rutas (D-12).
         builder.Services.AddScoped<ObtenerEstadoBackup>();
+        // Block 7: la restauración desde una copia (D-27). Solo la pide el comando restaurar-backup, con la Api detenida y el
+        // candado de instancia tomado; ningún controlador la recibe (FR-14, AC-15).
+        builder.Services.AddScoped<RestaurarBackup>();
 
         // Catálogo de artículos, con sesión: el alta lee la configuración vigente en cada pedido (FR-08) y calcula el
         // precio de venta; la consulta devuelve costos y márgenes, por eso nunca es anónima (R-01). FEAT-002b: el
@@ -303,9 +318,10 @@ public partial class Program
 
     /// <summary>
     /// La rama del comando completa: arma el host con <paramref name="construir"/> (configuración y servicios, sin
-    /// inicializar la base), ejecuta <see cref="EjecutarRestablecimientoAsync"/> y lo descarta. Si armar el host falla
-    /// (por ejemplo, un appsettings ilegible), devuelve 2 con un mensaje con solo el tipo de la falla y la clave a
-    /// revisar: nunca su texto ni su traza, que pueden traer la ruta con el usuario de Windows.
+    /// inicializar la base), ejecuta el comando que elige el primer argumento (<see cref="EjecutarRestauracionAsync"/> o
+    /// <see cref="EjecutarRestablecimientoAsync"/>) y lo descarta. Si armar el host falla (por ejemplo, un appsettings
+    /// ilegible), devuelve el código de falla compartido por los dos comandos (2) con un mensaje con solo el tipo de la
+    /// falla y la clave a revisar: nunca su texto ni su traza, que pueden traer la ruta con el usuario de Windows.
     /// </summary>
     public static async Task<int> EjecutarComandoAsync(
         Func<WebApplication> construir, IReadOnlyList<string> argumentos, TextReader entrada, TextWriter salida)
@@ -326,8 +342,59 @@ public partial class Program
 
         await using (app)
         {
-            return await EjecutarRestablecimientoAsync(app.Services, argumentos, entrada, salida);
+            return EsComandoRestaurar(argumentos)
+                ? await EjecutarRestauracionAsync(app.Services, argumentos, entrada, salida)
+                : await EjecutarRestablecimientoAsync(app.Services, argumentos, entrada, salida);
         }
+    }
+
+    /// <summary>
+    /// La rama de la restauración (FEAT-010, FR-13, ADR-030), sobre los servicios ya construidos y sin inicializar la base:
+    /// arma <see cref="ComandoRestaurarBackup"/> en un alcance propio con la ruta de la copia (el segundo y último
+    /// argumento) y devuelve su código de salida (0 restauró, 1 canceló, 2 falló). Sin la ruta o con argumentos de más no
+    /// hace nada y devuelve 2. Nunca muestra rutas: ni la de la copia ni la de la carpeta de datos (D-12).
+    /// </summary>
+    public static async Task<int> EjecutarRestauracionAsync(
+        IServiceProvider servicios, IReadOnlyList<string> argumentos, TextReader entrada, TextWriter salida)
+    {
+        if (argumentos.Count != 2 || string.IsNullOrWhiteSpace(argumentos[1]))
+        {
+            await salida.WriteLineAsync(
+                $"Uso: Optica.Api {ComandoRestaurarBackup.Nombre} <ruta de la copia optica-AAAA-MM-DD.db>, sin otros " +
+                "argumentos. No se cambió nada.");
+            return ComandoRestaurarBackup.CodigoFallo;
+        }
+
+        await using var alcance = servicios.CreateAsyncScope();
+        var proveedor = alcance.ServiceProvider;
+        ComandoRestaurarBackup comando;
+        try
+        {
+            comando = new ComandoRestaurarBackup(
+                proveedor.GetRequiredService<RestaurarBackup>(),
+                proveedor.GetRequiredService<IDatosLocales>(),
+                proveedor.GetRequiredService<ICandadoInstancia>(),
+                argumentos[1],
+                entrada,
+                salida);
+        }
+        catch (DirectorioDatosInvalidoException error)
+        {
+            // Sin la ruta (D-12) ni el texto de la excepción: la clave alcanza para corregirlo.
+            await salida.WriteLineAsync(
+                $"No se puede usar el directorio de datos configurado. Corregí la clave de configuración '{error.Clave}' " +
+                "con una ruta absoluta. No se cambió nada.");
+            return ComandoRestaurarBackup.CodigoFallo;
+        }
+        catch (Exception error)
+        {
+            await salida.WriteLineAsync(
+                $"No se pudo preparar el comando ({error.GetType().Name}). Revisá la clave de configuración " +
+                $"'{FabricaConexion.ClaveDirectorio}'. No se cambió nada.");
+            return ComandoRestaurarBackup.CodigoFallo;
+        }
+
+        return await comando.EjecutarAsync();
     }
 
     /// <summary>

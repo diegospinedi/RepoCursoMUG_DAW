@@ -96,6 +96,14 @@ public static class ConfiguracionInfraestructura
         servicios.AddSingleton<IAlmacenCopias, AlmacenCopiasArchivo>();
         servicios.AddSingleton<ICandadoBackup, CandadoBackup>();
 
+        // Restauración (FEAT-010, Block 7, D-27 a D-29): la API de backup de SQLite desde la copia abierta en solo lectura a
+        // un temporal verificado en la carpeta de datos, y el intercambio con vuelta atrás automática. Solo la usa el comando
+        // restaurar-backup, con la Api detenida (no hay ruta de la Api que la reciba, FR-14). Singleton sin estado.
+        servicios.AddSingleton<IRestauradorBase>(proveedor => new RestauradorSqlite(
+            proveedor.GetRequiredService<FabricaConexion>(),
+            proveedor.GetRequiredService<IServiceScopeFactory>(),
+            proveedor.GetRequiredService<TimeProvider>()));
+
         // Una emisión a la vez en toda la Api (D-10), con el plazo único de EmitirFactura (D-32). Singleton y sin
         // IDisposable: el contenedor no lo descarta al apagar mientras una emisión todavía tiene el turno.
         servicios.AddSingleton<ICandadoEmision, CandadoEmision>();
@@ -275,7 +283,10 @@ public static class ConfiguracionInfraestructura
     /// Valida el directorio de datos, toma el candado de instancia única y aplica las migraciones pendientes. Si el
     /// directorio no sirve o el candado lo tiene otra instancia, registra un crítico con la ruta visible (sin la
     /// excepción) y lanza: la Api no arranca. El candado se toma antes de migrar, así dos instancias no migran a la vez,
-    /// y no lo toma <c>dotnet ef</c>, que no pasa por acá. Antes de todo valida las claves <c>Arca:*</c>
+    /// y no lo toma <c>dotnet ef</c>, que no pasa por acá. Con el candado tomado y antes de migrar, si falta
+    /// <c>optica.db</c> y la carpeta de datos tiene una restauración sin terminar, registra un crítico sin rutas y lanza
+    /// <see cref="RestauracionSinTerminarException"/>: no crea una base vacía (FEAT-010, Block 7). Antes de todo valida
+    /// las claves <c>Arca:*</c>
     /// (<see cref="ValidarArca"/>): con un valor inválido la Api tampoco arranca.
     /// </summary>
     public static void InicializarBaseDeDatos(this IServiceProvider servicios)
@@ -291,6 +302,8 @@ public static class ConfiguracionInfraestructura
             fabrica = servicios.GetRequiredService<FabricaConexion>();
             fabrica.PrepararDirectorio();
             servicios.GetRequiredService<CandadoTomado>().Tomar(fabrica);
+            // Con el candado tomado: si falta optica.db y hay una restauración sin terminar, no se crea una base vacía.
+            RestauracionSinTerminarException.Comprobar(fabrica.Directorio);
             using var alcance = servicios.CreateScope();
             alcance.ServiceProvider.GetRequiredService<OpticaDbContext>().Database.Migrate();
         }
@@ -302,6 +315,12 @@ public static class ConfiguracionInfraestructura
                 "La Api no puede arrancar: no se puede usar el directorio de datos {Ruta}. Corregí la clave de configuración {Clave}.",
                 error.Ruta,
                 error.Clave);
+            throw;
+        }
+        catch (RestauracionSinTerminarException)
+        {
+            // Sin rutas: el texto fijo nombra los archivos y la sección de la guía (FEAT-010, Block 7).
+            registro.LogCritical("La Api no puede arrancar. {Motivo}", RestauracionSinTerminarException.Texto);
             throw;
         }
         catch (InstanciaEnMarchaException) when (fabrica is not null)

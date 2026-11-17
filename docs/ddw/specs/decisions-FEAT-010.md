@@ -134,3 +134,18 @@ Formato: decisión — quién la aprobó — fecha — dónde aplica.
   permiso" se saltea en Windows y como root. El implementador intentó una vez editar una prueba con `sed -i`; el
   clasificador lo bloqueó y no se aplicó. — agente (D-05), señalado por el verificador y el auditor — 2026-11-17 —
   Block 6.
+- **D-36 (del agente, Block 7).** La base restaurada queda en WAL (con `integrity_check` después) antes del intercambio:
+  la Api no arranca sobre una base en modo DELETE porque los PRAGMA de `FabricaConexion` piden WAL también en la
+  conexión de solo lectura de `Database.Exists()`; corregir eso en `FabricaConexion` queda para un ticket aparte. La
+  copia y el temporal se verifican con un helper común (`VerificacionSqlite`: conexión propia sin pool,
+  `trusted_schema = OFF`, `integrity_check`, modo `delete` leído del encabezado), con la regla de D-28 y además los
+  triggers de protección que crean las migraciones de su historial (`TriggersDeProteccion`, atada a las migraciones por
+  una prueba que migra de a una); sin alguno, la copia es ajena. Al restaurar se renuevan las claves de sesión (se
+  cierran todas las sesiones); si falla, sale con código 2 y no deshace. Ctrl+C se ignora durante la restauración, y la
+  Api se niega a arrancar si falta `optica.db` y hay `optica.db.restaurando` o `anterior/`. Supuestos: la base actual
+  tiene que existir; facturas posteriores = `Id` mayor que el máximo de la copia, y si no se pueden contar se sigue y la
+  guía pide tratarlo como si hubiera; una copia sin historial, vacía o con huecos es ajena y con una migración
+  desconocida es más nueva; `RESTAURAR` admite espacios alrededor; también se aparta `-journal`; una copia que no está en
+  modo `delete` se rechaza como dañada. Riesgo residual: un corte entre apartar `-wal`/`-shm` y mover `optica.db` deja la
+  base sin su `-wal` (lo apartado queda en `anterior/`). — agente (D-05), señalado por el verificador y el auditor —
+  2026-11-17 — Block 7.

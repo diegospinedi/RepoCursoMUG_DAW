@@ -66,6 +66,67 @@ public sealed class ProteccionTests
             .Distinct()
             .ToList();
 
+    /// <summary>
+    /// AC-15 (FR-14, spec FEAT-010, Block 7): la restauración existe solo como comando de consola. El caso de uso está en
+    /// la composición (lo usa el comando), pero ningún controlador lo recibe, ni a él ni a su puerto; ninguna ruta
+    /// registrada ni anónima habla de restaurar; y las direcciones que podrían hacerlo responden 401 sin sesión y 404 con
+    /// sesión, sin cambiar la base.
+    /// </summary>
+    [Fact]
+    public async Task Api_NingunaRutaRestaura()
+    {
+        using var fabrica = new FabricaApi();
+        var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        using (var alcance = fabrica.Services.CreateScope())
+        {
+            Assert.NotNull(alcance.ServiceProvider.GetService<Optica.Application.Backup.RestaurarBackup>());
+            Assert.NotNull(alcance.ServiceProvider.GetService<Optica.Application.Backup.IRestauradorBase>());
+        }
+
+        var prohibidos = new[] { typeof(Optica.Application.Backup.RestaurarBackup), typeof(Optica.Application.Backup.IRestauradorBase) };
+        var controladores = typeof(Program).Assembly.GetTypes()
+            .Where(tipo => typeof(Microsoft.AspNetCore.Mvc.ControllerBase).IsAssignableFrom(tipo))
+            .ToList();
+        Assert.NotEmpty(controladores);
+        foreach (var controlador in controladores)
+        {
+            var dependencias = controlador.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType)
+                .Concat(controlador.GetMethods().SelectMany(m => m.GetParameters()).Select(p => p.ParameterType))
+                .Concat(controlador.GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public).Select(f => f.FieldType));
+            Assert.DoesNotContain(dependencias, prohibidos.Contains);
+        }
+
+        Assert.DoesNotContain(
+            EndpointsRegistrados(fabrica), e => e.Ruta.Contains("restaur", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(RutasAnonimas.Todas, r => r.Ruta.Contains("restaur", StringComparison.OrdinalIgnoreCase));
+
+        var rutas = new[]
+        {
+            "/api/backup/restaurar",
+            "/api/backup/restauracion",
+            "/api/backup/restaurar-backup",
+            "/api/restaurar-backup",
+            "/api/configuracion/backup/restaurar",
+        };
+        foreach (var ruta in rutas)
+        {
+            foreach (var metodo in new[] { HttpMethod.Get, HttpMethod.Post, HttpMethod.Put })
+            {
+                Assert.Equal(
+                    HttpStatusCode.Unauthorized, (await EnviarJsonAsync(cliente, metodo, ruta, "{}")).StatusCode);
+                Assert.Equal(
+                    HttpStatusCode.NotFound, (await EnviarJsonAsync(cliente, metodo, ruta, "{}", cookie)).StatusCode);
+            }
+        }
+
+        // La base no cambió: la contraseña sigue definida y no se apartó nada.
+        var estado = await Http.JsonAsync(await Http.GetAsync(cliente, "/api/acceso/estado"));
+        Assert.True(estado.GetProperty("contrasenaDefinida").GetBoolean());
+        Assert.False(Directory.Exists(Path.Combine(fabrica.DirectorioDatos, "anterior")));
+    }
+
     private const string RutaArticulos = "/api/articulos";
 
     /// <summary>
