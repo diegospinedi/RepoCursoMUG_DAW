@@ -100,6 +100,161 @@ a {
   max-width: 64rem;
 }
 
+/* Menú de Inicio (FEAT-012): el marco se ensancha solo en Inicio para que entren dos o tres tarjetas por fila (D-07). */
+.marco:has(.pantalla--menu) {
+  max-width: 48rem;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  margin: 1.5rem 0;
+}
+
+.menu__seccion h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-texto);
+  opacity: 0.8;
+}
+
+/* FR-05: una columna en pantallas angostas; dos o tres tarjetas por fila en las anchas. */
+.menu__lista {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(13rem, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * La tarjeta (D-04, D-06): blanca, con la franja superior del primario. La franja se dibuja con el fondo (un degradado
+ * de un solo color de 4px arriba), así el borde queda parejo de 1px y las esquinas redondeadas no se deforman; el
+ * padding-top suma los 3px que la franja ocupa de más. Lleva position: relative para que el ::after del enlace la
+ * cubra entera; ni ella ni nada entre ella y el enlace lleva overflow ni transform.
+ */
+.tarjeta-menu {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.875rem;
+  row-gap: 0.25rem;
+  align-items: start;
+  padding: calc(1rem + 3px) 1rem 1rem;
+  background:
+    linear-gradient(var(--color-primario), var(--color-primario)) top / 100% 4px no-repeat,
+    #ffffff;
+  border: 1px solid #c4c4c4;
+  border-radius: 8px;
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 10%),
+    0 1px 2px rgb(0 0 0 / 6%);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+/* FR-04: con el puntero encima la sombra crece (la tarjeta se ve elevada, sin moverse) y el borde pasa al primario. */
+.tarjeta-menu:hover {
+  border-color: var(--color-primario);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 14%);
+}
+
+/* D-05: el foco se muestra una sola vez, en la tarjeta; el enlace no dibuja el suyo. */
+.tarjeta-menu:has(a:focus-visible) {
+  outline: 3px solid var(--color-primario);
+  outline-offset: 2px;
+}
+
+/* El ícono va en el primario, dentro de un círculo suave del mismo color. */
+.tarjeta-menu__icono {
+  grid-row: span 2;
+  padding: 0.625rem;
+  border-radius: 50%;
+  color: var(--color-primario);
+  background-color: color-mix(in srgb, var(--color-primario) 10%, white);
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+/* Con el puntero encima, el círculo se invierte: fondo del primario e ícono blanco. */
+.tarjeta-menu:hover .tarjeta-menu__icono {
+  color: #ffffff;
+  background-color: var(--color-primario);
+}
+
+.tarjeta-menu__enlace {
+  align-self: end;
+  color: var(--color-texto);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.tarjeta-menu__enlace:focus-visible {
+  outline: none;
+}
+
+/* D-06: el enlace estirado; toda la tarjeta es clicable. */
+.tarjeta-menu__enlace::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+}
+
+/* La descripción va en --color-texto con opacidad, no en un gris de menor contraste (D-04). */
+.tarjeta-menu__descripcion {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: var(--color-texto);
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tarjeta-menu,
+  .tarjeta-menu__icono {
+    transition: none;
+  }
+}
+
+/* D-08: "Salir" en una barra al final, separada del menú; su error, si lo hay, va justo antes del botón. */
+.inicio__acciones {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-top: 1rem;
+  border-top: 1px solid #d0d0d0;
+}
+
+.inicio__acciones .mensaje-general {
+  margin: 0;
+}
+
+/* Botón secundario: fondo blanco y borde del primario. */
+.boton-secundario {
+  color: var(--color-primario);
+  background-color: #ffffff;
+  border: 1px solid var(--color-primario);
+}
+
+.boton-secundario:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-primario) 10%, white);
+}
+
+.boton-secundario:focus-visible {
+  outline: 3px solid var(--color-primario);
+  outline-offset: 2px;
+}
+
 .tabla-contenedor {
   overflow-x: auto;
   margin: 1rem 0;

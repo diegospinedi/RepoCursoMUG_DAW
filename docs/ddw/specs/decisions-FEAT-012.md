@@ -77,3 +77,12 @@ las tomó el agente bajo la delegación del usuario, que pidió "la recomendada 
 - **Quién:** agente.
 - **Decisión:** en `e2e/tests/backup-aviso.spec.ts`, `PANTALLAS_DEL_MENU` pasa al orden nuevo: Ventas, Catálogo y
   Sistema.
+
+## D-12: nombre del archivo de datos del menú
+- **Quién:** agente, 2026-11-17, Block 1.
+- **Decisión:** los datos del menú quedan en `web/src/paginas/seccionesMenu.ts`, no en `menuInicio.ts`.
+- **Motivo:**
+  - En NTFS, que no distingue mayúsculas, `import './MenuInicio'` resolvía a `menuInicio.ts`, porque Vite prueba `.ts`
+    antes que `.tsx`.
+  - Ese import rompía Inicio.
+  - Las referencias a `menuInicio.ts` en la spec, en D-03 y en el modelo de amenazas se leen como `seccionesMenu.ts`.
