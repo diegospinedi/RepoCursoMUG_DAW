@@ -38,3 +38,28 @@ agente bajo la delegación del usuario ("la recomendada y la que menos tiempo in
 - **D-18 (agente):** el harness e2e arma el .xlsx con `node:zlib` en un auxiliar propio, sin paquetes npm nuevos.
 - **D-19 (agente):** controlador propio `PlanillaCostosController` en la ruta `api/articulos/planilla-costos`, sin
   cambiar el constructor de `ArticulosController`.
+- **D-20 — agente, bajo la delegación del usuario — 2026-11-17 — Block 2:** las revisiones midieron que
+  `MaxCharactersInPart` no acota `[Content_Types].xml` ni los `.rels` (un ZIP de 205 KB llegó a 3,36 GB), ni la
+  cantidad de cadenas compartidas, ni `workbook.xml` cargado como DOM, ni millones de `<c/>` (32 KB → 2,8 s). Guardas
+  adicionales de R-02, que el Error handling del Block 2 pide ("sin agotar memoria"):
+  - antes de abrir: EOCD presente y válido (ZIP64 aceptado si declara hasta 100 entradas y registros coherentes);
+    recorrido del ZIP contando los bytes realmente descomprimidos: hasta 100 entradas, 16 MiB por entrada y 32 MiB en
+    total. Una planilla legítima de 50.000 filas mide unos 10,5 MB en su parte más grande;
+  - lectura SAX sin `LoadCurrentElement` de `workbook.xml`, las cadenas (hasta 200.000) y la hoja (hasta 1.000.000 de
+    `<c>` y 16.384 por fila); `r` de fila entre 1 y 1.048.576;
+  - pasar un tope de tamaño o cantidad → "excede límites"; firma, EOCD o ZIP corruptos → "no es .xlsx".
+  El tope de 100 millones de caracteres por parte de D-14 sigue configurado en el SDK como segunda barrera, inerte en
+  producción por el tope de 16 MiB. Pico transitorio aceptado antes de un rechazo: unos 185 MB y 380 ms por carga; las
+  cargas se serializan en el Block 4 (WARN-D).
+  Rondas 5 y 6: recorrido de bytes del marcado en cada entrada (hasta 8 KB por etiqueta y 64 niveles de anidamiento,
+  en UTF-8, UTF-16 y UTF-32; una entrada cuyo comienzo tiene 0x00 junto a `<` o a una marca FE FF / FF FE fuera de UTF-16/UTF-32 —UCS-4 2143 y 3412— → "no es .xlsx"; los binarios de Excel que empiezan con 0x00, como `printerSettings1.bin` o imágenes EMF, no se recorren y se aceptan), hasta
+  1.048.576 `<row>` recorridas. Residuo aceptado: una hoja armada con un millón de filas vacías asigna unos 520 MB y
+  tarda unos 0,7 s antes del corte; una planilla con formato en muchas columnas vacías puede pasar los topes y recibir
+  "excede límites" (el mensaje del Block 4/5 lo explica). El supuesto de que no hay `CodePagesEncodingProvider`
+  registrado queda protegido por prueba.
+- **D-22 — usuario — 2026-11-17 — Block 2:** el Block 2 agotó los 3 intentos de corrección; el usuario autorizó un
+  4.º intento limitado a rechazar codificaciones no reconocidas, sin otra ronda de búsqueda de ataques.
+- **D-21 — agente, bajo la delegación del usuario — 2026-11-17 — Block 2:** el código numérico se convierte a texto sin escala (100.0 → "100") con una única
+  función del dominio, `PlanillaCostos.TextoDeCodigoNumerico`, que usan el lector y el dominio. La spec decía
+  `ToString(CultureInfo.InvariantCulture)`, que conservaría "100.0" y no coincidiría con el artículo "100"; prevalece
+  D-10 (comparar el código como lo ve la operadora).

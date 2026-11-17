@@ -13,6 +13,27 @@ public class PlanillaCostosTests
     private const string TextoInactivo = "inactivo";
 
     [Fact]
+    public void TextoDeCodigoNumerico_SinEscalaNiSeparadores_CulturaInvariante()
+    {
+        // D-10: la misma regla para el lector y para Evaluar, sin depender de la cultura de la PC.
+        var cultura = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
+        try
+        {
+            Assert.Equal("100", PlanillaCostos.TextoDeCodigoNumerico(100.0m));
+            Assert.Equal("1200.5", PlanillaCostos.TextoDeCodigoNumerico(1200.50m));
+            Assert.Equal("1500", PlanillaCostos.TextoDeCodigoNumerico(1.5E3m));
+            Assert.Equal("-7", PlanillaCostos.TextoDeCodigoNumerico(-7m));
+            Assert.Equal("1234567", PlanillaCostos.TextoDeCodigoNumerico(1234567m));
+            Assert.Equal("0.0000000000000000000000000001", PlanillaCostos.TextoDeCodigoNumerico(0.0000000000000000000000000001m));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = cultura;
+        }
+    }
+
+    [Fact]
     public void TieneFormatoEsperado_EncabezadosConMayusculasAcentosYEspacios_Acepta()
     {
         // AC-06 (FR-03): sin distinguir mayúsculas, acentos ni espacios al principio y al final.

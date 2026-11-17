@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Optica.Application.Acceso;
 using Optica.Application.Backup;
+using Optica.Application.Catalogo;
 using Optica.Application.Comun;
 using Optica.Application.Facturacion;
 using Optica.Application.Marca;
@@ -23,6 +24,7 @@ using Optica.Infrastructure.Facturacion;
 using Optica.Infrastructure.Marca;
 using Optica.Infrastructure.Pdf;
 using Optica.Infrastructure.Persistencia;
+using Optica.Infrastructure.Planillas;
 using Optica.Infrastructure.Seguridad;
 
 namespace Optica.Infrastructure;
@@ -60,6 +62,10 @@ public static class ConfiguracionInfraestructura
 
         // Catálogo: comparte el contexto (y la unidad de trabajo) del alcance.
         servicios.AddScoped<IArticuloRepository, ArticuloRepository>();
+
+        // Planilla de costos (FEAT-011, ADR-031): el lector .xlsx con OpenXml. Singleton: no guarda estado y no toca la
+        // base ni el disco.
+        servicios.AddSingleton<ILectorPlanillaCostos, LectorPlanillaCostosXlsx>();
 
         // Presupuestos: comparte el contexto (y la unidad de trabajo) del alcance, así el alta lee el último número y
         // graba dentro de la misma transacción (ADR-013, ADR-015).

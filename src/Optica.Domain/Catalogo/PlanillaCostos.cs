@@ -272,9 +272,17 @@ public static class PlanillaCostos
     private static string CodigoDe(CeldaPlanilla celda) => celda switch
     {
         CeldaPlanilla.Texto texto => NormalizacionCodigo.Recortar(texto.Valor),
-        CeldaPlanilla.Numero numero => numero.Valor.ToString(FormatoCodigoNumerico, CultureInfo.InvariantCulture),
+        CeldaPlanilla.Numero numero => TextoDeCodigoNumerico(numero.Valor),
         _ => string.Empty,
     };
+
+    /// <summary>
+    /// El texto de un código que llegó como número (D-10 de FEAT-011): cultura invariante, sin separador de miles y sin
+    /// los ceros de la escala (100.0 da "100" y 1200.50 da "1200.5"), con hasta los 28 decimales de decimal. Es la misma
+    /// regla para el lector de la planilla y para <see cref="Evaluar"/>.
+    /// </summary>
+    public static string TextoDeCodigoNumerico(decimal valor) =>
+        valor.ToString(FormatoCodigoNumerico, CultureInfo.InvariantCulture);
 
     private static bool EsEncabezado(CeldaPlanilla celda, string esperadoPlegado) =>
         celda is CeldaPlanilla.Texto texto
