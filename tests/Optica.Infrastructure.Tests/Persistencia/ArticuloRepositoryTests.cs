@@ -900,6 +900,164 @@ public class ArticuloRepositoryTests(ITestOutputHelper salida)
         Assert.Equal(["0", "1"], estadosGrabados[codigos[2]][1..]);
     }
 
+    // ---- RegistrarCostoActualizado (Block 3 de FEAT-011), espejo de RegistrarPrecioRecalculado ----
+
+    private static ConfiguracionNegocio ConfiguracionInicial() =>
+        new(21m, CondicionFiscal.ResponsableInscripto, 0.01m, null, puntoVenta: null);
+
+    [Fact]
+    public void RegistrarCostoActualizado_SinCodigoOVersionMaxima_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ArticuloRepository(contexto);
+
+        var sinCodigo = Assert.Throws<ArgumentException>(
+            () => repositorio.RegistrarCostoActualizado(Articulo.Nuevo("QZ-777", "Lente distintivo", 1m, 0m, 1m)));
+        Assert.Equal("articulo", sinCodigo.ParamName);
+        Assert.DoesNotContain("QZ-777", sinCodigo.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lente distintivo", sinCodigo.Message, StringComparison.Ordinal);
+        Assert.Throws<ArgumentNullException>(() => repositorio.RegistrarCostoActualizado(null!));
+
+        // La versión se incrementa con checked: la última posible no se desborda a negativa.
+        Assert.Throws<OverflowException>(() => repositorio.RegistrarCostoActualizado(
+            new Articulo(1, "ABC-1", "Armazón", 1m, 0m, 1m, activo: true, version: long.MaxValue)));
+        Assert.False(contexto.ChangeTracker.HasChanges());
+        Assert.True(contexto.ChangeTracker.AutoDetectChangesEnabled);
+    }
+
+    /// <summary>
+    /// AC-12 sobre SQLite real: el inactivo de costo 1.210 y margen 50 pasa a costo 2.420,00 y venta 3.630,00, sigue
+    /// inactivo y su versión sube; el resto de la fila no cambia (FR-11, D-12).
+    /// </summary>
+    [Fact]
+    public async Task RegistrarCostoActualizado_ArticuloInactivo_SigueInactivo()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = (await Grabar(baseTemporal, ("ABC-1", "Armazón metálico")))[0];
+        var baja = baseTemporal.CrearContexto();
+        new ArticuloRepository(baja).CambiarEstado(codigo, activo: false);
+        await new UnidadDeTrabajoEf(baja).ConfirmarAsync();
+        var datos = Filas(cadena, SelectFila);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ArticuloRepository(contexto);
+
+        var leido = Assert.Single(await repositorio.ListarParaRecalculoAsync());
+        var nuevo = leido.ConCostoNuevo(2420m, ConfiguracionInicial());
+        Assert.True(nuevo.EsAplicado);
+        Assert.True(nuevo.Cambia);
+        repositorio.RegistrarCostoActualizado(nuevo.Articulo);
+        Assert.Equal(["PrecioCosto", "PrecioVenta", "Version"], Modificadas(contexto));
+        Assert.Equal(datos, Filas(cadena, SelectFila));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        Assert.Equal([.. datos[0][..4], "242000", datos[0][5], "363000"], Assert.Single(Filas(cadena, SelectFila)));
+        Assert.Equal(["0", "2"], Assert.Single(Filas(cadena, SelectEstado))[1..]);
+    }
+
+    [Fact]
+    public async Task RegistrarCostoActualizado_VersionVieja_ConflictoAlConfirmar()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigo = (await Grabar(baseTemporal, ("ABC-1", "Armazón metálico")))[0];
+        var datos = Filas(cadena, SelectFila);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ArticuloRepository(contexto);
+
+        // Aunque el artículo recibido traiga otros datos, solo se escriben el costo, la venta y la versión.
+        repositorio.RegistrarCostoActualizado(
+            new Articulo(codigo, "ZZZ-9", "Otra descripción", 2420m, 10m, 3630m, activo: true, version: 0));
+        Assert.Equal(["PrecioCosto", "PrecioVenta", "Version"], Modificadas(contexto));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        Assert.Equal([.. datos[0][..4], "242000", datos[0][5], "363000"], Assert.Single(Filas(cadena, SelectFila)));
+        Assert.Equal(["1", "1"], Assert.Single(Filas(cadena, SelectEstado))[1..]);
+
+        // Los tokens son la versión y el estado leídos: con una versión vieja, o con el estado que ya no es, no se escribe.
+        var versionVieja = baseTemporal.CrearContexto();
+        new ArticuloRepository(versionVieja).RegistrarCostoActualizado(
+            new Articulo(codigo, "ABC-1", "Armazón metálico", 1000m, 50m, 1500m, activo: true, version: 0));
+        var porVersion = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(versionVieja).ConfirmarAsync());
+        var estadoViejo = baseTemporal.CrearContexto();
+        new ArticuloRepository(estadoViejo).RegistrarCostoActualizado(
+            new Articulo(codigo, "ABC-1", "Armazón metálico", 1000m, 50m, 1500m, activo: false, version: 1));
+        var porEstado = await Assert.ThrowsAsync<ConflictoAlConfirmarException>(
+            () => new UnidadDeTrabajoEf(estadoViejo).ConfirmarAsync());
+
+        Assert.Equal(MotivoConflicto.Concurrencia, porVersion.Motivo);
+        Assert.Equal(MotivoConflicto.Concurrencia, porEstado.Motivo);
+        Assert.Null(porVersion.InnerException);
+        Assert.Equal([.. datos[0][..4], "242000", datos[0][5], "363000"], Assert.Single(Filas(cadena, SelectFila)));
+        Assert.Equal(["1", "1"], Assert.Single(Filas(cadena, SelectEstado))[1..]);
+    }
+
+    /// <summary>
+    /// Guarda propia: sobre una entrada seguida con otros cambios (una baja sin confirmar, o una descripción cambiada que
+    /// el contexto no detectó todavía) no se registra el costo, porque el <c>UPDATE</c> escribiría más que el costo, la
+    /// venta y la versión. Es un error de programación y se rechaza sin valores, dejando la detección automática como
+    /// estaba.
+    /// </summary>
+    [Fact]
+    public async Task RegistrarCostoActualizado_EntradaConOtrosCambios_Rechazado()
+    {
+        using var baseTemporal = new BaseTemporal();
+        var cadena = CadenaDe(baseTemporal);
+        var codigos = await Grabar(baseTemporal, ("ABC-1", "Armazón metálico"), ("ABC-2", "Estuche"));
+        var datos = Filas(cadena, SelectFila);
+        var contexto = baseTemporal.CrearContexto();
+        var repositorio = new ArticuloRepository(contexto);
+
+        repositorio.CambiarEstado(codigos[0], activo: false);
+        var error = Assert.Throws<InvalidOperationException>(() => repositorio.RegistrarCostoActualizado(
+            new Articulo(codigos[0], "QZ-777", "Lente distintivo", 2420m, 50m, 3630m, activo: true, version: 0)));
+        Assert.True(contexto.ChangeTracker.AutoDetectChangesEnabled);
+
+        Assert.DoesNotContain("QZ-777", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lente distintivo", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("2420", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("3630", error.Message, StringComparison.Ordinal);
+        Assert.Equal(["Activo", "Version"], Modificadas(contexto));
+
+        var ajena = contexto.Articulos.Find(codigos[1])!;
+        ajena.Descripcion = "Otra descripción";
+        Assert.Throws<InvalidOperationException>(() => repositorio.RegistrarCostoActualizado(
+            new Articulo(codigos[1], "ABC-2", "Estuche", 2420m, 50m, 3630m, activo: true, version: 0)));
+        Assert.True(contexto.ChangeTracker.AutoDetectChangesEnabled);
+        Assert.Equal(datos, Filas(cadena, SelectFila));
+
+        // Confirmados esos cambios, las entradas quedan sin cambios y el costo se registra sobre ellas.
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+        repositorio.RegistrarCostoActualizado(
+            new Articulo(codigos[0], "ABC-1", "Armazón metálico", 2420m, 50m, 3630m, activo: false, version: 1));
+        Assert.Equal(["PrecioCosto", "PrecioVenta", "Version"], Modificadas(contexto));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        var filas = Filas(cadena, SelectFila);
+        Assert.Equal(["242000", "363000"], new[] { filas[0][4], filas[0][6] });
+        Assert.Equal("Otra descripción", filas[1][3]);
+        Assert.Equal(["0", "2"], Filas(cadena, SelectEstado)[0][1..]);
+
+        // Una entrada ya modificada solo en el costo, la venta o la versión sí se admite: un precio recalculado y dos
+        // costos registrados sin confirmar sobre el mismo artículo. Al confirmar quedan los últimos valores.
+        var version = long.Parse(Filas(cadena, SelectEstado)[1][2], CultureInfo.InvariantCulture);
+        repositorio.RegistrarPrecioRecalculado(
+            new Articulo(codigos[1], "ABC-2", "Otra descripción", 1210m, 50m, 1850m, activo: true, version: version));
+        repositorio.RegistrarCostoActualizado(
+            new Articulo(codigos[1], "ABC-2", "Otra descripción", 2000m, 50m, 3000m, activo: true, version: version));
+        Assert.Equal(["PrecioCosto", "PrecioVenta", "Version"], Modificadas(contexto));
+        repositorio.RegistrarCostoActualizado(
+            new Articulo(codigos[1], "ABC-2", "Otra descripción", 2100m, 50m, 3150m, activo: true, version: version));
+        Assert.Equal(["PrecioCosto", "PrecioVenta", "Version"], Modificadas(contexto));
+        await new UnidadDeTrabajoEf(contexto).ConfirmarAsync();
+
+        var segunda = Filas(cadena, SelectFila)[1];
+        Assert.Equal(["210000", "315000"], new[] { segunda[4], segunda[6] });
+        Assert.Equal(
+            (version + 1).ToString(CultureInfo.InvariantCulture), Filas(cadena, SelectEstado)[1][2]);
+    }
+
     [Theory]
     [InlineData(0, 50, "pagina")]
     [InlineData(-1, 50, "pagina")]

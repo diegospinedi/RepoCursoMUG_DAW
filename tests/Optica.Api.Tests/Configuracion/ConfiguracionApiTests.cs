@@ -627,6 +627,51 @@ public sealed class ConfiguracionApiTests
         Assert.Null(configuracion["Logging:EventLog:LogLevel:Default"]);
     }
 
+    /// <summary>
+    /// D-16 y R-07 de FEAT-011: cada carga de planilla de costos confirmada (Information, categoría
+    /// <see cref="ActualizarCostosPorPlanilla.CategoriaRegistro"/>) llega también al Registro de eventos de Windows; las
+    /// demás categorías de Catálogo siguen en Warning. Misma técnica que
+    /// <see cref="Appsettings_GrabacionDeConfiguracion_VaAlRegistroDeEventos"/>.
+    /// </summary>
+    [Fact]
+    public void EventLog_IncluyeCategoriaPlanilla()
+    {
+        Assert.Equal("Optica.Application.Catalogo.Planilla", ActualizarCostosPorPlanilla.CategoriaRegistro);
+
+        var archivo = Path.Combine(Repositorio.Raiz(), "src", "Optica.Api", "appsettings.json");
+        var configuracion = new ConfigurationBuilder().AddJsonFile(archivo, optional: false).Build();
+        var registroDeEventos = new RegistroDeEventosSimulado();
+        using (var servicios = new ServiceCollection()
+            .AddLogging(log =>
+            {
+                // Como HostingHostBuilderExtensions en Windows: EventLog en Warning, luego la configuración.
+                log.AddFilter<RegistroDeEventosSimulado>(nivel => nivel >= LogLevel.Warning);
+                log.AddConfiguration(configuracion.GetSection("Logging"));
+                log.AddProvider(registroDeEventos);
+            })
+            .BuildServiceProvider())
+        {
+            var fabricaRegistros = servicios.GetRequiredService<ILoggerFactory>();
+            var planilla = fabricaRegistros.CreateLogger(ActualizarCostosPorPlanilla.CategoriaRegistro);
+            planilla.LogInformation("planilla-cargada");
+            planilla.LogDebug("planilla-debug");
+            var otraDeCatalogo = fabricaRegistros.CreateLogger("Optica.Application.Catalogo.Otra");
+            otraDeCatalogo.LogInformation("catalogo-information");
+            otraDeCatalogo.LogWarning("catalogo-warning");
+        }
+
+        Assert.Contains("planilla-cargada", registroDeEventos.Mensajes);
+        Assert.DoesNotContain("planilla-debug", registroDeEventos.Mensajes);
+        Assert.DoesNotContain("catalogo-information", registroDeEventos.Mensajes);
+        Assert.Contains("catalogo-warning", registroDeEventos.Mensajes);
+        Assert.Equal("Information", configuracion["Logging:EventLog:LogLevel:Optica.Application.Catalogo.Planilla"]);
+        // Las claves hermanas siguen igual.
+        Assert.Equal("Information", configuracion["Logging:EventLog:LogLevel:Optica.Application.Configuracion"]);
+        Assert.Equal("Information", configuracion["Logging:EventLog:LogLevel:Optica.Application.Backup"]);
+        Assert.Null(configuracion["Logging:EventLog:LogLevel:Optica.Application.Catalogo"]);
+        Assert.Null(configuracion["Logging:EventLog:LogLevel:Default"]);
+    }
+
     private static string Cuerpo(decimal? alicuotaIva, string? condicionFiscal, decimal? multiploRedondeo, decimal? topeIdentificacion) =>
         JsonSerializer.Serialize(new { alicuotaIva, condicionFiscal, multiploRedondeo, topeIdentificacion });
 

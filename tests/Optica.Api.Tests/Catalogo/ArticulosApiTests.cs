@@ -1124,6 +1124,8 @@ public sealed class ArticulosApiTests
             throw Falla();
 
         public void RegistrarPrecioRecalculado(Articulo articulo) => throw Falla();
+
+        public void RegistrarCostoActualizado(Articulo articulo) => throw Falla();
     }
 
     private static string Cuerpo(string? codigoProveedor, string? descripcion, decimal? precioCosto, decimal? margenUtilidad) =>

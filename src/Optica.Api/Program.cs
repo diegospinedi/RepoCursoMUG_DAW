@@ -199,6 +199,9 @@ public partial class Program
         builder.Services.AddScoped<BuscarArticulos>();
         builder.Services.AddScoped<ModificarArticulo>();
         builder.Services.AddScoped<CambiarEstadoArticulo>();
+        // FEAT-011: la actualización de costos por planilla .xlsx, en su transacción de escritura (D-15); el lector es el
+        // singleton de Infrastructure (ADR-031).
+        builder.Services.AddScoped<ActualizarCostosPorPlanilla>();
 
         // Presupuestos (FEAT-003a), con sesión: llevan datos personales del cliente (D-17). El alta lee los artículos, el
         // último número y la fecha local del día dentro de su transacción de escritura (ADR-013, D-06, D-07).
