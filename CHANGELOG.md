@@ -125,6 +125,12 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
     - los diálogos se muestran como tarjeta.
   - Contraste accesible (WCAG AA) probado con la marca de ejemplo y la real, movimiento reducido respetado y sin dependencias nuevas.
   - Pruebas de punta a punta del menú y de las 15 pantallas a 360 y 1280 px en Chrome y Edge. Pendiente manual: probar la versión anterior de los navegadores.
+- [FEAT-013] Búsqueda con sugerencias mientras se escribe:
+  - Artículos, el buscador del presupuesto, Buscar presupuestos y Buscar facturas buscan solos mientras se escribe: tras una pausa de 300 ms y con 2 caracteres o más, la tabla se filtra y aparecen hasta 8 sugerencias. Elegir una abre el artículo, el presupuesto o la factura, o agrega la línea al presupuesto. "Buscar" y Enter siguen funcionando como antes.
+  - Las sugerencias se recorren con el teclado (flechas, Enter, Escape y Tab) y el lector de pantalla anuncia cuántas hay (ARIA 1.2). Las de presupuestos y facturas no muestran el DNI.
+  - Cada búsqueda cancela la anterior y una respuesta vieja nunca pisa a la nueva. Si la búsqueda falla, se ocultan las sugerencias y se ve el mensaje de siempre. Con 1 carácter, un texto inválido, un campo vacío o un rango de fechas inválido no hay sugerencias.
+  - En Configuración, la alícuota de IVA y la condición fiscal pasan de lista desplegable a campo con filtro: escribir "10" deja solo 10,5, y un texto que no está en la lista no se graba ("Elegí una alícuota de la lista." o "Elegí una condición fiscal de la lista.").
+  - Sin dependencias nuevas ni cambios en la Api ni en la base. Probado con 10.000 artículos: la búsqueda responde en unos 50 ms en el percentil 95. Pruebas de punta a punta en Chrome y Edge.
 
 ### Fixed
 - [FEAT-002b] Las pruebas de punta a punta en Edge ya no fallan de forma intermitente en "Cargando…": Edge iniciaba sesión solo con la cuenta del equipo y dejaba de responder mientras consultaba servicios de Microsoft.
