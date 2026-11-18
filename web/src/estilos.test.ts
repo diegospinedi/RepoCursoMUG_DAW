@@ -92,4 +92,34 @@ describe('estilos.css', () => {
 
     expect(conTransicion.filter((selector) => !sinTransicion.has(selector))).toEqual([]);
   });
+
+  it('estilos_Sugerencias_ListaMarcadaYAnuncioOculto', () => {
+    // FEAT-013 (Block 1): la lista de sugerencias, la opción marcada con el teclado y el anuncio que solo oye el lector
+    // de pantalla (fuera de la vista, pero no con display: none, que lo silenciaría).
+    const definidas = reglas(partes().fuera);
+    const cuerpo = (selector: string) =>
+      definidas
+        .filter((regla) => regla.selectores.includes(selector))
+        .map((regla) => regla.cuerpo)
+        .join(';');
+
+    expect(cuerpo('.campo-busqueda')).toMatch(/position:\s*relative/);
+    expect(cuerpo('.sugerencias')).toMatch(/position:\s*absolute/);
+    expect(cuerpo('.sugerencia')).toMatch(/cursor:\s*pointer/);
+    expect(cuerpo(".sugerencia[aria-selected='true']")).toMatch(/background-color:/);
+    const anuncio = cuerpo('.campo-busqueda__anuncio');
+    expect(anuncio).toMatch(/position:\s*absolute/);
+    expect(anuncio).toMatch(/clip-path:\s*inset\(50%\)/);
+    expect(anuncio).not.toMatch(/display:\s*none/);
+
+    // Con colores forzados (alto contraste de Windows) el fondo de la marca desaparece: la opción marcada usa los
+    // colores del sistema para la selección.
+    const forzados = reglas(partes().medias.get('(forced-colors: active)') ?? '')
+      .filter((regla) => regla.selectores.includes(".sugerencia[aria-selected='true']"))
+      .map((regla) => regla.cuerpo)
+      .join(';');
+    expect(forzados).toMatch(/forced-color-adjust:\s*none/);
+    expect(forzados).toMatch(/background:\s*Highlight\s*;/);
+    expect(forzados).toMatch(/color:\s*HighlightText/);
+  });
 });

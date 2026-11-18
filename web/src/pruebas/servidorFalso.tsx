@@ -37,6 +37,33 @@ export const problemaGeneral = (estado: number, detalle: string): Respuesta => (
 /** Simula una falla de red de `fetch`. */
 export const sinRed: Respuesta = () => Promise.reject(new TypeError('Failed to fetch'));
 
+/** El error con el que `fetch` rechaza un pedido cancelado con su señal. */
+const abortado = () => new DOMException('The operation was aborted.', 'AbortError');
+
+/**
+ * Como el `fetch` del navegador (D-18 de FEAT-013): con la señal ya cancelada rechaza enseguida con `AbortError`, y si
+ * se cancela mientras la respuesta no llegó, rechaza en ese momento. El pedido queda registrado igual.
+ */
+function conSenal(respuesta: Promise<Response>, senal: AbortSignal): Promise<Response> {
+  if (senal.aborted) {
+    return Promise.reject(abortado());
+  }
+  return new Promise<Response>((resolver, rechazar) => {
+    const alCancelar = () => rechazar(abortado());
+    senal.addEventListener('abort', alCancelar, { once: true });
+    respuesta.then(
+      (valor) => {
+        senal.removeEventListener('abort', alCancelar);
+        resolver(valor);
+      },
+      (error: unknown) => {
+        senal.removeEventListener('abort', alCancelar);
+        rechazar(error);
+      },
+    );
+  });
+}
+
 export const MARCA_EJEMPLO = { primario: '#5A5A5A', fondo: '#F5F5F5', esEjemplo: true };
 
 /**
@@ -59,7 +86,8 @@ export function servidorFalso(rutas: Record<string, Respuesta | Respuesta[]>) {
       return new Response(null, { status: 404 });
     }
     const respuesta = lista.length > 1 ? lista.shift()! : lista[0]!;
-    return respuesta();
+    // Sin señal, la respuesta tal cual: los pedidos de siempre conservan el mismo orden de llegada.
+    return init?.signal ? conSenal(Promise.resolve(respuesta()), init.signal) : respuesta();
   });
   vi.stubGlobal('fetch', fetchFalso);
 

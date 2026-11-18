@@ -1,5 +1,6 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -43,21 +44,6 @@ const ARTICULO = {
 
 const RUTA = '/articulos/7';
 const API = '/api/articulos/7';
-
-/** Una respuesta que llega cuando la prueba la libera: para ordenar a mano respuestas que se cruzan. */
-function diferida(cuerpo: unknown) {
-  let liberar: () => void = () => {};
-  const llegada = new Promise<void>((resolver) => {
-    liberar = resolver;
-  });
-  return {
-    respuesta: async () => {
-      await llegada;
-      return json(200, cuerpo)();
-    },
-    liberar: () => act(async () => liberar()),
-  };
-}
 
 const conflicto = (motivo: string) =>
   json(409, { status: 409, title: 'No se pudo grabar el artículo.', detail: 'texto del servidor', motivo });

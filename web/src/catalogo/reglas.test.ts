@@ -19,6 +19,7 @@ import {
   MENSAJE_DESCRIPCION_LARGA,
   MENSAJE_MARGEN_FALTANTE,
   MENSAJE_MARGEN_FUERA_DE_RANGO,
+  plegar,
   recortar,
   validarArticulo,
   type TextosArticulo,
@@ -261,5 +262,33 @@ describe('reglas de la búsqueda', () => {
     ['UTF-16 inválido', `a${SURROGATE_ALTO}`, { error: MENSAJE_CARACTERES_INVALIDOS }],
   ])('reglas_ValidarBusqueda_%s', (_caso, escrito, esperado) => {
     expect(validarBusqueda(escrito)).toEqual(esperado);
+  });
+});
+
+describe('plegar (D-14 de FEAT-013)', () => {
+  it('plegar_AcentosMayusculasYEnie', () => {
+    // La misma regla que PlegadoBusqueda.Plegar del servidor: recorta, quita las marcas salvo la virgulilla de la ñ,
+    // vuelve a componer y pasa a minúsculas.
+    expect(plegar('  Armazón ')).toBe('armazon');
+    expect(plegar('ÁRBOL Ünico Crème Brûlée')).toBe('arbol unico creme brulee');
+    expect(plegar('Año')).toBe('año');
+    expect(plegar('AÑO')).toBe('año');
+    // La ñ descompuesta (n + virgulilla) también se conserva; la virgulilla de otra letra se quita.
+    expect(plegar(`an${c(0x0303)}o`)).toBe('año');
+    expect(plegar(`Sa${c(0x0303)}o`)).toBe('sao');
+    expect(plegar('São')).toBe('sao');
+    // Un texto hecho solo de marcas queda vacío.
+    expect(plegar(` ${c(0x0301, 0x0308)} `)).toBe('');
+    expect(plegar(`${NBSP}10,5${TAB}`)).toBe('10,5');
+    // Minúsculas invariantes, como ToLowerInvariant de .NET: la sigma mayúscula da siempre σ, también al final; una ς
+    // escrita así queda como está.
+    expect(plegar('ΟΔΟΣ')).toBe('οδοσ');
+    expect(plegar('ΣΟΦΙΑ οδος')).toBe('σοφια οδος');
+    expect(plegar(`ΟΔΟΣ${SURROGATE_ALTO}`)).toBe(`οδοσ${SURROGATE_ALTO}`);
+    // UTF-16 inválido: recortado y en minúsculas, sin normalizar, y nunca lanza.
+    expect(plegar(` Á${SURROGATE_ALTO} `)).toBe(`á${SURROGATE_ALTO}`);
+    // Un valor que no es texto se trata como vacío.
+    expect(plegar(undefined as unknown as string)).toBe('');
+    expect(plegar(10 as unknown as string)).toBe('');
   });
 });

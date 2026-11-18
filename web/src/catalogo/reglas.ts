@@ -95,6 +95,44 @@ export function validarBusqueda(escrito: string): { texto: string } | { error: s
   return texto.length > LARGO_MAXIMO_BUSQUEDA ? { error: MENSAJE_BUSQUEDA_LARGA } : { texto };
 }
 
+// Con escapes y no con el carácter: una normalización del archivo no los cambia.
+const VIRGULILLA = '\u{0303}';
+const MARCA = /\p{Mn}/u;
+const SIGMA_MAYUSCULA = /\u{03A3}/gu;
+const SIGMA = '\u{03C3}';
+
+/**
+ * Minúsculas como `ToLowerInvariant()` de .NET: la sigma mayúscula (U+03A3) siempre da la sigma U+03C3.
+ * `toLowerCase()` aplica la regla de la sigma final (U+03C2 al final de una palabra) y la clave no saldría igual en los
+ * dos lados.
+ */
+const minusculas = (texto: string) => texto.replace(SIGMA_MAYUSCULA, SIGMA).toLowerCase();
+
+/**
+ * El texto plegado para comparar sin mayúsculas ni acentos (D-14 de FEAT-013), con la misma regla que
+ * `PlegadoBusqueda.Plegar` del servidor: recortado como {@link recortar}, en NFD, sin ninguna marca salvo la virgulilla
+ * que sigue a una "n" o "N", en NFC, en minúsculas invariantes y recortado otra vez. "Armazón" da "armazon" y "Año", "año". Con
+ * UTF-16 inválido devuelve el texto recortado en minúsculas, sin normalizar. Un valor que no es texto se trata como
+ * vacío. Nunca lanza.
+ */
+export function plegar(texto: string): string {
+  if (typeof texto !== 'string') {
+    return '';
+  }
+  const recortado = recortar(texto);
+  if (!esUtf16Valido(recortado)) {
+    return minusculas(recortado);
+  }
+  let sinMarcas = '';
+  for (const caracter of recortado.normalize('NFD')) {
+    const esEnie = caracter === VIRGULILLA && /[nN]$/.test(sinMarcas);
+    if (!MARCA.test(caracter) || esEnie) {
+      sinMarcas += caracter;
+    }
+  }
+  return recortar(minusculas(sinMarcas.normalize('NFC')));
+}
+
 /** Lo que hay escrito en el formulario. */
 export interface TextosArticulo {
   codigoProveedor: string;

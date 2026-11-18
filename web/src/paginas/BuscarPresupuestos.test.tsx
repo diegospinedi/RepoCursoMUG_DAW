@@ -1,5 +1,6 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -123,21 +124,6 @@ function mensajes(): string[] {
   return within(pantalla)
     .queryAllByRole('alert')
     .map((elemento) => elemento.textContent ?? '');
-}
-
-/** Una respuesta que llega cuando la prueba la libera. */
-function diferida(cuerpo: unknown) {
-  let liberar: () => void = () => {};
-  const llegada = new Promise<void>((resolver) => {
-    liberar = resolver;
-  });
-  return {
-    respuesta: async () => {
-      await llegada;
-      return json(200, cuerpo)();
-    },
-    liberar: () => act(async () => liberar()),
-  };
 }
 
 describe('BuscarPresupuestos', () => {

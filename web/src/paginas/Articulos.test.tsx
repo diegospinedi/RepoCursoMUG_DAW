@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -52,21 +53,6 @@ const pagina = (articulos: unknown[], numero = 1, total = articulos.length) => (
 const conSesion = { 'GET /api/sesion': vacia(204) };
 
 const DESACTIVAR_7 = 'Desactivar 7 Armazón metálico';
-
-/** Una respuesta que llega cuando la prueba la libera: para ordenar a mano respuestas que se cruzan. */
-function diferida(cuerpo: unknown) {
-  let liberar: () => void = () => {};
-  const llegada = new Promise<void>((resolver) => {
-    liberar = resolver;
-  });
-  return {
-    respuesta: async () => {
-      await llegada;
-      return json(200, cuerpo)();
-    },
-    liberar: () => act(async () => liberar()),
-  };
-}
 
 async function abrir() {
   renderizarApp(RUTA);

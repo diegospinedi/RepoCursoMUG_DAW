@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IMPORTE_MAXIMO_SEGURO } from '../configuracion/reglas';
+import { diferida } from '../pruebas/diferida';
 import { json, problema, problemaGeneral, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 import {
   alPerderLaSesion,
@@ -1204,6 +1205,72 @@ describe('cliente de la Api: listado, modificación y cambio de estado de artíc
       '/api/articulos?texto=armazon&pagina=2&soloActivos=true',
       '/api/articulos?pagina=1&soloActivos=true',
     ]);
+  });
+});
+
+describe('cliente de la Api: búsquedas cancelables (FEAT-013, D-05)', () => {
+  const PAGINA_ARTICULOS = { articulos: [], pagina: 1, tamanoPagina: 50, total: 0 };
+  const PAGINA_PRESUPUESTOS = { presupuestos: [], pagina: 1, tamanoPagina: 50, total: 0 };
+  const PAGINA_FACTURAS = { facturas: [], pagina: 1, tamanoPagina: 50, total: 0 };
+  const SIN_FILTROS_PRESUPUESTOS = { apellido: '', nombre: '', dni: '', desde: '', hasta: '' };
+  const SIN_FILTROS_FACTURAS = { ...SIN_FILTROS_PRESUPUESTOS, numero: '' };
+
+  it('cliente_BusquedaCancelada_DevuelveCanceladoNoError', async () => {
+    const articulos = diferida(PAGINA_ARTICULOS);
+    const presupuestos = diferida(PAGINA_PRESUPUESTOS);
+    const facturas = diferida(PAGINA_FACTURAS);
+    const servidor = servidorFalso({
+      'GET /api/articulos?texto=arm&pagina=1': articulos.respuesta,
+      'POST /api/presupuestos/busqueda': presupuestos.respuesta,
+      'POST /api/facturacion/busqueda': facturas.respuesta,
+    });
+    const sesion = vi.fn();
+    alPerderLaSesion(sesion);
+
+    // Cancelado con el pedido en curso: el resultado es `cancelado`, nunca la falla de red ni otro error.
+    const control = new AbortController();
+    const enCurso = [
+      buscarArticulos('arm', 1, false, control.signal),
+      buscarPresupuestos(SIN_FILTROS_PRESUPUESTOS, 1, control.signal),
+      buscarFacturas(SIN_FILTROS_FACTURAS, 1, control.signal),
+    ];
+    control.abort();
+    // Las respuestas llegan igual después de cancelar: no cambian el resultado.
+    await articulos.liberar();
+    await presupuestos.liberar();
+    await facturas.liberar();
+    expect(await Promise.all(enCurso)).toEqual([{ tipo: 'cancelado' }, { tipo: 'cancelado' }, { tipo: 'cancelado' }]);
+
+    // La señal llegó al fetch de cada búsqueda.
+    expect(servidor.llamadas.map((l) => l.init?.signal)).toEqual([control.signal, control.signal, control.signal]);
+
+    // Con la señal ya cancelada, tampoco es un error.
+    expect(await buscarArticulos('arm', 1, false, control.signal)).toEqual({ tipo: 'cancelado' });
+    expect(sesion).not.toHaveBeenCalled();
+  });
+
+  it('cliente_BusquedaConSenal_SinCancelar_ResultadoDeSiempre', async () => {
+    // Una señal que nadie cancela no cambia nada: la página, y una falla de red sigue siendo la falla de red.
+    const servidor = servidorFalso({
+      'GET /api/articulos?texto=arm&pagina=1': json(200, PAGINA_ARTICULOS),
+      'POST /api/presupuestos/busqueda': json(200, PAGINA_PRESUPUESTOS),
+      'POST /api/facturacion/busqueda': sinRed,
+    });
+    const senal = new AbortController().signal;
+    // Sin señal, el pedido de siempre: el fetch no recibe ninguna.
+    expect(await buscarArticulos('arm', 1)).toEqual({ tipo: 'ok', datos: PAGINA_ARTICULOS });
+    expect(servidor.llamadas[0]?.init?.signal).toBeUndefined();
+
+    expect(await buscarArticulos('arm', 1, false, senal)).toEqual({ tipo: 'ok', datos: PAGINA_ARTICULOS });
+    expect(await buscarPresupuestos(SIN_FILTROS_PRESUPUESTOS, 1, senal)).toEqual({
+      tipo: 'ok',
+      datos: PAGINA_PRESUPUESTOS,
+    });
+    expect(await buscarFacturas(SIN_FILTROS_FACTURAS, 1, senal)).toEqual({
+      tipo: 'general',
+      mensaje: MENSAJE_SIN_CONEXION,
+    });
+    expect(servidor.llamadas.slice(1).map((l) => l.init?.signal)).toEqual([senal, senal, senal]);
   });
 });
 
