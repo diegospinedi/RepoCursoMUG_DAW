@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
   CAMPO_ALICUOTA,
@@ -12,6 +12,7 @@ import {
   type CondicionFiscal,
   type ConfiguracionNegocio,
 } from '../api/cliente';
+import { plegar } from '../catalogo/reglas';
 import { mostrarDecimal, mostrarEntero } from '../configuracion/numeros';
 import {
   MENSAJE_ALICUOTA_NO_ADMITIDA,
@@ -21,6 +22,7 @@ import {
   type TextosConfiguracion,
 } from '../configuracion/reglas';
 import { Campo } from '../componentes/Campo';
+import { CampoConOpciones, type Opcion } from '../componentes/CampoConOpciones';
 import { repartirErrores } from '../componentes/repartirErrores';
 import { SeccionBackup } from './SeccionBackup';
 import { SeccionDatosEmisor } from './SeccionDatosEmisor';
@@ -29,8 +31,9 @@ export const MENSAJE_FALTA_TOPE = 'Falta cargar el tope de identificación del r
 /** D-06 de FEAT-007: la alícuota guardada antes de FR-26 no es una de la lista. */
 export const MENSAJE_ALICUOTA_FUERA_DE_LISTA =
   'La alícuota de IVA guardada ya no es válida. Elegí una de la lista y grabá.';
-/** La opción que se ve mientras no hay una alícuota elegida (D-06). */
-const SIN_ALICUOTA = 'Elegí una alícuota';
+/** FR-14 de FEAT-013: lo escrito en la alícuota o en la condición no es ninguna opción de la lista. */
+export const MENSAJE_ALICUOTA_DE_LA_LISTA = 'Elegí una alícuota de la lista.';
+export const MENSAJE_CONDICION_DE_LA_LISTA = 'Elegí una condición fiscal de la lista.';
 export const MENSAJE_GRABADA = 'La configuración se grabó.';
 
 /**
@@ -51,6 +54,25 @@ const ETIQUETAS_CONDICION: Record<CondicionFiscal, string> = {
   responsable_inscripto: 'Responsable Inscripto',
   monotributo: 'Monotributo',
 };
+
+/** Las 2 condiciones fiscales como opciones (D-13 de FEAT-013): se ve la etiqueta y se graba el código. */
+const OPCIONES_CONDICION: readonly Opcion[] = CONDICIONES_FISCALES.map((condicion) => ({
+  valor: condicion,
+  etiqueta: ETIQUETAS_CONDICION[condicion],
+}));
+
+/** Las alícuotas de la Api como opciones (D-13): se ve con coma ("10,5") y se graba el número ("10.5"). */
+const opcionesDeAlicuota = (alicuotas: readonly number[]): readonly Opcion[] =>
+  alicuotas.map((alicuota) => ({ valor: String(alicuota), etiqueta: mostrarDecimal(alicuota) }));
+
+/**
+ * La opción cuyo texto es igual al escrito, comparado con {@link plegar} (sin mayúsculas, acentos ni espacios de más):
+ * escribirlo entero vale como elegirlo de la lista (D-13). Sin ninguna, `undefined` (FR-14).
+ */
+function opcionExacta(texto: string, opciones: readonly Opcion[]): Opcion | undefined {
+  const buscado = plegar(texto);
+  return opciones.find((opcion) => plegar(opcion.etiqueta) === buscado);
+}
 
 /** Largo máximo de cada número escrito: alcanza para cualquier importe válido y limita el cuerpo enviado. */
 const LARGO_MAXIMO = 32;
@@ -78,11 +100,14 @@ const MENSAJES_FIJOS: Partial<Record<keyof TextosConfiguracion, string>> = {
 const alicuotaEnLaLista = (configuracion: ConfiguracionNegocio) =>
   configuracion.alicuotasAdmitidas.includes(configuracion.alicuotaIva);
 
-/** Los textos del formulario; una alícuota guardada fuera de la lista queda sin elegir (D-06). */
+/**
+ * Los textos del formulario: la alícuota y la condición con la etiqueta que se ve (D-13 de FEAT-013); una alícuota
+ * guardada fuera de la lista queda vacía (D-06 de FEAT-007).
+ */
 function textosDe(configuracion: ConfiguracionNegocio): TextosConfiguracion {
   return {
     alicuotaIva: alicuotaEnLaLista(configuracion) ? mostrarDecimal(configuracion.alicuotaIva) : '',
-    condicionFiscal: configuracion.condicionFiscal,
+    condicionFiscal: ETIQUETAS_CONDICION[configuracion.condicionFiscal],
     multiploRedondeo: mostrarDecimal(configuracion.multiploRedondeo),
     topeIdentificacion: mostrarDecimal(configuracion.topeIdentificacion),
     puntoVenta: configuracion.puntoVenta === null ? '' : String(configuracion.puntoVenta),
@@ -128,6 +153,10 @@ function CampoNumero({ etiqueta, nombre, valor, error, alCambiar, modo = 'decima
  * FEAT-007: la alícuota se elige de la lista que devuelve la Api (FR-26, AC-28); si la guardada no está en ella, no
  * queda ninguna elegida, un aviso pide elegir una y no se envía hasta elegirla (D-06). El punto de venta (FR-28) se
  * valida antes de enviar (AC-31); vacío conserva el guardado (D-27).
+ *
+ * FEAT-013: la alícuota y la condición fiscal son campos que filtran sus opciones al escribir (FR-13, D-13). Se ve la
+ * etiqueta y se graba el código; un texto igual a una opción, comparado plegado, vale como elegirla, y uno que no es
+ * ninguna no se envía y muestra el mensaje de FR-14 junto al campo.
  */
 export function Configuracion() {
   const navegar = useNavigate();
@@ -141,6 +170,7 @@ export function Configuracion() {
   /** Cuántos precios cambiaron en la última grabación; `null` si no hay una grabación que informar. */
   const [preciosCambiados, setPreciosCambiados] = useState<number | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const opcionesAlicuota = useMemo(() => opcionesDeAlicuota(alicuotas), [alicuotas]);
 
   /** Muestra la configuración que devolvió la Api, al abrir o después de grabar. Solo usa setters: no cambia. */
   const mostrar = useCallback((configuracion: ConfiguracionNegocio) => {
@@ -186,9 +216,19 @@ export function Configuracion() {
     }
     setGeneral(null);
     setPreciosCambiados(null);
-    const validacion = validarConfiguracion(textos, alicuotas);
+    // D-13: se graba el código de la opción escrita o elegida; sin ninguna, el mensaje de FR-14 junto al campo.
+    const alicuotaElegida = opcionExacta(textos.alicuotaIva, opcionesAlicuota);
+    const condicionElegida = opcionExacta(textos.condicionFiscal, OPCIONES_CONDICION);
+    const validacion = validarConfiguracion(
+      { ...textos, alicuotaIva: alicuotaElegida?.valor ?? '', condicionFiscal: condicionElegida?.valor ?? '' },
+      alicuotas,
+    );
     if (validacion.tipo === 'errores') {
-      setErrores(validacion.errores);
+      setErrores({
+        ...validacion.errores,
+        ...(alicuotaElegida === undefined && { [CAMPO_ALICUOTA]: MENSAJE_ALICUOTA_DE_LA_LISTA }),
+        ...(condicionElegida === undefined && { [CAMPO_CONDICION]: MENSAJE_CONDICION_DE_LA_LISTA }),
+      });
       return;
     }
     setErrores({});
@@ -250,43 +290,26 @@ export function Configuracion() {
         <form method="post" onSubmit={alEnviar} noValidate>
           <Campo etiqueta="Alícuota de IVA (%)" error={errores.alicuotaIva}>
             {(atributos) => (
-              <select
+              <CampoConOpciones
                 {...atributos}
                 name={CAMPO_ALICUOTA}
-                value={textos.alicuotaIva}
-                onChange={(evento) => cambiar(CAMPO_ALICUOTA, evento.target.value)}
-              >
-                {/* Sin alícuota elegida (D-06): esta opción evita que el navegador muestre elegida la primera. */}
-                {textos.alicuotaIva === '' && (
-                  <option value="" disabled>
-                    {SIN_ALICUOTA}
-                  </option>
-                )}
-                {alicuotas.map((alicuota) => {
-                  const texto = mostrarDecimal(alicuota);
-                  return (
-                    <option key={texto} value={texto}>
-                      {texto}
-                    </option>
-                  );
-                })}
-              </select>
+                texto={textos.alicuotaIva}
+                alCambiar={(valor) => cambiar(CAMPO_ALICUOTA, valor)}
+                opciones={opcionesAlicuota}
+                alElegir={(opcion) => cambiar(CAMPO_ALICUOTA, opcion.etiqueta)}
+              />
             )}
           </Campo>
           <Campo etiqueta="Condición fiscal" error={errores.condicionFiscal}>
             {(atributos) => (
-              <select
+              <CampoConOpciones
                 {...atributos}
                 name={CAMPO_CONDICION}
-                value={textos.condicionFiscal}
-                onChange={(evento) => cambiar(CAMPO_CONDICION, evento.target.value)}
-              >
-                {CONDICIONES_FISCALES.map((condicion) => (
-                  <option key={condicion} value={condicion}>
-                    {ETIQUETAS_CONDICION[condicion]}
-                  </option>
-                ))}
-              </select>
+                texto={textos.condicionFiscal}
+                alCambiar={(valor) => cambiar(CAMPO_CONDICION, valor)}
+                opciones={OPCIONES_CONDICION}
+                alElegir={(opcion) => cambiar(CAMPO_CONDICION, opcion.etiqueta)}
+              />
             )}
           </Campo>
           <CampoNumero

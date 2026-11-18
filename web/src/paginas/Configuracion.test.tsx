@@ -79,15 +79,35 @@ async function abrir() {
   await screen.findByRole('button', { name: BOTON });
 }
 
-const campo = (etiqueta: string) => screen.getByLabelText(etiqueta) as HTMLInputElement;
+/**
+ * El campo de la etiqueta. Desde FEAT-013 la alícuota y la condición son combobox, y su lista también se nombra con la
+ * etiqueta: se buscan por rol para no encontrar dos elementos.
+ */
+const campo = (etiqueta: string) =>
+  (screen.queryByRole('combobox', { name: etiqueta }) ?? screen.getByLabelText(etiqueta)) as HTMLInputElement;
 
-/** Las opciones de la lista de alícuotas, con su valor, su texto y si están elegidas. */
-const opcionesAlicuota = () =>
-  (within(campo(ETIQUETA_ALICUOTA)).getAllByRole('option') as HTMLOptionElement[]).map((o) => ({
-    valor: o.value,
-    texto: o.textContent,
-    elegida: o.selected,
-  }));
+/** FR-14: los mensajes de un texto que no es ninguna opción de la lista. */
+const MENSAJE_ALICUOTA_DE_LA_LISTA = 'Elegí una alícuota de la lista.';
+const MENSAJE_CONDICION_DE_LA_LISTA = 'Elegí una condición fiscal de la lista.';
+
+/** Desde FEAT-013 la alícuota y la condición son combobox, y su lista también se nombra con la etiqueta. */
+const combobox = (etiqueta: string) => screen.getByRole('combobox', { name: etiqueta }) as HTMLInputElement;
+
+/** Los textos de las opciones visibles: solo las del campo con el foco, que es el único que muestra su lista. */
+const opcionesVisibles = () => screen.queryAllByRole('option').map((opcion) => opcion.textContent);
+
+/** Escribe en un combobox con el foco puesto, como la operadora. */
+function escribirConFoco(etiqueta: string, valor: string) {
+  combobox(etiqueta).focus();
+  fireEvent.change(combobox(etiqueta), { target: { value: valor } });
+}
+
+/** Con el campo vacío, flecha abajo abre la lista completa (D-13). */
+function abrirLista(etiqueta: string) {
+  fireEvent.change(combobox(etiqueta), { target: { value: '' } });
+  combobox(etiqueta).focus();
+  fireEvent.keyDown(combobox(etiqueta), { key: 'ArrowDown' });
+}
 
 function escribir(etiqueta: string, valor: string) {
   fireEvent.change(campo(etiqueta), { target: { value: valor } });
@@ -95,11 +115,15 @@ function escribir(etiqueta: string, valor: string) {
 
 const grabar = () => fireEvent.click(screen.getByRole('button', { name: BOTON }));
 
-/** Los mensajes con rol status de la pantalla, sin la sonda de ubicación de las pruebas. */
+/**
+ * Los mensajes con rol status de la pantalla, sin la sonda de ubicación de las pruebas ni los anuncios de sugerencias
+ * de los combobox (FEAT-013), que están siempre montados.
+ */
 function estados(): string[] {
   const pantalla = screen.getByRole('heading', { name: TITULO }).closest('section')!;
   return within(pantalla)
     .queryAllByRole('status')
+    .filter((elemento) => !elemento.classList.contains('campo-busqueda__anuncio'))
     .map((elemento) => elemento.textContent ?? '');
 }
 
@@ -126,17 +150,22 @@ describe('Configuracion', () => {
     const servidor = servidorConEmisor({ 'GET /api/configuracion': json(200, INICIAL) });
     await abrir();
 
-    expect(campo(ETIQUETA_ALICUOTA).value).toBe('21');
-    expect(campo(ETIQUETA_ALICUOTA).tagName).toBe('SELECT');
-    expect(campo(ETIQUETA_CONDICION).value).toBe('responsable_inscripto');
+    // FEAT-013 (D-13): la alícuota y la condición son combobox que muestran la etiqueta, no el código.
+    expect(combobox(ETIQUETA_ALICUOTA).value).toBe('21');
+    expect(combobox(ETIQUETA_CONDICION).value).toBe('Responsable Inscripto');
     expect(campo(ETIQUETA_MULTIPLO).value).toBe('0,01');
     expect(campo(ETIQUETA_TOPE).value).toBe('');
     expect(campo(ETIQUETA_PUNTO_VENTA).value).toBe('');
-    const opciones = within(campo(ETIQUETA_CONDICION)).getAllByRole('option');
-    expect(opciones.map((o) => [o.getAttribute('value'), o.textContent])).toEqual([
-      ['responsable_inscripto', 'Responsable Inscripto'],
-      ['monotributo', 'Monotributo'],
-    ]);
+    // Las 2 condiciones, con su etiqueta, en el orden del contrato.
+    abrirLista(ETIQUETA_CONDICION);
+    expect(opcionesVisibles()).toEqual(['Responsable Inscripto', 'Monotributo']);
+    for (const [etiqueta, nombre] of [
+      [ETIQUETA_ALICUOTA, 'alicuotaIva'],
+      [ETIQUETA_CONDICION, 'condicionFiscal'],
+    ]) {
+      expect(combobox(etiqueta!).getAttribute('name')).toBe(nombre);
+      expect(combobox(etiqueta!).getAttribute('aria-invalid')).toBe('false');
+    }
     for (const etiqueta of [ETIQUETA_MULTIPLO, ETIQUETA_TOPE, ETIQUETA_PUNTO_VENTA]) {
       expect(campo(etiqueta).getAttribute('maxlength')).toBe('32');
       expect(campo(etiqueta).getAttribute('aria-invalid')).toBe('false');
@@ -194,11 +223,14 @@ describe('Configuracion', () => {
     });
     await abrir();
 
-    fireEvent.change(campo(ETIQUETA_CONDICION), { target: { value: 'monotributo' } });
+    // Elegida de la lista con el mouse (FEAT-013): se ve la etiqueta y se graba el código.
+    escribirConFoco(ETIQUETA_CONDICION, 'mono');
+    fireEvent.click(screen.getByRole('option', { name: 'Monotributo' }));
+    expect(campo(ETIQUETA_CONDICION).value).toBe('Monotributo');
     grabar();
 
     await waitFor(() => expect(estados()).toContain(GRABADA_SIN_CAMBIOS));
-    expect(campo(ETIQUETA_CONDICION).value).toBe('monotributo');
+    expect(campo(ETIQUETA_CONDICION).value).toBe('Monotributo');
     expect(JSON.parse(String(servidor.pedidosA('POST', '/api/configuracion')[0]?.init?.body))).toHaveProperty(
       'condicionFiscal',
       'monotributo',
@@ -220,7 +252,6 @@ describe('Configuracion', () => {
 
     await waitFor(() => expect(campo(ETIQUETA_ALICUOTA).value).toBe('10,5'));
     expect(campo(ETIQUETA_MULTIPLO).value).toBe('10');
-    expect(opcionesAlicuota().filter((o) => o.elegida).map((o) => o.texto)).toEqual(['10,5']);
   });
 
   // ---- FEAT-007: la alícuota de una lista (FR-26, D-06) y el punto de venta (FR-28) ----
@@ -229,20 +260,21 @@ describe('Configuracion', () => {
     servidorConEmisor({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 10.5 }) });
     await abrir();
 
-    // AC-28: las 6 de ARCA con coma decimal, en el orden de la Api, y la guardada elegida; sin aviso.
-    expect(opcionesAlicuota()).toEqual(
-      OPCIONES_ALICUOTA.map((texto) => ({ valor: texto, texto, elegida: texto === '10,5' })),
-    );
+    // AC-28: la guardada en el campo, sin aviso; con el campo vacío, las 6 de ARCA con coma decimal y en el orden de la
+    // Api (FEAT-013: la lista se abre con flecha abajo).
     expect(campo(ETIQUETA_ALICUOTA).value).toBe('10,5');
     expect(campo(ETIQUETA_ALICUOTA).getAttribute('aria-invalid')).toBe('false');
     expect(estados()).toEqual([AVISO_SIN_TOPE]);
+    abrirLista(ETIQUETA_ALICUOTA);
+    expect(opcionesVisibles()).toEqual(OPCIONES_ALICUOTA);
   });
 
   it('alicuota lista: las opciones son las que devuelve la Api', async () => {
     servidorConEmisor({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotasAdmitidas: [21, 27] }) });
     await abrir();
 
-    expect(opcionesAlicuota().map((o) => o.texto)).toEqual(['21', '27']);
+    abrirLista(ETIQUETA_ALICUOTA);
+    expect(opcionesVisibles()).toEqual(['21', '27']);
   });
 
   it('alicuota guardada 19: ninguna elegida y aviso, envío rechazado', async () => {
@@ -252,16 +284,14 @@ describe('Configuracion', () => {
     });
     await abrir();
 
-    // D-06: ninguna de las 6 elegida y un aviso que pide elegir una.
-    expect(opcionesAlicuota().filter((o) => o.valor !== '')).toEqual(
-      OPCIONES_ALICUOTA.map((texto) => ({ valor: texto, texto, elegida: false })),
-    );
+    // D-06: ninguna elegida (el campo vacío, D-13 de FEAT-013) y un aviso que pide elegir una.
     expect(campo(ETIQUETA_ALICUOTA).value).toBe('');
     expect(estados()).toEqual([AVISO_SIN_TOPE, AVISO_ALICUOTA_FUERA_DE_LISTA]);
 
     grabar();
 
-    await waitFor(() => expect(mensajeJuntoAlCampo(campo(ETIQUETA_ALICUOTA))).toBe(MENSAJE_ALICUOTA_NO_ADMITIDA));
+    // FEAT-013 (FR-14): el campo vacío no es ninguna opción de la lista.
+    await waitFor(() => expect(mensajeJuntoAlCampo(campo(ETIQUETA_ALICUOTA))).toBe(MENSAJE_ALICUOTA_DE_LA_LISTA));
     expect(campo(ETIQUETA_ALICUOTA).getAttribute('aria-invalid')).toBe('true');
     expect(servidor.pedidosA('POST', '/api/configuracion')).toHaveLength(0);
     expect(hayMensajeDeGrabada()).toBe(false);
@@ -277,6 +307,100 @@ describe('Configuracion', () => {
     );
     expect(campo(ETIQUETA_ALICUOTA).getAttribute('aria-invalid')).toBe('false');
     expect(mensajeJuntoAlCampo(campo(ETIQUETA_ALICUOTA))).toBeNull();
+  });
+
+  // ---- FEAT-013: alícuota y condición fiscal con CampoConOpciones (FR-13, FR-14, D-13) ----
+
+  it('Configuracion_Alicuota10_SoloOpcion105', async () => {
+    const servidor = servidorConEmisor({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, alicuotaIva: 10.5 }),
+    });
+    await abrir();
+
+    // AC-11: "10" deja solo la opción 10,5.
+    escribirConFoco(ETIQUETA_ALICUOTA, '10');
+    expect(opcionesVisibles()).toEqual(['10,5']);
+
+    // Elegida con el teclado, se ve la etiqueta con coma y se graba el código.
+    fireEvent.keyDown(combobox(ETIQUETA_ALICUOTA), { key: 'ArrowDown' });
+    fireEvent.keyDown(combobox(ETIQUETA_ALICUOTA), { key: 'Enter' });
+    expect(combobox(ETIQUETA_ALICUOTA).value).toBe('10,5');
+    grabar();
+
+    await waitFor(() => expect(estados()).toContain(GRABADA_SIN_CAMBIOS));
+    expect(JSON.parse(String(servidor.pedidosA('POST', '/api/configuracion')[0]?.init?.body))).toHaveProperty(
+      'alicuotaIva',
+      10.5,
+    );
+    expect(combobox(ETIQUETA_ALICUOTA).value).toBe('10,5');
+  });
+
+  it('Configuracion_CondicionInexistente_RechazadaSinGrabar', async () => {
+    const servidor = servidorConEmisor({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, GRABADA_INICIAL),
+    });
+    await abrir();
+
+    // AC-12: un texto que no es ninguna de las 2 condiciones no muestra opciones, no se graba y el error va junto al campo.
+    escribirConFoco(ETIQUETA_CONDICION, 'Exento');
+    expect(opcionesVisibles()).toEqual([]);
+    grabar();
+
+    await waitFor(() => expect(mensajeJuntoAlCampo(combobox(ETIQUETA_CONDICION))).toBe(MENSAJE_CONDICION_DE_LA_LISTA));
+    expect(combobox(ETIQUETA_CONDICION).getAttribute('aria-invalid')).toBe('true');
+    expect(combobox(ETIQUETA_CONDICION).value).toBe('Exento');
+    expect(servidor.pedidosA('POST', '/api/configuracion')).toHaveLength(0);
+    expect(hayMensajeDeGrabada()).toBe(false);
+  });
+
+  it('Configuracion_AlicuotaInexistente_RechazadaSinGrabar', async () => {
+    const servidor = servidorConEmisor({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, GRABADA_INICIAL),
+    });
+    await abrir();
+
+    // FR-14: "10" filtra pero no es una opción; sin elegir 10,5 no se graba.
+    escribirConFoco(ETIQUETA_ALICUOTA, '10');
+    grabar();
+
+    await waitFor(() => expect(mensajeJuntoAlCampo(combobox(ETIQUETA_ALICUOTA))).toBe(MENSAJE_ALICUOTA_DE_LA_LISTA));
+    expect(combobox(ETIQUETA_ALICUOTA).getAttribute('aria-invalid')).toBe('true');
+    expect(servidor.pedidosA('POST', '/api/configuracion')).toHaveLength(0);
+    expect(hayMensajeDeGrabada()).toBe(false);
+  });
+
+  it('Configuracion_TextoExactoPlegado_SeAceptaSinElegir', async () => {
+    const servidor = servidorConEmisor({
+      'GET /api/configuracion': json(200, INICIAL),
+      'POST /api/configuracion': json(200, { ...GRABADA_INICIAL, alicuotaIva: 2.5, condicionFiscal: 'monotributo' }),
+    });
+    await abrir();
+
+    // D-13: un texto igual a una opción, sin mayúsculas, acentos ni espacios de más, vale como elegirla.
+    escribirConFoco(ETIQUETA_CONDICION, '  MONOTRIBUTO ');
+    escribirConFoco(ETIQUETA_ALICUOTA, '2,5');
+    grabar();
+
+    await waitFor(() => expect(estados()).toContain(GRABADA_SIN_CAMBIOS));
+    const cuerpo = JSON.parse(String(servidor.pedidosA('POST', '/api/configuracion')[0]?.init?.body));
+    expect(cuerpo).toHaveProperty('condicionFiscal', 'monotributo');
+    expect(cuerpo).toHaveProperty('alicuotaIva', 2.5);
+    expect(combobox(ETIQUETA_CONDICION).value).toBe('Monotributo');
+    expect(combobox(ETIQUETA_ALICUOTA).value).toBe('2,5');
+  });
+
+  it('Configuracion_AlicuotaFueraDeLista_CampoVacioYAviso', async () => {
+    servidorConEmisor({ 'GET /api/configuracion': json(200, { ...INICIAL, alicuotaIva: 19 }) });
+    await abrir();
+
+    // D-13: la guardada no está en la lista; el campo empieza vacío, con el aviso de hoy y la lista completa.
+    expect(combobox(ETIQUETA_ALICUOTA).value).toBe('');
+    expect(estados()).toEqual([AVISO_SIN_TOPE, AVISO_ALICUOTA_FUERA_DE_LISTA]);
+    abrirLista(ETIQUETA_ALICUOTA);
+    expect(opcionesVisibles()).toEqual(OPCIONES_ALICUOTA);
   });
 
   it('Configuracion_PuntoVentaGuardado_SeMuestraYSeEnvia', async () => {

@@ -154,7 +154,6 @@ body {
 }
 
 .campo input:not([type='file'], [type='radio'], [type='checkbox']),
-.campo select,
 .tabla input:not([type='radio'], [type='checkbox']) {
   box-sizing: border-box;
   min-height: var(--alto-control);
@@ -179,7 +178,6 @@ body {
 }
 
 .campo input:focus-visible,
-.campo select:focus-visible,
 .tabla input:focus-visible {
   border-color: var(--color-primario);
   outline: 2px solid var(--color-primario);
@@ -191,7 +189,6 @@ body {
  * foco conserva el borde de error y suma el contorno del primario.
  */
 .campo input[aria-invalid='true'],
-.campo select[aria-invalid='true'],
 .tabla input[aria-invalid='true'] {
   border-color: var(--color-error);
   box-shadow: inset 0 0 0 1px var(--color-error);
@@ -813,7 +810,6 @@ dialog::backdrop {
   .tarjeta-menu__icono,
   button,
   .campo input:not([type='file'], [type='radio'], [type='checkbox']),
-  .campo select,
   .tabla input:not([type='radio'], [type='checkbox']),
   .tabla tbody tr,
   .sugerencia {

@@ -152,6 +152,21 @@ recomendada y la que menos tiempo insuma".
   válido, la respuesta en curso puede mostrar sus sugerencias durante la pausa. Son un superconjunto del filtro nuevo
   y las reemplaza la respuesta siguiente. Es el diseño del hook del Block 1 (la pausa no cancela el pedido en curso),
   igual que en el Block 2.
+
+### D-24: supuestos del implementador en el Block 4 (Configuración), revisados por las dos revisiones
+- Aprobó: el agente, por la delegación del usuario del 2026-11-14, con el PASS del module-verifier y el APROBADO del
+  arch-auditor — 2026-11-18 — Block 4.
+- Grabar con el campo vacío muestra el mensaje de FR-14 ("Elegí una alícuota de la lista." / "Elegí una condición
+  fiscal de la lista."), no el de D-06/D-35 de FEAT-007: el vacío no coincide con ninguna opción (D-13).
+- Un 400 de la Api para la alícuota sigue con el mensaje fijo de D-35 (`MENSAJES_FIJOS`); FR-14 es la validación del
+  navegador.
+- El texto exacto se compara, plegado, solo contra la etiqueta visible: "10,5" se acepta y "10.5" no (sin prueba propia;
+  WARN del module-verifier, aceptado).
+- La prioridad entre el mensaje de FR-14 y el de `validarConfiguracion` queda en la pantalla, no en `reglas.ts`
+  (WARN del arch-auditor, aceptado): solo la usa Configuración.
+- `web/src/App.test.tsx` se actualizó (3 líneas) aunque no figuraba en el bloque, por D-18.
+- `e2e/tests/medidas.ts:61` todavía nombra `select` en su selector de campos: se suma al Block 5 junto con los specs de
+  D-18.
 - Un 400 en vivo oculta las sugerencias sin mensaje; una falla de red o un 5xx muestran el mensaje general.
 - "Buscar" y la paginación cuentan como envío manual (D-08). Un Enter durante un envío manual ahora envía otra
   búsqueda que reemplaza a la anterior; la respuesta vieja no pisa la nueva.
