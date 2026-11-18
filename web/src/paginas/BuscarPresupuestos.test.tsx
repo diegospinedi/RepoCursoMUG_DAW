@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
@@ -100,7 +100,12 @@ async function abrir() {
   await screen.findByRole('heading', { name: TITULO });
 }
 
-const campo = (etiqueta: string) => screen.getByLabelText(etiqueta) as HTMLInputElement;
+/**
+ * El campo de la etiqueta. Desde FEAT-013 Apellido, Nombre y DNI son combobox con sugerencias, y la lista también se
+ * nombra con la etiqueta (`aria-labelledby`): por eso se buscan por su rol; las fechas, por la etiqueta.
+ */
+const campo = (etiqueta: string) =>
+  (screen.queryByRole('combobox', { name: etiqueta }) ?? screen.getByLabelText(etiqueta)) as HTMLInputElement;
 const escribir = (etiqueta: string, valor: string) => fireEvent.change(campo(etiqueta), { target: { value: valor } });
 const buscar = () => fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 const anterior = () => screen.getByRole('button', { name: 'Anterior' }) as HTMLButtonElement;
@@ -391,21 +396,34 @@ describe('BuscarPresupuestos', () => {
     expect(cuerpos(servidor)).toEqual([{ nombre: 'maria', pagina: 1 }]);
   });
 
-  it('una búsqueda en curso: no envía otra ni pagina', async () => {
+  it('una búsqueda manual en curso: el doble clic no envía otra; Enter la reemplaza y la vieja no pisa la nueva', async () => {
+    // D-08 de FEAT-013: la guarda `enCurso` se reemplaza por el número de pedido. El botón deshabilitado evita el doble
+    // clic; un Enter mientras tanto envía otra búsqueda, y solo la respuesta de la última se muestra.
     const primera = diferida(pagina(filasDel(120, 71), 1, 120));
-    const servidor = servidorFalso({ [CLAVE]: primera.respuesta });
+    const reemplazo = diferida(pagina([FILA_155]));
+    const servidor = servidorFalso({ [CLAVE]: [primera.respuesta, reemplazo.respuesta] });
     await abrir();
 
     buscar();
     buscar();
-    fireEvent.submit(campo('Apellido').form!);
 
     expect((screen.getByRole('button', { name: 'Buscar' }) as HTMLButtonElement).disabled).toBe(true);
     expect(servidor.pedidosA('POST', '/api/presupuestos/busqueda')).toHaveLength(1);
 
-    await primera.liberar();
-    await screen.findByText('Página 1 de 3');
+    fireEvent.submit(campo('Apellido').form!);
+    expect(servidor.pedidosA('POST', '/api/presupuestos/busqueda')).toHaveLength(2);
+    expect((screen.getByRole('button', { name: 'Buscar' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await reemplazo.liberar();
+    await screen.findByText('Página 1 de 1');
     expect((screen.getByRole('button', { name: 'Buscar' }) as HTMLButtonElement).disabled).toBe(false);
+    await primera.liberar();
+    expect(filas().map((f) => f[0])).toEqual(['155']);
+
+    // Una búsqueda que trae varias páginas, para la paginación.
+    servidorFalso({ [CLAVE]: json(200, pagina(filasDel(120, 71), 1, 120)) });
+    buscar();
+    await screen.findByText('Página 1 de 3');
 
     // Mientras llega la página 2, Anterior y Siguiente quedan deshabilitados y un segundo clic no pide otra.
     const segunda = diferida(pagina(filasDel(70, 21), 2, 120));
@@ -444,5 +462,478 @@ describe('BuscarPresupuestos', () => {
     }
     expect(screen.getByRole('search')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Volver al inicio' }).getAttribute('href')).toBe('/');
+  });
+});
+
+/** Avanza el reloj falso (solo `setTimeout`) y deja que React procese lo que eso dispare. */
+const avanzar = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+
+/** El texto de cada sugerencia visible. */
+const sugerencias = () => screen.queryAllByRole('option').map((opcion) => opcion.textContent);
+
+const pedidos = (servidor: ReturnType<typeof servidorFalso>) => servidor.pedidosA('POST', '/api/presupuestos/busqueda');
+
+const botonBuscar = () => screen.getByRole('button', { name: 'Buscar' }) as HTMLButtonElement;
+
+/** Abre la pantalla con el reloj real, pasa al reloj falso y pone el foco en el campo indicado. */
+async function abrirEnVivo(etiqueta = 'Apellido') {
+  await abrir();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const enfocado = campo(etiqueta);
+  act(() => enfocado.focus());
+  return enfocado;
+}
+
+const SUGERENCIA_155 = '155 · González, María José · 10/03/2026';
+const SUGERENCIA_154 = '154 · Gómez, Ana · 09/03/2026';
+
+describe('BuscarPresupuestos — búsqueda mientras se escribe (FEAT-013)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('BuscarPresupuestos_EscribirApellido_SugerenciasYAbrir155', async () => {
+    // AC-04: tras la pausa, una sola búsqueda llena la tabla y las sugerencias; elegir la del 155 lo abre.
+    const servidor = servidorFalso({
+      [CLAVE]: json(200, pagina([FILA_155, FILA_154])),
+      'GET /api/presupuestos/155': json(200, PRESUPUESTO_155),
+    });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'p' } });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    fireEvent.change(apellido, { target: { value: ' pér ' } });
+    await avanzar(299);
+    expect(pedidos(servidor)).toHaveLength(0);
+    await avanzar(1);
+
+    // Los filtros van en el cuerpo, recortados (ADR-019).
+    expect(cuerpos(servidor)).toEqual([{ apellido: 'pér', pagina: 1 }]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155, SUGERENCIA_154]);
+    expect(filas().map((f) => f[0])).toEqual(['155', '154']);
+    expect(apellido.getAttribute('aria-expanded')).toBe('true');
+    // Solo el campo con el foco abre la lista.
+    expect(campo('Nombre').getAttribute('aria-expanded')).toBe('false');
+    expect(within(apellido.closest('.campo-busqueda')!).getByRole('status').textContent).toBe('2 sugerencias');
+    const opcion155 = screen.getByRole('option', { name: SUGERENCIA_155 });
+    expect(opcion155.id.endsWith('-155')).toBe(true);
+
+    fireEvent.click(opcion155);
+
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/presupuestos/155');
+  });
+
+  it('BuscarPresupuestos_RespuestaViejaNoPisaLaNueva', async () => {
+    // AC-09: la respuesta de "gó" llega después que la de "gon": siguen las sugerencias y la tabla de "gon".
+    const vieja = diferida(pagina([FILA_154]));
+    const servidor = servidorFalso({ [CLAVE]: [vieja.respuesta, json(200, pagina([FILA_155]))] });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+    fireEvent.change(apellido, { target: { value: 'gon' } });
+    await avanzar(300);
+    expect(cuerpos(servidor)).toEqual([
+      { apellido: 'gó', pagina: 1 },
+      { apellido: 'gon', pagina: 1 },
+    ]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    await vieja.liberar();
+    await avanzar(0);
+
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+    expect(filas().map((f) => f[0])).toEqual(['155']);
+  });
+
+  it('BuscarPresupuestos_SugerenciaSinDni', async () => {
+    // R-02 y D-15: ni las sugerencias ni el anuncio muestran el DNI, aunque se busque por DNI; nada en la consola,
+    // en el almacenamiento ni en la URL.
+    const consola = (['log', 'info', 'warn', 'error', 'debug', 'trace'] as const).map((metodo) =>
+      vi.spyOn(console, metodo).mockImplementation(() => {}),
+    );
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155])) });
+    const dni = await abrirEnVivo('DNI');
+
+    fireEvent.change(dni, { target: { value: '2345' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)).toEqual([{ dni: '2345', pagina: 1 }]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+    for (const opcion of screen.getAllByRole('option')) {
+      expect(opcion.textContent).not.toContain(FILA_155.dni);
+      expect(opcion.id).not.toContain(FILA_155.dni);
+    }
+    expect(within(dni.closest('.campo-busqueda')!).getByRole('status').textContent).toBe('1 sugerencia');
+    expect(dni.getAttribute('autocomplete')).toBe('off');
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    expect(decodeURIComponent(window.location.href)).not.toContain('2345');
+    for (const espia of consola) {
+      expect(espia).not.toHaveBeenCalled();
+    }
+  });
+
+  it('BuscarPresupuestos_RangoInvalidoEnVivo_SinPedido', async () => {
+    // D-07: con Desde posterior a Hasta no pide ni muestra nada en vivo; el error aparece con "Buscar". Con el rango
+    // corregido, lo escrito busca con las fechas.
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155])) });
+    const apellido = await abrirEnVivo();
+
+    escribir('Desde', '2026-03-20');
+    escribir('Hasta', '2026-03-10');
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    await avanzar(300);
+
+    expect(pedidos(servidor)).toHaveLength(0);
+    expect(mensajes()).toEqual([]);
+    expect(sugerencias()).toEqual([]);
+
+    buscar();
+    expect(mensajeJuntoAlCampo(campo('Desde'))).toBe(MENSAJE_DESDE_POSTERIOR);
+    expect(pedidos(servidor)).toHaveLength(0);
+
+    escribir('Desde', '2026-03-01');
+    fireEvent.change(apellido, { target: { value: 'pére' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)).toEqual([{ apellido: 'pére', desde: '2026-03-01', hasta: '2026-03-10', pagina: 1 }]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+  });
+
+  it('BuscarPresupuestos_UnCaracter_SinPedidoNiSugerencias', async () => {
+    // D-07: con 1 carácter no pide; las sugerencias anteriores no quedan para elegir y la tabla queda como estaba.
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155, FILA_154])) });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.change(apellido, { target: { value: ' g ' } });
+    await avanzar(300);
+
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    expect(filas().map((f) => f[0])).toEqual(['155', '154']);
+  });
+
+  it('BuscarPresupuestos_CampoVaciado_VuelveABuscarConLosOtrosFiltros', async () => {
+    // D-07: el campo que queda vacío vuelve a buscar, con el resto de los filtros; sin ningún texto, sin sugerencias.
+    const servidor = servidorFalso({
+      [CLAVE]: [
+        json(200, pagina([FILA_154])),
+        json(200, pagina([FILA_155])),
+        json(200, pagina([FILA_154, FILA_155])),
+        json(200, pagina([FILA_155, FILA_154])),
+      ],
+    });
+    const nombre = await abrirEnVivo('Nombre');
+
+    fireEvent.change(nombre, { target: { value: 'an' } });
+    await avanzar(300);
+    const apellido = campo('Apellido');
+    act(() => apellido.focus());
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    fireEvent.change(apellido, { target: { value: '' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)).toEqual([
+      { nombre: 'an', pagina: 1 },
+      { apellido: 'gó', nombre: 'an', pagina: 1 },
+      { nombre: 'an', pagina: 1 },
+    ]);
+    expect(filas().map((f) => f[0])).toEqual(['154', '155']);
+
+    act(() => nombre.focus());
+    fireEvent.change(nombre, { target: { value: '' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)[3]).toEqual({ pagina: 1 });
+    expect(filas().map((f) => f[0])).toEqual(['155', '154']);
+    expect(sugerencias()).toEqual([]);
+    expect(nombre.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('BuscarPresupuestos_CambiarFechas_NoDispara', async () => {
+    // D-07: Desde y Hasta aplican con "Buscar", no mientras se cambian.
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155])) });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+
+    escribir('Desde', '2026-03-01');
+    escribir('Hasta', '2026-03-31');
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+
+    buscar();
+    await avanzar(0);
+    expect(cuerpos(servidor)[1]).toEqual({ apellido: 'pé', desde: '2026-03-01', hasta: '2026-03-31', pagina: 1 });
+    // La respuesta de "Buscar" no abre sugerencias.
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_BuscarDeshabilitadoSoloEnElEnvioManual', async () => {
+    // D-08: la búsqueda en vivo no deshabilita "Buscar"; el envío manual sí, hasta su respuesta, y reemplaza al pedido
+    // en vivo (que ya no llega).
+    const enVivo = diferida(pagina([FILA_154]));
+    const manual = diferida(pagina([FILA_155]));
+    const servidor = servidorFalso({ [CLAVE]: [enVivo.respuesta, manual.respuesta] });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(botonBuscar().disabled).toBe(false);
+    expect(screen.queryByText('Cargando…')).toBeNull();
+
+    buscar();
+    expect(pedidos(servidor)).toHaveLength(2);
+    expect(botonBuscar().disabled).toBe(true);
+
+    await enVivo.liberar();
+    await avanzar(0);
+    expect(botonBuscar().disabled).toBe(true);
+    expect(screen.queryByRole('table')).toBeNull();
+
+    await manual.liberar();
+    await avanzar(0);
+    expect(botonBuscar().disabled).toBe(false);
+    expect(filas().map((f) => f[0])).toEqual(['155']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_400EnVivo_OcultaSugerenciasSinErrorDelCampo', async () => {
+    // D-07: un 400 en vivo oculta las sugerencias y no muestra el error del campo; con "Buscar", sí.
+    const rechazo = json(400, { status: 400, errors: { apellido: ['Usá hasta 100 caracteres.'] } });
+    servidorFalso({ [CLAVE]: [json(200, pagina([FILA_155])), rechazo, rechazo] });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: 'góm' } });
+    await avanzar(300);
+
+    expect(sugerencias()).toEqual([]);
+    expect(mensajeJuntoAlCampo(apellido)).toBeNull();
+    expect(mensajes()).toEqual([]);
+
+    buscar();
+    await avanzar(0);
+    expect(mensajeJuntoAlCampo(apellido)).toBe('Usá hasta 100 caracteres.');
+  });
+
+  it('BuscarPresupuestos_ErrorDeBusquedaEnVivo_MensajeSinSugerencias', async () => {
+    // AC-10: la búsqueda en vivo falla; se ocultan las sugerencias y la tabla, y se ve el mensaje de hoy.
+    servidorFalso({ [CLAVE]: [json(200, pagina([FILA_155])), sinRed] });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: 'góx' } });
+    await avanzar(300);
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    expect(mensajes()).toEqual([MENSAJE_SIN_CONEXION]);
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('BuscarPresupuestos_SinSesionEnVivo_VuelveAlIngreso', async () => {
+    servidorFalso({ [CLAVE]: vacia(401) });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso');
+  });
+
+  it('BuscarPresupuestos_TextoInvalidoEnVivo_SinPedido', async () => {
+    // D-07: un texto que la Api rechazaría (UTF-16 inválido) no se pide en vivo.
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155])) });
+    const apellido = await abrirEnVivo();
+
+    fireEvent.change(apellido, { target: { value: `ab${String.fromCharCode(0xd83d)}` } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(0);
+
+    fireEvent.change(apellido, { target: { value: 'ab' } });
+    await avanzar(300);
+    expect(cuerpos(servidor)).toEqual([{ apellido: 'ab', pagina: 1 }]);
+  });
+});
+
+describe('BuscarPresupuestos — sugerencias que ya no corresponden (FEAT-013, ronda 2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Intenta elegir la primera sugerencia con el teclado. */
+  const elegirConEnter = (campoEnfocado: HTMLInputElement) => {
+    fireEvent.keyDown(campoEnfocado, { key: 'ArrowDown' });
+    fireEvent.keyDown(campoEnfocado, { key: 'Enter' });
+  };
+
+  it('BuscarPresupuestos_UnCaracterOTextoInvalido_SinSugerenciasEnElMismoEvento', async () => {
+    // H1: con 1 carácter o un texto inválido, las sugerencias anteriores no se ven ni se eligen, ni por un dibujo.
+    servidorFalso({ [CLAVE]: json(200, pagina([FILA_155, FILA_154])) });
+    const apellido = await abrirEnVivo();
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.change(apellido, { target: { value: 'g' } });
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+    fireEvent.change(apellido, { target: { value: `gó${String.fromCharCode(0xd83d)}` } });
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('BuscarPresupuestos_CampoVaciado_SinSugerenciasEnElMismoEvento', async () => {
+    // H1: el campo vaciado busca de nuevo, pero durante la pausa y el pedido no deja elegir las sugerencias viejas.
+    const nuevo = diferida(pagina([FILA_154]));
+    servidorFalso({ [CLAVE]: [json(200, pagina([FILA_155])), nuevo.respuesta] });
+    const apellido = await abrirEnVivo();
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: '' } });
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    // Con el pedido en curso, tampoco.
+    await avanzar(300);
+    expect(sugerencias()).toEqual([]);
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    await nuevo.liberar();
+    expect(filas().map((f) => f[0])).toEqual(['154']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_RangoInvalidoDuranteLaPausa_SinPedidoNiSugerencias', async () => {
+    // Verificador H-1: las fechas pasan a un rango invertido mientras corre la pausa: no se pide y se vacían las
+    // sugerencias.
+    const servidor = servidorFalso({ [CLAVE]: json(200, pagina([FILA_155])) });
+    const apellido = await abrirEnVivo();
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: 'gón' } });
+    escribir('Desde', '2026-03-20');
+    escribir('Hasta', '2026-03-10');
+    await avanzar(300);
+
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(sugerencias()).toEqual([]);
+    expect(mensajes()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_CampoVaciadoConPedidoEnCurso_NoReponeSugerencias', async () => {
+    // D-23: el pedido de "gó" sigue en curso al vaciar el campo; cuando llega, no repone sus sugerencias.
+    const enCurso = diferida(pagina([FILA_155]));
+    const vaciado = diferida(pagina([FILA_154]));
+    const servidor = servidorFalso({ [CLAVE]: [enCurso.respuesta, vaciado.respuesta] });
+    const apellido = await abrirEnVivo();
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+
+    fireEvent.change(apellido, { target: { value: '' } });
+    await enCurso.liberar();
+    await avanzar(0);
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    await avanzar(300);
+    expect(cuerpos(servidor)[1]).toEqual({ pagina: 1 });
+    await vaciado.liberar();
+    expect(filas().map((f) => f[0])).toEqual(['154']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_FechasInvalidas_SinSugerenciasEnElMismoEvento', async () => {
+    // D-22: invertir solo las fechas vacía las sugerencias en ese evento, sin pedir, y la respuesta viva en curso no
+    // las repone.
+    const enCurso = diferida(pagina([FILA_155]));
+    const servidor = servidorFalso({ [CLAVE]: [enCurso.respuesta, json(200, pagina([FILA_155, FILA_154]))] });
+    const apellido = await abrirEnVivo();
+
+    // Con un pedido en curso.
+    fireEvent.change(apellido, { target: { value: 'gó' } });
+    await avanzar(300);
+    escribir('Desde', '2026-03-20');
+    escribir('Hasta', '2026-03-10');
+    await enCurso.liberar();
+    await avanzar(0);
+    expect(sugerencias()).toEqual([]);
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    // Con las sugerencias a la vista.
+    escribir('Desde', '2026-03-01');
+    fireEvent.change(apellido, { target: { value: 'gón' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    escribir('Desde', '2026-03-20');
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(2);
+    expect(mensajes()).toEqual([]);
+  });
+
+  it('BuscarPresupuestos_DosEnviosManuales_BuscarSigueDeshabilitadoHastaElUltimo', async () => {
+    // D-08: un Enter reemplaza al envío manual en curso; que el primero termine no vuelve a habilitar "Buscar".
+    vi.useRealTimers();
+    const primera = diferida(pagina([FILA_154]));
+    const segunda = diferida(pagina([FILA_155]));
+    servidorFalso({ [CLAVE]: [primera.respuesta, segunda.respuesta] });
+    await abrir();
+
+    buscar();
+    fireEvent.submit(campo('Apellido').form!);
+    await primera.liberar();
+    await act(async () => {});
+
+    expect(botonBuscar().disabled).toBe(true);
+    await segunda.liberar();
+    await screen.findByText('Página 1 de 1');
+    expect(botonBuscar().disabled).toBe(false);
+    expect(filas().map((f) => f[0])).toEqual(['155']);
   });
 });

@@ -127,3 +127,31 @@ recomendada y la que menos tiempo insuma".
 ### D-20: ruta de la búsqueda de facturas
 - El spec dice `POST /api/facturas/busqueda`; la ruta real, que usa el código, es `POST /api/facturacion/busqueda`.
   No cambia nada: se deja anotado para el Block 3 y para VERIFY.
+
+### D-21: la lógica de búsqueda en vivo queda duplicada en presupuestos y facturas
+- Aprobó: el agente, por la delegación del usuario del 2026-11-14 (tomar la opción recomendada que menos tiempo
+  lleve) — 2026-11-18 — Block 3.
+- `decidir`, `buscar`, `alResultado`, el envío manual y sus refs quedan repetidos en `BuscarPresupuestos.tsx` y
+  `BuscarFacturas.tsx` (unas 130 líneas), con las mismas correcciones aplicadas a las dos copias. Extraerlos a un hook
+  compartido queda para otro ticket.
+
+### D-22: un rango de fechas inválido vacía las sugerencias en el mismo evento
+- Aprobó: el agente, por la misma delegación — 2026-11-18 — Block 3.
+- D-07 se mantiene: cambiar las fechas no dispara una búsqueda. Pero si el cambio deja Desde > Hasta, las sugerencias
+  se vacían en ese momento, para cumplir "un rango de fechas inválido en vivo no pide ni muestra nada" (spec, Block 3).
+
+### D-23: supuestos del implementador en el Block 3, revisados por el module-verifier
+- Aprobó: el agente, con el PASS del module-verifier — 2026-11-18 — Block 3.
+- "Validar la búsqueda" en vivo es: texto UTF-16 válido, largo máximo de cada campo (100/100/20 en presupuestos, 100
+  en facturas, iguales a la Api) y `validarRangoFechas`. "Buscar" no agrega validaciones nuevas.
+- Las fechas no forman parte de la clave y se toman al vencer la pausa; si el rango es inválido, no se pide.
+- Un campo que queda vacío vuelve a buscar con los otros filtros y no da sugerencias. Una respuesta viva que llega
+  después de vaciar el campo tampoco las da (tampoco tras pasar a un rango de fechas inválido, D-22); esa respuesta
+  sí actualiza la tabla: el pedido no se cancela.
+- Riesgo aceptado (arch-auditor, ronda 3, WARN): si con un pedido vivo en curso se edita OTRO campo con un texto
+  válido, la respuesta en curso puede mostrar sus sugerencias durante la pausa. Son un superconjunto del filtro nuevo
+  y las reemplaza la respuesta siguiente. Es el diseño del hook del Block 1 (la pausa no cancela el pedido en curso),
+  igual que en el Block 2.
+- Un 400 en vivo oculta las sugerencias sin mensaje; una falla de red o un 5xx muestran el mensaje general.
+- "Buscar" y la paginación cuentan como envío manual (D-08). Un Enter durante un envío manual ahora envía otra
+  búsqueda que reemplaza a la anterior; la respuesta vieja no pisa la nueva.
