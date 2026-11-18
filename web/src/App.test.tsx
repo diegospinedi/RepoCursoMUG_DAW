@@ -440,7 +440,8 @@ const PANTALLAS: Pantalla[] = [
       }),
     titulo: 'Nuevo presupuesto',
     interactuar: async () => {
-      fireEvent.change(await screen.findByLabelText('Texto a buscar'), { target: { value: 'armazon' } });
+      // FEAT-013: el buscador es un combobox; la lista de sugerencias también se nombra con la etiqueta.
+      fireEvent.change(await screen.findByRole('combobox', { name: 'Texto a buscar' }), { target: { value: 'armazon' } });
       fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
       fireEvent.click(await screen.findByRole('button', { name: 'Agregar 1 Armazón metálico' }));
       fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ana@' } });

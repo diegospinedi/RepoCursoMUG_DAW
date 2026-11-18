@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
@@ -54,6 +54,12 @@ const conSesion = { 'GET /api/sesion': vacia(204) };
 
 const DESACTIVAR_7 = 'Desactivar 7 Armazón metálico';
 
+/**
+ * El campo de búsqueda. Desde FEAT-013 es un combobox con sugerencias, y la lista también se nombra con la etiqueta
+ * (`aria-labelledby`): por eso se busca por su rol y no solo por la etiqueta.
+ */
+const combobox = () => screen.getByRole('combobox', { name: ETIQUETA_BUSQUEDA }) as HTMLInputElement;
+
 async function abrir() {
   renderizarApp(RUTA);
   await screen.findByRole('heading', { name: TITULO });
@@ -102,15 +108,16 @@ describe('Articulos', () => {
 
     expect(within(screen.getByRole('table')).getByText('Artículos del catálogo').tagName).toBe('CAPTION');
 
-    const campo = screen.getByLabelText(ETIQUETA_BUSQUEDA) as HTMLInputElement;
+    const campo = combobox();
     const pedidosAntes = servidor.llamadas.length;
     fireEvent.change(campo, { target: { value: 'a' } });
     fireEvent.change(campo, { target: { value: '  armazón ' } });
-    // No busca en cada tecla: ningún pedido hasta Enter o el botón.
+    // No busca en cada tecla: ningún pedido mientras no pasa la pausa (FEAT-013) ni se aprieta Enter o el botón.
     expect(servidor.llamadas.length).toBe(pedidosAntes);
 
-    // Enter en el campo envía el formulario de búsqueda.
+    // Enter en el campo envía el formulario de búsqueda enseguida, sin esperar la pausa.
     fireEvent.submit(campo.form!);
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=armaz%C3%B3n&pagina=1')).toHaveLength(1);
 
     await waitFor(() =>
       expect(filas()).toEqual([
@@ -165,7 +172,7 @@ describe('Articulos', () => {
     expect(servidor.pedidosA('GET', '/api/articulos?pagina=2')).toHaveLength(2);
 
     // Una búsqueda nueva vuelve a la primera página.
-    fireEvent.change(screen.getByLabelText(ETIQUETA_BUSQUEDA), { target: { value: '' } });
+    fireEvent.change(combobox(), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     await screen.findByText('Página 1 de 3');
   });
@@ -357,7 +364,7 @@ describe('Articulos', () => {
     await waitFor(() => expect(filas()).toHaveLength(1));
     const pedidos = servidor.llamadas.length;
 
-    const campo = screen.getByLabelText(ETIQUETA_BUSQUEDA);
+    const campo = combobox();
     fireEvent.change(campo, { target: { value: texto } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
@@ -375,7 +382,7 @@ describe('Articulos', () => {
     });
     await abrir();
 
-    fireEvent.change(screen.getByLabelText(ETIQUETA_BUSQUEDA), { target: { value: ` ${texto} ` } });
+    fireEvent.change(combobox(), { target: { value: ` ${texto} ` } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     await screen.findByText('No hay artículos que coincidan con la búsqueda.');
@@ -390,7 +397,7 @@ describe('Articulos', () => {
       'GET /api/articulos?texto=y&pagina=1': json(400, { errors: { pagina: ['Pedí una página entre 1 y 10.000.'] } }),
     });
     await abrir();
-    const campo = screen.getByLabelText(ETIQUETA_BUSQUEDA);
+    const campo = combobox();
 
     fireEvent.change(campo, { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
@@ -465,7 +472,7 @@ describe('Articulos', () => {
     });
     await abrir();
     await waitFor(() => expect(filas()).toHaveLength(1));
-    const campo = screen.getByLabelText(ETIQUETA_BUSQUEDA);
+    const campo = combobox();
 
     fireEvent.change(campo, { target: { value: 'acetato' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
@@ -489,7 +496,7 @@ describe('Articulos', () => {
     await abrir();
     fireEvent.click(await screen.findByRole('button', { name: 'Siguiente' }));
 
-    fireEvent.change(screen.getByLabelText(ETIQUETA_BUSQUEDA), { target: { value: 'lente' } });
+    fireEvent.change(combobox(), { target: { value: 'lente' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     await waitFor(() => expect(filas()[0]?.[2]).toBe('Lente orgánico'));
 
@@ -509,7 +516,7 @@ describe('Articulos', () => {
     await abrir();
     await waitFor(() => expect(filas()).toHaveLength(1));
 
-    fireEvent.change(screen.getByLabelText(ETIQUETA_BUSQUEDA), { target: { value: 'armazón' } });
+    fireEvent.change(combobox(), { target: { value: 'armazón' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     await waitFor(() => expect(filas()[0]?.[2]).toBe('Armazón metálico'));
 
@@ -521,5 +528,254 @@ describe('Articulos', () => {
     expect(servidor.pedidosA('GET', '/api/articulos?texto=armaz%C3%B3n&pagina=2')).toHaveLength(1);
     expect(servidor.pedidosA('GET', '/api/articulos?texto=armaz%C3%B3n&pagina=1')).toHaveLength(2);
     expect(servidor.pedidosA('GET', '/api/articulos?pagina=1')).toHaveLength(1);
+  });
+});
+
+/** Diez armazones: la tabla los muestra todos y las sugerencias, los primeros 8 (FR-01). */
+const DIEZ_ARMAZONES = Array.from({ length: 10 }, (_, i) => ({
+  codigo: 100 + i,
+  codigoProveedor: `ARM-${i}`,
+  descripcion: `Armazón ${i}`,
+  precioVenta: 1000 + i,
+  activo: true,
+}));
+
+/** Avanza el reloj falso (solo `setTimeout`) y deja que React procese lo que eso dispare. */
+const avanzar = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+
+/** El texto de cada sugerencia visible. */
+const sugerencias = () => screen.queryAllByRole('option').map((opcion) => opcion.textContent);
+
+/** Abre la pantalla con el reloj real, espera el listado inicial y recién entonces pasa al reloj falso. */
+async function abrirEnVivo(filasIniciales: number) {
+  await abrir();
+  await waitFor(() => expect(filas()).toHaveLength(filasIniciales));
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const campo = combobox();
+  act(() => campo.focus());
+  return campo;
+}
+
+describe('Articulos — búsqueda mientras se escribe (FEAT-013)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('Articulos_EscribirArm_SugerenciasYTablaFiltrada', async () => {
+    // AC-01: tras la pausa, una sola búsqueda llena la tabla y las primeras 8 filas son las sugerencias.
+    const servidor = servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, LENTE, ARMAZON_ACETATO], 1, 120)),
+      'GET /api/articulos?pagina=2': json(200, pagina([LENTE], 2, 120)),
+      'GET /api/articulos?texto=arm&pagina=1': json(200, pagina(DIEZ_ARMAZONES)),
+    });
+    await abrir();
+    // Un texto nuevo vuelve a la página 1 aunque se esté en otra.
+    fireEvent.click(await screen.findByRole('button', { name: 'Siguiente' }));
+    await screen.findByText('Página 2 de 3');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const campo = combobox();
+    act(() => campo.focus());
+    expect(campo.type).toBe('text');
+    expect(campo.getAttribute('autocomplete')).toBe('off');
+
+    fireEvent.change(campo, { target: { value: 'a' } });
+    fireEvent.change(campo, { target: { value: 'ar' } });
+    fireEvent.change(campo, { target: { value: 'arm' } });
+    await avanzar(299);
+    // No busca en cada tecla: espera la pausa.
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=arm&pagina=1')).toHaveLength(0);
+    await avanzar(1);
+
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=arm&pagina=1')).toHaveLength(1);
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=ar&pagina=1')).toHaveLength(0);
+    expect(campo.getAttribute('aria-expanded')).toBe('true');
+    expect(sugerencias()).toEqual(DIEZ_ARMAZONES.slice(0, 8).map((a) => `${a.codigo} · ${a.codigoProveedor} · ${a.descripcion}`));
+    expect(filas()).toHaveLength(10);
+    expect(filas()[9]?.[2]).toBe('Armazón 9');
+    expect(screen.getByText('Página 1 de 1')).toBeTruthy();
+    expect(within(campo.closest('.campo-busqueda')!).getByRole('status').textContent).toBe('8 sugerencias');
+  });
+
+  it('Articulos_UnCaracter_SinSugerencias', async () => {
+    // AC-02 y D-07: con 1 carácter no pide y la tabla queda como estaba; vacío vuelve a la lista inicial.
+    const servidor = servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, LENTE, ARMAZON_ACETATO])),
+      'GET /api/articulos?texto=arm&pagina=1': json(200, pagina([ARMAZON, ARMAZON_ACETATO])),
+    });
+    const campo = await abrirEnVivo(3);
+
+    fireEvent.change(campo, { target: { value: 'arm' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.change(campo, { target: { value: ' a ' } });
+    // Las sugerencias de "arm" no quedan para elegir.
+    expect(sugerencias()).toEqual([]);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    await avanzar(300);
+    expect(servidor.llamadas.filter((l) => l.ruta.includes('texto=a&'))).toEqual([]);
+    expect(filas().map((f) => f[0])).toEqual(['7', '9']);
+    expect(sugerencias()).toEqual([]);
+
+    const pedidosIniciales = servidor.pedidosA('GET', '/api/articulos?pagina=1').length;
+    fireEvent.change(campo, { target: { value: '' } });
+    await avanzar(300);
+    // La lista inicial, la misma de abrir la pantalla, sin sugerencias abiertas.
+    expect(servidor.pedidosA('GET', '/api/articulos?pagina=1')).toHaveLength(pedidosIniciales + 1);
+    expect(filas().map((f) => f[0])).toEqual(['7', '8', '9']);
+    expect(sugerencias()).toEqual([]);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('Articulos_ElegirSugerencia_AbreLaEdicion', async () => {
+    // AC-03: elegir la sugerencia del artículo 7 abre su edición.
+    servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([LENTE])),
+      'GET /api/articulos?texto=arm&pagina=1': json(200, pagina([ARMAZON_ACETATO, ARMAZON])),
+    });
+    const campo = await abrirEnVivo(1);
+
+    fireEvent.change(campo, { target: { value: 'arm' } });
+    await avanzar(300);
+    fireEvent.keyDown(campo, { key: 'ArrowDown' });
+    fireEvent.keyDown(campo, { key: 'ArrowDown' });
+    fireEvent.keyDown(campo, { key: 'Enter' });
+
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/articulos/7');
+  });
+
+  it('Articulos_Buscar_ComoAntes', async () => {
+    // AC-08 y FR-10: "Buscar" y Enter sin una opción marcada buscan enseguida, cancelan la pausa y cierran la lista.
+    const servidor = servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, LENTE, ARMAZON_ACETATO])),
+      'GET /api/articulos?texto=armaz%C3%B3n&pagina=1': json(200, pagina([ARMAZON, ARMAZON_ACETATO])),
+      'GET /api/articulos?texto=lente&pagina=1': json(200, pagina([LENTE])),
+    });
+    const campo = await abrirEnVivo(3);
+
+    fireEvent.change(campo, { target: { value: '  armazón ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=armaz%C3%B3n&pagina=1')).toHaveLength(1);
+    await avanzar(300);
+    // La pausa quedó cancelada: un solo pedido.
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=armaz%C3%B3n&pagina=1')).toHaveLength(1);
+    expect(filas().map((f) => f[0])).toEqual(['7', '9']);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+
+    // Enter con la lista abierta y sin opción marcada: cierra la lista y busca como el botón.
+    fireEvent.change(campo, { target: { value: 'lente' } });
+    await avanzar(300);
+    expect(campo.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.keyDown(campo, { key: 'Enter' });
+    fireEvent.submit(campo.form!);
+    await avanzar(300);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=lente&pagina=1')).toHaveLength(2);
+    expect(filas().map((f) => f[0])).toEqual(['8']);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+  });
+
+  it('Articulos_BuscarConLaListaAbierta_LaCierraYLaRespuestaNoLaReabre', async () => {
+    // FR-10: con sugerencias a la vista, "Buscar" cierra la lista (aunque el clic no saque el foco del campo) y su
+    // respuesta no la vuelve a abrir.
+    const servidor = servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, LENTE, ARMAZON_ACETATO])),
+      'GET /api/articulos?texto=arm&pagina=1': json(200, pagina([ARMAZON, ARMAZON_ACETATO])),
+    });
+    const campo = await abrirEnVivo(3);
+
+    fireEvent.change(campo, { target: { value: 'arm' } });
+    await avanzar(300);
+    expect(campo.getAttribute('aria-expanded')).toBe('true');
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    await avanzar(300);
+
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=arm&pagina=1')).toHaveLength(2);
+    expect(document.activeElement).toBe(campo);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('Articulos_UnCaracterMientrasCargaLaListaInicial_LaListaLlegaIgual', async () => {
+    // D-07: sin una tabla mostrada todavía, descartar no cancela la lista inicial (es la que se vuelve a ver).
+    const inicial = diferida(pagina([ARMAZON, LENTE]));
+    servidorFalso({ ...conSesion, 'GET /api/articulos?pagina=1': inicial.respuesta });
+    await abrir();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    fireEvent.change(combobox(), { target: { value: 'a' } });
+    await avanzar(300);
+    await inicial.liberar();
+    await avanzar(0);
+
+    expect(filas().map((f) => f[0])).toEqual(['7', '8']);
+  });
+
+  it.each([
+    ['1 carácter', 'a'],
+    ['un texto inválido de 2 o más caracteres', `ab${String.fromCharCode(0xd83d)}`],
+  ])('Articulos_RespuestaTardiaTrasDescartar_%s_TablaComoEstaba', async (_caso, descartado) => {
+    // D-07: lo que no se busca en vivo cancela también el pedido en curso; su respuesta no cambia la tabla ni deja
+    // sugerencias, y la paginación sigue con lo que muestra la tabla.
+    const tardia = diferida(pagina([LENTE]));
+    const servidor = servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([ARMAZON, LENTE, ARMAZON_ACETATO], 1, 120)),
+      'GET /api/articulos?pagina=2': json(200, pagina([LENTE], 2, 120)),
+      'GET /api/articulos?texto=ab&pagina=1': tardia.respuesta,
+    });
+    const campo = await abrirEnVivo(3);
+
+    fireEvent.change(campo, { target: { value: 'ab' } });
+    await avanzar(300);
+    expect(servidor.pedidosA('GET', '/api/articulos?texto=ab&pagina=1')).toHaveLength(1);
+    fireEvent.change(campo, { target: { value: descartado } });
+    await avanzar(300);
+    await tardia.liberar();
+    await avanzar(0);
+
+    expect(filas().map((f) => f[0])).toEqual(['7', '8', '9']);
+    expect(sugerencias()).toEqual([]);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    // Sin un pedido pendiente: los botones de fila y la paginación siguen habilitados.
+    expect((within(filaDe(7)).getByRole('button', { name: DESACTIVAR_7 }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Siguiente' }));
+    await avanzar(0);
+    expect(servidor.pedidosA('GET', '/api/articulos?pagina=2')).toHaveLength(1);
+    expect(servidor.llamadas.filter((l) => l.ruta.startsWith('/api/articulos?texto=ab&pagina=2'))).toEqual([]);
+  });
+
+  it('Articulos_ErrorDeBusqueda_SinSugerencias', async () => {
+    // AC-10: la búsqueda falla; se ocultan las sugerencias y se ve el mensaje de hoy.
+    servidorFalso({
+      ...conSesion,
+      'GET /api/articulos?pagina=1': json(200, pagina([LENTE])),
+      'GET /api/articulos?texto=arm&pagina=1': json(200, pagina([ARMAZON, ARMAZON_ACETATO])),
+      'GET /api/articulos?texto=armx&pagina=1': sinRed,
+    });
+    const campo = await abrirEnVivo(1);
+
+    fireEvent.change(campo, { target: { value: 'arm' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.change(campo, { target: { value: 'armx' } });
+    await avanzar(300);
+
+    expect(sugerencias()).toEqual([]);
+    expect(campo.getAttribute('aria-expanded')).toBe('false');
+    expect(mensajes()).toEqual([MENSAJE_SIN_CONEXION]);
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });

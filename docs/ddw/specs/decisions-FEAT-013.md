@@ -113,3 +113,17 @@ recomendada y la que menos tiempo insuma".
 - `servidorFalso` respeta `init.signal` y rechaza con `AbortError`.
 - Las pruebas que fijaban "no busca en cada tecla", "no envía otra en curso", el `select` o un único pedido se
   actualizan al comportamiento nuevo, sin borrar lo que cubrían.
+
+## Decisiones del agente durante CODE (2026-11-18)
+
+### D-19: en Artículos y en el buscador del presupuesto, el efecto de la pantalla hace el pedido
+- Como pide el Block 2 ("la pausa alimenta la `consulta` que ya existe"), el hook aporta la pausa, la decisión y el
+  descarte; el pedido, su número (`vigente`) y su `AbortController` siguen en el efecto de la pantalla.
+- `alDescartar` cancela también el pedido real en curso, para que una respuesta tardía no cambie la tabla (D-07).
+- El envío manual llama a `cancelar()` y programa la consulta sin sugerencias, sin depender del orden interno del hook.
+- Es una excepción de esas dos pantallas. En el Block 3, presupuestos y facturas usan el hook completo
+  (`buscar(clave, senal)` llama a la Api y `alResultado` tiene el `switch` de la pantalla), porque D-08 lo necesita.
+
+### D-20: ruta de la búsqueda de facturas
+- El spec dice `POST /api/facturas/busqueda`; la ruta real, que usa el código, es `POST /api/facturacion/busqueda`.
+  No cambia nada: se deja anotado para el Block 3 y para VERIFY.
