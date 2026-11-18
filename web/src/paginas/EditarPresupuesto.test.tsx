@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, vacia } from '../pruebas/servidorFalso';
@@ -158,7 +158,8 @@ describe('EditarPresupuesto', () => {
     await abrir();
 
     fireEvent.click(screen.getByRole('button', { name: 'Quitar línea 1' }));
-    fireEvent.change(campo('Texto a buscar'), { target: { value: 'armazon' } });
+    // FEAT-013: el buscador es un combobox; la lista de sugerencias también se nombra con la etiqueta.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Texto a buscar' }), { target: { value: 'armazon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Agregar 7 Armazón metálico' }));
 
@@ -305,5 +306,27 @@ describe('EditarPresupuesto', () => {
     await abrir();
 
     expect(screen.getByRole('link', { name: 'Volver al presupuesto' }).getAttribute('href')).toBe('/presupuestos/155');
+  });
+
+  it('Editar_ElegirSugerencia_AgregaLaLineaConElPrecioDeHoy', async () => {
+    // FEAT-013 (AC-06, D-09): en la edición, elegir una sugerencia agrega la línea con el precio actual del catálogo.
+    servidor();
+    await abrir();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const buscador = screen.getByRole('combobox', { name: 'Texto a buscar' });
+      act(() => buscador.focus());
+      fireEvent.change(buscador, { target: { value: 'armazon' } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      fireEvent.keyDown(buscador, { key: 'ArrowDown' });
+      fireEvent.keyDown(buscador, { key: 'Enter' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(lineas()).toHaveLength(3);
+    expect(lineas()[2]).toEqual(['7', 'Armazón metálico', '2.000,00', '1', '0', '2.000,00', '2.000,00', 'Quitar']);
   });
 });

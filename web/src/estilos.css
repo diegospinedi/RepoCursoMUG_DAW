@@ -154,7 +154,6 @@ body {
 }
 
 .campo input:not([type='file'], [type='radio'], [type='checkbox']),
-.campo select,
 .tabla input:not([type='radio'], [type='checkbox']) {
   box-sizing: border-box;
   min-height: var(--alto-control);
@@ -179,7 +178,6 @@ body {
 }
 
 .campo input:focus-visible,
-.campo select:focus-visible,
 .tabla input:focus-visible {
   border-color: var(--color-primario);
   outline: 2px solid var(--color-primario);
@@ -191,7 +189,6 @@ body {
  * foco conserva el borde de error y suma el contorno del primario.
  */
 .campo input[aria-invalid='true'],
-.campo select[aria-invalid='true'],
 .tabla input[aria-invalid='true'] {
   border-color: var(--color-error);
   box-shadow: inset 0 0 0 1px var(--color-error);
@@ -209,6 +206,59 @@ body {
   background-color: var(--fondo-solo-lectura);
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+/*
+ * Campos con sugerencias (FEAT-013, ADR-032): la lista se abre debajo del campo, sobre lo que sigue, y la opción
+ * marcada con el teclado se distingue por el fondo y por un borde a la izquierda (no solo por el color).
+ */
+.campo-busqueda {
+  position: relative;
+}
+
+.campo-busqueda input {
+  width: 100%;
+}
+
+.sugerencias {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + var(--espacio-1));
+  right: 0;
+  left: 0;
+  margin: 0;
+  padding: var(--espacio-1) 0;
+  list-style: none;
+  background-color: var(--fondo-tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-control);
+  box-shadow: var(--sombra-elevada);
+}
+
+.sugerencia {
+  padding: var(--espacio-2) var(--espacio-3);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.sugerencia:hover {
+  background-color: color-mix(in srgb, var(--color-primario) var(--mezcla-hover-fila), white);
+}
+
+.sugerencia[aria-selected='true'] {
+  background-color: color-mix(in srgb, var(--color-primario) var(--mezcla-hover-secundario), white);
+  border-left-color: var(--color-primario);
+}
+
+/* El anuncio de la cantidad: lo oye el lector de pantalla, no se ve (sin display: none, que lo silenciaría). */
+.campo-busqueda__anuncio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 /* El selector de archivo: el botón del navegador se dibuja como el botón secundario. */
@@ -760,9 +810,18 @@ dialog::backdrop {
   .tarjeta-menu__icono,
   button,
   .campo input:not([type='file'], [type='radio'], [type='checkbox']),
-  .campo select,
   .tabla input:not([type='radio'], [type='checkbox']),
-  .tabla tbody tr {
+  .tabla tbody tr,
+  .sugerencia {
     transition: none;
+  }
+}
+
+/* Colores forzados (alto contraste): la opción marcada con el teclado usa los colores de selección del sistema. */
+@media (forced-colors: active) {
+  .sugerencia[aria-selected='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
   }
 }

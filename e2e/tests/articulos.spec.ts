@@ -72,7 +72,8 @@ const descripcion = (page: Page) => page.getByLabel(ETIQUETA_DESCRIPCION, { exac
 const costo = (page: Page) => page.getByLabel(ETIQUETA_COSTO, { exact: true });
 const margen = (page: Page) => page.getByLabel(ETIQUETA_MARGEN, { exact: true });
 const precioVenta = (page: Page) => page.getByLabel(ETIQUETA_PRECIO_VENTA, { exact: true });
-const condicion = (page: Page) => page.getByLabel(ETIQUETA_CONDICION, { exact: true });
+// FEAT-013 (D-13, D-18): la condición fiscal es un campo con filtro; la etiqueta nombra también su lista.
+const condicion = (page: Page) => page.getByRole('combobox', { name: ETIQUETA_CONDICION, exact: true });
 const multiplo = (page: Page) => page.getByLabel(ETIQUETA_MULTIPLO, { exact: true });
 
 const mensajeDeAlta = (page: Page) => page.getByRole('status').filter({ hasText: /^Artículo grabado con el código/ });
@@ -386,7 +387,15 @@ test('articulos: múltiplo 50 redondea a 1.850,00', async ({ page }) => {
 test('articulos: Monotributo da 1.815,00', async ({ page }) => {
   await ingresarYAbrir(page);
 
-  await grabarConfiguracion(page, () => condicion(page).selectOption({ label: 'Monotributo' }));
+  await grabarConfiguracion(page, async () => {
+    // Escribe parte de la condición y elige Monotributo de la lista, como la operadora (FR-13 de FEAT-013).
+    await condicion(page).fill('mono');
+    await page
+      .getByRole('listbox', { name: ETIQUETA_CONDICION, exact: true })
+      .getByRole('option', { name: 'Monotributo' })
+      .click();
+    await expect(condicion(page)).toHaveValue('Monotributo');
+  });
   expect(await configuracionVigente(page)).toMatchObject({ condicionFiscal: 'monotributo', multiploRedondeo: 0.01 });
 
   await altaGrabada(

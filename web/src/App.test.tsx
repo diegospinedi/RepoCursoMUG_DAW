@@ -324,10 +324,11 @@ const PANTALLAS: Pantalla[] = [
     interactuar: async () => {
       await screen.findByRole('button', { name: 'Grabar datos del emisor' });
       await screen.findByRole('button', { name: 'Grabar ubicación del backup' });
-      // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía.
-      await screen.findByLabelText('Alícuota de IVA (%)');
+      // D-06: la alícuota 19 guardada antes de FR-26 no queda elegida y no se envía. FEAT-013: el campo es un combobox
+      // (su lista también se nombra con la etiqueta) y el mensaje es el de FR-14.
+      await screen.findByRole('combobox', { name: 'Alícuota de IVA (%)' });
       fireEvent.click(screen.getByRole('button', { name: 'Grabar' }));
-      expect(await screen.findByText('La alícuota de IVA debe ser 0, 2,5, 5, 10,5, 21 o 27.')).toBeTruthy();
+      expect(await screen.findByText('Elegí una alícuota de la lista.')).toBeTruthy();
     },
   },
   {
@@ -440,7 +441,8 @@ const PANTALLAS: Pantalla[] = [
       }),
     titulo: 'Nuevo presupuesto',
     interactuar: async () => {
-      fireEvent.change(await screen.findByLabelText('Texto a buscar'), { target: { value: 'armazon' } });
+      // FEAT-013: el buscador es un combobox; la lista de sugerencias también se nombra con la etiqueta.
+      fireEvent.change(await screen.findByRole('combobox', { name: 'Texto a buscar' }), { target: { value: 'armazon' } });
       fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
       fireEvent.click(await screen.findByRole('button', { name: 'Agregar 1 Armazón metálico' }));
       fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ana@' } });

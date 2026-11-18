@@ -126,7 +126,12 @@ const dato = (page: Page, etiqueta: string) =>
     .locator('dl.datos > div')
     .filter({ has: page.locator('dt', { hasText: new RegExp(`^${etiqueta.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }) })
     .locator('dd');
-const campo = (page: Page, etiqueta: string) => page.getByLabel(etiqueta, { exact: true });
+// FEAT-013: el buscador de artículos es un campo con sugerencias; la etiqueta nombra también su lista (D-11), así que
+// va por el rol. Los demás campos siguen por su etiqueta.
+const campo = (page: Page, etiqueta: string) =>
+  etiqueta === 'Texto a buscar'
+    ? page.getByRole('combobox', { name: etiqueta, exact: true })
+    : page.getByLabel(etiqueta, { exact: true });
 const cantidad = (page: Page, n: number) => campo(page, `Cantidad de la línea ${n}`);
 const precioUnitario = (page: Page, n: number) => campo(page, `Precio unitario de la línea ${n}`);
 const botonGrabar = (page: Page) => page.getByRole('button', { name: 'Grabar', exact: true });

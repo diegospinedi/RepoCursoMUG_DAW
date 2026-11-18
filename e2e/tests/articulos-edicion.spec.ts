@@ -126,8 +126,13 @@ async function configuracionVigente(request: APIRequestContext) {
 async function configurarAlicuota21YMultiplo001(page: Page) {
   await page.getByRole('link', { name: 'Configuración' }).click();
   await expect(page).toHaveURL(/\/configuracion$/);
-  await page.getByLabel(ETIQUETA_ALICUOTA, { exact: true }).selectOption('21');
-  await page.getByLabel(ETIQUETA_CONDICION, { exact: true }).selectOption('responsable_inscripto');
+  // FEAT-013 (D-13): los dos son campos con filtro que muestran la etiqueta; escribirla entera vale como elegirla.
+  const alicuota = page.getByRole('combobox', { name: ETIQUETA_ALICUOTA, exact: true });
+  const condicion = page.getByRole('combobox', { name: ETIQUETA_CONDICION, exact: true });
+  await alicuota.fill('21');
+  await condicion.fill('Responsable Inscripto');
+  await expect(alicuota).toHaveValue('21');
+  await expect(condicion).toHaveValue('Responsable Inscripto');
   await page.getByLabel(ETIQUETA_MULTIPLO, { exact: true }).fill('0,01');
   const [respuesta] = await Promise.all([
     page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/configuracion'),
@@ -153,7 +158,8 @@ async function abrirListado(page: Page) {
 
 /** Busca `texto` con el botón Buscar y espera la respuesta de esa búsqueda. */
 async function buscar(page: Page, texto: string) {
-  await page.getByLabel(ETIQUETA_BUSQUEDA, { exact: true }).fill(texto);
+  // FEAT-013: el buscador es un campo con sugerencias; la etiqueta nombra también su lista (D-11).
+  await page.getByRole('combobox', { name: ETIQUETA_BUSQUEDA, exact: true }).fill(texto);
   const [respuesta] = await Promise.all([
     page.waitForResponse(
       (r) =>

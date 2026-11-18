@@ -10,6 +10,10 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  *
  * FEAT-007: la alícuota se elige de la lista de las 6 de ARCA (AC-28), la 19 por la Api se rechaza (AC-27) y el punto
  * de venta fuera de rango no se envía ni se graba (AC-31); al final se graban una alícuota y un punto de venta.
+ *
+ * FEAT-013 (D-13, D-18): la alícuota y la condición fiscal son campos con filtro (`combobox`), no desplegables: se ve la
+ * etiqueta ("10,5", "Responsable Inscripto"), la lista se abre al escribir o con flecha abajo, y se elige una opción
+ * escribiendo parte de ella y tocándola, como la operadora.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -82,8 +86,9 @@ function campoContrasena(page: Page) {
   return page.getByLabel('Contraseña', { exact: true });
 }
 
-const alicuota = (page: Page) => page.getByLabel(ETIQUETA_ALICUOTA, { exact: true });
-const condicion = (page: Page) => page.getByLabel(ETIQUETA_CONDICION, { exact: true });
+// Con FEAT-013 la etiqueta nombra también la lista de opciones (D-11): los dos campos con filtro se buscan por su rol.
+const alicuota = (page: Page) => page.getByRole('combobox', { name: ETIQUETA_ALICUOTA, exact: true });
+const condicion = (page: Page) => page.getByRole('combobox', { name: ETIQUETA_CONDICION, exact: true });
 const multiplo = (page: Page) => page.getByLabel(ETIQUETA_MULTIPLO, { exact: true });
 const tope = (page: Page) => page.getByLabel(ETIQUETA_TOPE, { exact: true });
 const puntoVenta = (page: Page) => page.getByLabel(ETIQUETA_PUNTO_VENTA, { exact: true });
@@ -150,10 +155,25 @@ async function rechazadoSinGrabar(page: Page, campo: Locator, mensaje: string) {
   expect(grabaciones, 'La pantalla envió un valor que debía rechazar').toEqual([]);
 }
 
-/** La opción elegida en el selector de condición fiscal. */
-const condicionElegida = (page: Page) => condicion(page).getByRole('option', { selected: true });
-/** La opción elegida en la lista de alícuotas. */
-const alicuotaElegida = (page: Page) => alicuota(page).getByRole('option', { selected: true });
+/** Las opciones que muestra la lista del campo con filtro (oculta mientras está cerrada). */
+const opciones = (page: Page, etiqueta: string) =>
+  page.getByRole('listbox', { name: etiqueta, exact: true }).getByRole('option');
+
+/**
+ * Las opciones de la lista completa: con el campo vacío la lista muestra todas (D-13). Deja el campo vacío; la prueba
+ * que la llama no graba después.
+ */
+async function opcionesCompletas(page: Page, campo: Locator, etiqueta: string) {
+  await campo.fill('');
+  return opciones(page, etiqueta);
+}
+
+/** Escribe parte de la opción y la elige de la lista, como la operadora (FR-13). */
+async function elegir(page: Page, campo: Locator, etiqueta: string, escrito: string, opcion: string) {
+  await campo.fill(escrito);
+  await opciones(page, etiqueta).filter({ hasText: new RegExp(`^${opcion}$`) }).click();
+  await expect(campo).toHaveValue(opcion);
+}
 
 /** POST directo a la Api con la sesión de la página: devuelve el código y el cuerpo. */
 async function grabarPorLaApi(page: Page, cambios: Record<string, unknown>) {
@@ -170,15 +190,18 @@ test('configuracion: primera vez muestra 21, Responsable Inscripto y 0,01', asyn
   await expect(page.getByRole('heading', { name: 'Sesión iniciada' })).toBeVisible();
   await abrirDesdeElInicio(page);
 
+  // La guardada se ve en el campo con su etiqueta (D-13 de FEAT-013).
   await expect(alicuota(page)).toHaveValue('21');
-  // AC-28: la lista con las 6 alícuotas de ARCA y la guardada elegida.
-  await expect(alicuota(page).getByRole('option')).toHaveText(OPCIONES_ALICUOTA);
-  await expect(alicuotaElegida(page)).toHaveText('21');
-  await expect(condicion(page)).toHaveValue('responsable_inscripto');
-  await expect(condicionElegida(page)).toHaveText('Responsable Inscripto');
+  await expect(condicion(page)).toHaveValue('Responsable Inscripto');
   await expect(multiplo(page)).toHaveValue('0,01');
   await expect(tope(page)).toHaveValue('');
   await expect(puntoVenta(page)).toHaveValue('');
+  // AC-28: la lista con las 6 alícuotas de ARCA; la condición, con las 2.
+  await expect(await opcionesCompletas(page, alicuota(page), ETIQUETA_ALICUOTA)).toHaveText(OPCIONES_ALICUOTA);
+  await expect(await opcionesCompletas(page, condicion(page), ETIQUETA_CONDICION)).toHaveText([
+    'Responsable Inscripto',
+    'Monotributo',
+  ]);
   expect(await grabado(page)).toEqual(INICIALES);
 });
 
@@ -199,10 +222,12 @@ test('configuración: alícuota 19 por la Api rechazada', async ({ page }) => {
   expect(cuerpo.errors).toEqual({ alicuotaIva: [MENSAJE_ALICUOTA_NO_ADMITIDA] });
   expect(await grabado(page)).toEqual(INICIALES);
 
-  // Desde la pantalla la 19 no se puede elegir: la lista solo tiene las 6.
+  // Desde la pantalla la 19 no se puede elegir: la lista solo tiene las 6 y "19" no muestra ninguna.
   await volverAAbrir(page);
-  await expect(alicuota(page).getByRole('option')).toHaveText(OPCIONES_ALICUOTA);
-  await expect(alicuotaElegida(page)).toHaveText('21');
+  await expect(alicuota(page)).toHaveValue('21');
+  await alicuota(page).fill('19');
+  await expect(opciones(page, ETIQUETA_ALICUOTA)).toHaveCount(0);
+  await expect(await opcionesCompletas(page, alicuota(page), ETIQUETA_ALICUOTA)).toHaveText(OPCIONES_ALICUOTA);
   expect(grabaciones, 'La pantalla no debía enviar nada').toEqual([]);
 });
 
@@ -255,13 +280,12 @@ test('configuracion: tope 0 rechazado junto al campo', async ({ page }) => {
 test('configuracion: Monotributo queda vigente al volver a abrir', async ({ page }) => {
   await ingresarYAbrir(page);
 
-  await condicion(page).selectOption({ label: 'Monotributo' });
+  await elegir(page, condicion(page), ETIQUETA_CONDICION, 'mono', 'Monotributo');
   expect(await grabar(page)).toBe(200);
   await expect(page.getByRole('status').filter({ hasText: MENSAJE_GRABADA })).toBeVisible();
 
   await volverAAbrir(page);
-  await expect(condicion(page)).toHaveValue('monotributo');
-  await expect(condicionElegida(page)).toHaveText('Monotributo');
+  await expect(condicion(page)).toHaveValue('Monotributo');
   expect((await grabado(page)).condicionFiscal).toBe('monotributo');
 });
 
@@ -297,17 +321,16 @@ test('configuración: elegir alícuota y punto de venta y grabar', async ({ page
   await ingresarYAbrir(page);
 
   // AC-28 y AC-31: se elige 10,5 de la lista y se carga el punto de venta 3.
-  await alicuota(page).selectOption('10,5');
+  await elegir(page, alicuota(page), ETIQUETA_ALICUOTA, '10', '10,5');
   await puntoVenta(page).fill('3');
   expect(await grabar(page)).toBe(200);
   await expect(page.getByRole('status').filter({ hasText: MENSAJE_GRABADA })).toBeVisible();
-  await expect(alicuotaElegida(page)).toHaveText('10,5');
+  await expect(alicuota(page)).toHaveValue('10,5');
   await expect(puntoVenta(page)).toHaveValue('3');
 
-  // Al volver a abrir, la guardada queda elegida y el punto de venta se ve.
+  // Al volver a abrir, la guardada se ve en el campo y el punto de venta también.
   await volverAAbrir(page);
   await expect(alicuota(page)).toHaveValue('10,5');
-  await expect(alicuotaElegida(page)).toHaveText('10,5');
   await expect(puntoVenta(page)).toHaveValue('3');
   expect(await grabado(page)).toMatchObject({ alicuotaIva: 10.5, puntoVenta: 3 });
 

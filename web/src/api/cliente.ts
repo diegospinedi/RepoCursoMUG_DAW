@@ -225,6 +225,25 @@ export type Resultado<T> =
   /** 401 sin cuerpo: no hay sesión (o venció). */
   | { tipo: 'sinSesion' };
 
+/**
+ * Un pedido que quien lo hizo canceló con su señal (D-05 de FEAT-013): no es un error ni una falla de red, y la pantalla
+ * no muestra nada. Solo lo devuelven las búsquedas que reciben una señal.
+ */
+export interface Cancelado {
+  tipo: 'cancelado';
+}
+
+const CANCELADO: Cancelado = { tipo: 'cancelado' };
+
+/**
+ * El resultado de un pedido hecho con una señal: `cancelado` si la señal se canceló antes de terminar, aunque `fetch`
+ * haya rechazado con `AbortError` (que {@link hacerPedido} traduce como falla de red) o la respuesta haya llegado igual.
+ */
+async function cancelable<R>(senal: AbortSignal | undefined, pedido: Promise<R>): Promise<R | Cancelado> {
+  const resultado = await pedido;
+  return senal?.aborted ? CANCELADO : resultado;
+}
+
 export interface EstadoAcceso {
   contrasenaDefinida: boolean;
 }
@@ -271,6 +290,8 @@ interface Opciones {
   mensaje429?: string;
   /** Mensaje general de una respuesta exitosa ilegible en {@link pedir}; sin él, {@link MENSAJE_SIN_CONEXION}. */
   mensajeIlegible?: string;
+  /** Señal que cancela el pedido (D-05 de FEAT-013); va tal cual a `fetch`. */
+  senal?: AbortSignal;
 }
 
 /** Pedido cuya respuesta exitosa trae datos: `leer` valida la forma del JSON. */
@@ -301,8 +322,11 @@ async function enviar(opciones: Opciones): Promise<{ tipo: 'respuesta'; respuest
 }
 
 /** El `fetch` de un pedido: la respuesta tal cual (con cualquier código), o el fallo de red ya traducido. */
-async function hacerPedido({ metodo, ruta, cuerpo }: Opciones): Promise<Response | Fallo> {
+async function hacerPedido({ metodo, ruta, cuerpo, senal }: Opciones): Promise<Response | Fallo> {
   const init: RequestInit = { method: metodo, credentials: 'same-origin', cache: 'no-store' };
+  if (senal !== undefined) {
+    init.signal = senal;
+  }
   if (metodo === 'POST' || metodo === 'PUT') {
     // La Api exige Content-Type: application/json en todo POST y PUT, aunque no lleve cuerpo (R-04; D-11: si no, 415).
     init.headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -927,13 +951,22 @@ export const consultarArticulo = (codigo: number): Promise<Resultado<ArticuloGra
  * Una página del catálogo (D-01, FR-04). El texto viaja en la query string (D-12) y se omite si está vacío (lista
  * todo, D-06); la pantalla ya lo recortó y validó. Las filas no traen costo ni margen. Con `soloActivos` (la búsqueda
  * de las líneas del presupuesto, FR-09, D-15) agrega `soloActivos=true`; en falso no lo envía, así el listado del
- * catálogo sigue pidiendo la misma URL de siempre.
+ * catálogo sigue pidiendo la misma URL de siempre. Con una `senal` (la búsqueda en vivo, D-05 de FEAT-013), un pedido
+ * cancelado devuelve {@link Cancelado}.
  */
-export const buscarArticulos = (
+export function buscarArticulos(texto: string, pagina: number, soloActivos?: boolean): Promise<Resultado<PaginaArticulos>>;
+export function buscarArticulos(
+  texto: string,
+  pagina: number,
+  soloActivos: boolean,
+  senal: AbortSignal | undefined,
+): Promise<Resultado<PaginaArticulos> | Cancelado>;
+export function buscarArticulos(
   texto: string,
   pagina: number,
   soloActivos = false,
-): Promise<Resultado<PaginaArticulos>> => {
+  senal?: AbortSignal,
+): Promise<Resultado<PaginaArticulos> | Cancelado> {
   const parametros = new URLSearchParams();
   if (texto !== '') {
     parametros.set(CAMPO_TEXTO, texto);
@@ -942,8 +975,8 @@ export const buscarArticulos = (
   if (soloActivos) {
     parametros.set(CAMPO_SOLO_ACTIVOS, 'true');
   }
-  return pedir({ metodo: 'GET', ruta: `/api/articulos?${parametros.toString()}` }, leerPagina);
-};
+  return cancelable(senal, pedir({ metodo: 'GET', ruta: `/api/articulos?${parametros.toString()}`, senal }, leerPagina));
+}
 
 /** Parámetro de `GET /api/articulos` que deja solo los artículos activos (D-15). */
 export const CAMPO_SOLO_ACTIVOS = 'soloActivos';
@@ -1872,30 +1905,43 @@ function cuerpoBusqueda(campos: readonly [string, string][], pagina: number): Re
  * Busca presupuestos (FEAT-006, FR-01 a FR-09) con `POST /api/presupuestos/busqueda`: los filtros viajan en el cuerpo
  * JSON y nunca en la URL (ADR-019, R-02). Un 400 devuelve TODOS los campos de `errors`; un 413, el mensaje general
  * {@link MENSAJE_BUSQUEDA_GRANDE}; un 401 sin cuerpo avisa a {@link alPerderLaSesion}; una falla de red, un 5xx o una
- * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}.
+ * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}. Con una `senal` (la búsqueda en vivo, D-05 de
+ * FEAT-013), un pedido cancelado devuelve {@link Cancelado}.
  */
-export const buscarPresupuestos = (
+export function buscarPresupuestos(filtro: FiltroPresupuestos, pagina: number): Promise<ResultadoBusquedaPresupuestos>;
+export function buscarPresupuestos(
   filtro: FiltroPresupuestos,
   pagina: number,
-): Promise<ResultadoBusquedaPresupuestos> =>
-  grabarConCampos(
-    {
-      metodo: 'POST',
-      ruta: '/api/presupuestos/busqueda',
-      cuerpo: cuerpoBusqueda(
-        [
-          [CAMPO_APELLIDO, filtro.apellido],
-          [CAMPO_NOMBRE, filtro.nombre],
-          [CAMPO_DNI, filtro.dni],
-          [CAMPO_DESDE, filtro.desde],
-          [CAMPO_HASTA, filtro.hasta],
-        ],
-        pagina,
-      ),
-      mensaje413: MENSAJE_BUSQUEDA_GRANDE,
-    },
-    leerPaginaPresupuestos,
+  senal: AbortSignal | undefined,
+): Promise<ResultadoBusquedaPresupuestos | Cancelado>;
+export function buscarPresupuestos(
+  filtro: FiltroPresupuestos,
+  pagina: number,
+  senal?: AbortSignal,
+): Promise<ResultadoBusquedaPresupuestos | Cancelado> {
+  return cancelable(
+    senal,
+    grabarConCampos(
+      {
+        metodo: 'POST',
+        ruta: '/api/presupuestos/busqueda',
+        cuerpo: cuerpoBusqueda(
+          [
+            [CAMPO_APELLIDO, filtro.apellido],
+            [CAMPO_NOMBRE, filtro.nombre],
+            [CAMPO_DNI, filtro.dni],
+            [CAMPO_DESDE, filtro.desde],
+            [CAMPO_HASTA, filtro.hasta],
+          ],
+          pagina,
+        ),
+        mensaje413: MENSAJE_BUSQUEDA_GRANDE,
+        senal,
+      },
+      leerPaginaPresupuestos,
+    ),
   );
+}
 
 /*
  * Facturas: búsqueda, detalle y PDF (FEAT-009, FR-04, FR-05, FR-16 a FR-24).
@@ -2095,28 +2141,44 @@ const leerFacturaDetalle: Lector<FacturaDetalle> = (cuerpo) => {
  * Busca facturas (FR-16 a FR-23) con `POST /api/facturacion/busqueda` (D-28): los filtros viajan en el cuerpo JSON y
  * nunca en la URL (ADR-019). Como {@link buscarPresupuestos}: un 400 devuelve todos los campos de `errors`; un 413,
  * {@link MENSAJE_BUSQUEDA_GRANDE}; un 401 sin cuerpo avisa a {@link alPerderLaSesion}; una falla de red, un 5xx o una
- * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}.
+ * respuesta con forma inesperada, {@link MENSAJE_SIN_CONEXION}. Con una `senal`, un pedido cancelado devuelve
+ * {@link Cancelado}.
  */
-export const buscarFacturas = (filtro: FiltroFacturas, pagina: number): Promise<ResultadoBusquedaFacturas> =>
-  grabarConCampos(
-    {
-      metodo: 'POST',
-      ruta: '/api/facturacion/busqueda',
-      cuerpo: cuerpoBusqueda(
-        [
-          [CAMPO_APELLIDO, filtro.apellido],
-          [CAMPO_NOMBRE, filtro.nombre],
-          [CAMPO_DNI, filtro.dni],
-          [CAMPO_NUMERO_COMPROBANTE, filtro.numero],
-          [CAMPO_DESDE, filtro.desde],
-          [CAMPO_HASTA, filtro.hasta],
-        ],
-        pagina,
-      ),
-      mensaje413: MENSAJE_BUSQUEDA_GRANDE,
-    },
-    leerPaginaFacturas,
+export function buscarFacturas(filtro: FiltroFacturas, pagina: number): Promise<ResultadoBusquedaFacturas>;
+export function buscarFacturas(
+  filtro: FiltroFacturas,
+  pagina: number,
+  senal: AbortSignal | undefined,
+): Promise<ResultadoBusquedaFacturas | Cancelado>;
+export function buscarFacturas(
+  filtro: FiltroFacturas,
+  pagina: number,
+  senal?: AbortSignal,
+): Promise<ResultadoBusquedaFacturas | Cancelado> {
+  return cancelable(
+    senal,
+    grabarConCampos(
+      {
+        metodo: 'POST',
+        ruta: '/api/facturacion/busqueda',
+        cuerpo: cuerpoBusqueda(
+          [
+            [CAMPO_APELLIDO, filtro.apellido],
+            [CAMPO_NOMBRE, filtro.nombre],
+            [CAMPO_DNI, filtro.dni],
+            [CAMPO_NUMERO_COMPROBANTE, filtro.numero],
+            [CAMPO_DESDE, filtro.desde],
+            [CAMPO_HASTA, filtro.hasta],
+          ],
+          pagina,
+        ),
+        mensaje413: MENSAJE_BUSQUEDA_GRANDE,
+        senal,
+      },
+      leerPaginaFacturas,
+    ),
   );
+}
 
 /**
  * La factura emitida desde un presupuesto (FR-24) con `GET /api/presupuestos/{numero}/factura` (D-14). Un 404, o un

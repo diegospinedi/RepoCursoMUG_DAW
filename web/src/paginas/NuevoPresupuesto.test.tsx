@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -118,6 +119,12 @@ async function abrir() {
 
 const campo = (etiqueta: string) => screen.getByLabelText(etiqueta) as HTMLInputElement;
 
+/**
+ * El buscador de artículos. Desde FEAT-013 es un combobox con sugerencias, y la lista también se nombra con la etiqueta
+ * (`aria-labelledby`): por eso se busca por su rol y no solo por la etiqueta.
+ */
+const combobox = () => screen.getByRole('combobox', { name: ETIQUETA_BUSQUEDA }) as HTMLInputElement;
+
 function completar(valores: Partial<Record<CampoCliente, string>> = {}) {
   for (const [nombre, etiqueta] of Object.entries(ETIQUETAS) as [CampoCliente, string][]) {
     fireEvent.change(campo(etiqueta), { target: { value: valores[nombre] ?? CLIENTE[nombre] } });
@@ -126,7 +133,7 @@ function completar(valores: Partial<Record<CampoCliente, string>> = {}) {
 
 /** Busca un texto y espera los resultados. */
 async function buscar(texto = 'armazon') {
-  fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: texto } });
+  fireEvent.change(combobox(), { target: { value: texto } });
   fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
   await screen.findByRole('table', { name: 'Artículos activos' });
 }
@@ -368,13 +375,13 @@ describe('NuevoPresupuesto', () => {
     await buscar();
     agregar(ESTUCHE);
 
-    expect(mensajeJuntoAlCampo(campo(ETIQUETA_BUSQUEDA))).toBe(MENSAJE_PRECIO_NEGATIVO);
-    expect(campo(ETIQUETA_BUSQUEDA).getAttribute('aria-invalid')).toBe('true');
+    expect(mensajeJuntoAlCampo(combobox())).toBe(MENSAJE_PRECIO_NEGATIVO);
+    expect(combobox().getAttribute('aria-invalid')).toBe('true');
     expect(lineas()).toEqual([]);
 
     // Un artículo válido sí se agrega y el aviso se quita.
     agregar(ARMAZON);
-    expect(mensajeJuntoAlCampo(campo(ETIQUETA_BUSQUEDA))).toBeNull();
+    expect(mensajeJuntoAlCampo(combobox())).toBeNull();
     expect(lineas()).toHaveLength(1);
   });
 
@@ -441,7 +448,7 @@ describe('NuevoPresupuesto', () => {
   it('NuevoPresupuesto_SinSesionAlBuscar_VuelveAlIngreso', async () => {
     servidor({ [BUSCAR_ARMAZON]: vacia(401) });
     await abrir();
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'armazon' } });
+    fireEvent.change(combobox(), { target: { value: 'armazon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     expect(await screen.findByRole('heading', { name: 'Ingresá al sistema' })).toBeTruthy();
@@ -525,7 +532,7 @@ describe('NuevoPresupuesto', () => {
       ['9', 'Estuche rígido', '-150,00', 'Agregar'],
     ]);
 
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: '7' } });
+    fireEvent.change(combobox(), { target: { value: '7' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     await waitFor(() => expect(screen.queryByText('Estuche rígido')).toBeNull());
     expect(screen.getByText('Armazón metálico')).toBeTruthy();
@@ -547,7 +554,7 @@ describe('NuevoPresupuesto', () => {
   it('NuevoPresupuesto_BuscarSinCoincidencias_LoInforma', async () => {
     servidor({ [BUSCAR_ARMAZON]: json(200, pagina([])) });
     await abrir();
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'armazon' } });
+    fireEvent.change(combobox(), { target: { value: 'armazon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     expect(await screen.findByText('No hay artículos activos que coincidan con la búsqueda.')).toBeTruthy();
@@ -557,10 +564,10 @@ describe('NuevoPresupuesto', () => {
   it('NuevoPresupuesto_BusquedaLarga_ErrorSinPedir', async () => {
     const registro = servidor();
     await abrir();
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'a'.repeat(201) } });
+    fireEvent.change(combobox(), { target: { value: 'a'.repeat(201) } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
-    expect(mensajeJuntoAlCampo(campo(ETIQUETA_BUSQUEDA))).toBe('Usá hasta 200 caracteres.');
+    expect(mensajeJuntoAlCampo(combobox())).toBe('Usá hasta 200 caracteres.');
     expect(registro.llamadas.filter((l) => l.ruta.startsWith('/api/articulos'))).toEqual([]);
   });
 
@@ -572,20 +579,20 @@ describe('NuevoPresupuesto', () => {
       }),
     });
     await abrir();
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'armazon' } });
+    fireEvent.change(combobox(), { target: { value: 'armazon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
-    await waitFor(() => expect(mensajeJuntoAlCampo(campo(ETIQUETA_BUSQUEDA))).toBe('Usá hasta 200 caracteres.'));
+    await waitFor(() => expect(mensajeJuntoAlCampo(combobox())).toBe('Usá hasta 200 caracteres.'));
 
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'otro' } });
+    fireEvent.change(combobox(), { target: { value: 'otro' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     expect(await screen.findByText('Indicá true o false.')).toBeTruthy();
-    expect(mensajeJuntoAlCampo(campo(ETIQUETA_BUSQUEDA))).toBeNull();
+    expect(mensajeJuntoAlCampo(combobox())).toBeNull();
   });
 
   it('NuevoPresupuesto_BusquedaConError_MensajeGeneralSinResultados', async () => {
     servidor({ [BUSCAR_ARMAZON]: vacia(500) });
     await abrir();
-    fireEvent.change(campo(ETIQUETA_BUSQUEDA), { target: { value: 'armazon' } });
+    fireEvent.change(combobox(), { target: { value: 'armazon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     expect(await screen.findByText(MENSAJE_SIN_CONEXION)).toBeTruthy();
@@ -730,6 +737,140 @@ describe('NuevoPresupuesto', () => {
     });
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
+  });
+});
+
+/** Avanza el reloj falso (solo `setTimeout`) y deja que React procese lo que eso dispare. */
+const avanzar = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+
+const sugerencias = () => screen.queryAllByRole('option').map((opcion) => opcion.textContent);
+
+/** Abre el alta con el reloj real y recién entonces pasa al reloj falso; deja el foco en el buscador. */
+async function abrirEnVivo() {
+  await abrir();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const buscador = combobox();
+  act(() => buscador.focus());
+  return buscador;
+}
+
+describe('NuevoPresupuesto — sugerencias del buscador de artículos (FEAT-013)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('NuevoPresupuesto_ElegirSugerencia_AgregaLaLinea', async () => {
+    // AC-06: escribir y elegir una sugerencia agrega el artículo como línea.
+    const consola = (['log', 'info', 'warn', 'error', 'debug', 'trace'] as const).map((metodo) =>
+      vi.spyOn(console, metodo).mockImplementation(() => {}),
+    );
+    const registro = servidor();
+    const buscador = await abrirEnVivo();
+    completar();
+    act(() => buscador.focus());
+    expect(buscador.getAttribute('autocomplete')).toBe('off');
+
+    fireEvent.change(buscador, { target: { value: 'armazon' } });
+    await avanzar(299);
+    expect(registro.pedidosA('GET', BUSCAR_ARMAZON.slice(4))).toHaveLength(0);
+    await avanzar(1);
+
+    // La misma página pide solo activos y llena la tabla y las sugerencias.
+    expect(registro.pedidosA('GET', BUSCAR_ARMAZON.slice(4))).toHaveLength(1);
+    expect(sugerencias()).toEqual(['7 · ARM-7 · Armazón metálico', '9 · EST-9 · Estuche rígido']);
+    expect(screen.getByRole('table', { name: 'Artículos activos' })).toBeTruthy();
+
+    fireEvent.mouseDown(screen.getByRole('option', { name: '7 · ARM-7 · Armazón metálico' }));
+    fireEvent.click(screen.getByRole('option', { name: '7 · ARM-7 · Armazón metálico' }));
+
+    // Precio Unitario, Cantidad y Descuento son campos: su celda no tiene texto propio.
+    expect(lineas()).toEqual([['7', 'Armazón metálico', '', '', '', '1.850,00', '1.850,00', 'Quitar']]);
+    expect(buscador.getAttribute('aria-expanded')).toBe('false');
+    expect(registro.pedidosA('POST', '/api/presupuestos')).toHaveLength(0);
+
+    // Con 1 carácter no pide, no deja sugerencias para elegir y la tabla queda como estaba.
+    fireEvent.change(buscador, { target: { value: 'a' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([]);
+    expect(screen.getByRole('table', { name: 'Artículos activos' })).toBeTruthy();
+    // Vacío vuelve a como al abrir: sin resultados ni pedido.
+    fireEvent.change(buscador, { target: { value: '' } });
+    await avanzar(300);
+    expect(screen.queryByRole('table', { name: 'Artículos activos' })).toBeNull();
+    expect(registro.llamadas.filter((l) => l.ruta.startsWith('/api/articulos'))).toHaveLength(1);
+    // D-15: nada en la consola.
+    expect(consola.flatMap((espia) => espia.mock.calls)).toEqual([]);
+  });
+
+  it('NuevoPresupuesto_SugerenciaConPrecioNegativo_Rechazada', async () => {
+    // FR-12 de FEAT-003a: la sugerencia pasa por la misma regla que "Agregar".
+    servidor();
+    const buscador = await abrirEnVivo();
+
+    fireEvent.change(buscador, { target: { value: 'armazon' } });
+    await avanzar(300);
+    fireEvent.keyDown(buscador, { key: 'ArrowDown' });
+    fireEvent.keyDown(buscador, { key: 'ArrowDown' });
+    fireEvent.keyDown(buscador, { key: 'Enter' });
+
+    expect(lineas()).toEqual([]);
+    expect(mensajeJuntoAlCampo(combobox())).toBe(MENSAJE_PRECIO_NEGATIVO);
+    expect(combobox().getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it.each([
+    ['1 carácter', 'a'],
+    ['un texto inválido de 2 o más caracteres', `ab${String.fromCharCode(0xd83d)}`],
+  ])('NuevoPresupuesto_RespuestaTardiaTrasDescartar_%s_ResultadosComoEstaban', async (_caso, descartado) => {
+    // D-07: lo que no se busca en vivo cancela también el pedido en curso; su respuesta no cambia los resultados ni
+    // deja sugerencias.
+    const tardia = diferida(pagina([LENTE]));
+    servidor({ 'GET /api/articulos?texto=ab&pagina=1&soloActivos=true': tardia.respuesta });
+    const buscador = await abrirEnVivo();
+    fireEvent.change(buscador, { target: { value: 'armazon' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+    await avanzar(0);
+    expect(screen.getByText('Estuche rígido')).toBeTruthy();
+
+    fireEvent.change(buscador, { target: { value: 'ab' } });
+    await avanzar(300);
+    fireEvent.change(buscador, { target: { value: descartado } });
+    await avanzar(300);
+    await tardia.liberar();
+    await avanzar(0);
+
+    expect(screen.queryByText('Lente orgánico')).toBeNull();
+    expect(screen.getByText('Estuche rígido')).toBeTruthy();
+    expect(sugerencias()).toEqual([]);
+    expect(buscador.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('NuevoPresupuesto_RespuestaViejaDeSugerencias_GanaLaUltima', async () => {
+    // AC-09: la respuesta del primer texto llega después que la del segundo; quedan los resultados del segundo.
+    const vieja = diferida(pagina([ARMAZON, ESTUCHE]));
+    servidor({ [BUSCAR_ARMAZON]: vieja.respuesta });
+    const buscador = await abrirEnVivo();
+
+    fireEvent.change(buscador, { target: { value: 'armazon' } });
+    await avanzar(300);
+    fireEvent.change(buscador, { target: { value: 'calculos' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([
+      '12 · LEN-12 · Lente orgánico',
+      '15 · PAN-15 · Paño de limpieza',
+      '20 · EQU-20 · Equipo',
+      '21 · MIT-21 · Mitad',
+    ]);
+
+    await vieja.liberar();
+    await avanzar(0);
+
+    expect(screen.queryByText('Estuche rígido')).toBeNull();
+    expect(sugerencias()).toHaveLength(4);
+    expect(screen.getByText('Paño de limpieza', { selector: 'td' })).toBeTruthy();
   });
 });
 

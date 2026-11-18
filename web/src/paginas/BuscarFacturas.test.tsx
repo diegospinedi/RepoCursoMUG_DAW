@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { diferida } from '../pruebas/diferida';
 import { mensajeJuntoAlCampo } from '../pruebas/formulario';
 import { json, renderizarApp, servidorFalso, sinRed, vacia } from '../pruebas/servidorFalso';
 
@@ -67,8 +68,14 @@ async function abrir(rutas: Parameters<typeof servidorFalso>[0]) {
   return servidor;
 }
 
-const escribir = (etiqueta: string, valor: string) =>
-  fireEvent.change(screen.getByLabelText(etiqueta), { target: { value: valor } });
+/**
+ * El campo de la etiqueta. Desde FEAT-013 los textos son combobox con sugerencias, y la lista también se nombra con la
+ * etiqueta (`aria-labelledby`): por eso se buscan por su rol; las fechas, por la etiqueta.
+ */
+const campo = (etiqueta: string) =>
+  (screen.queryByRole('combobox', { name: etiqueta }) ?? screen.getByLabelText(etiqueta)) as HTMLInputElement;
+
+const escribir = (etiqueta: string, valor: string) => fireEvent.change(campo(etiqueta), { target: { value: valor } });
 
 const buscar = () => fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
@@ -146,7 +153,7 @@ describe('BuscarFacturas', () => {
     expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
     // Sin autocompletado: el navegador no guarda los datos personales buscados.
     for (const etiqueta of ['Apellido', 'Nombre', 'DNI', 'Número de comprobante']) {
-      expect(screen.getByLabelText(etiqueta).getAttribute('autocomplete')).toBe('off');
+      expect(campo(etiqueta).getAttribute('autocomplete')).toBe('off');
     }
     // Nada en la consola.
     for (const espia of consola) {
@@ -225,7 +232,7 @@ describe('BuscarFacturas', () => {
 
     buscar();
 
-    const numero = screen.getByLabelText('Número de comprobante');
+    const numero = campo('Número de comprobante');
     await waitFor(() => expect(mensajeJuntoAlCampo(numero)).toBe('Usá hasta 100 caracteres.'));
     expect(mensajeJuntoAlCampo(screen.getByLabelText('Desde'))).toBe(MENSAJE_DESDE_POSTERIOR);
     expect(screen.getByText(MENSAJE_PEDIDO_RECHAZADO)).toBeTruthy();
@@ -237,7 +244,7 @@ describe('BuscarFacturas', () => {
 
     buscar();
 
-    const apellido = screen.getByLabelText('Apellido');
+    const apellido = campo('Apellido');
     await waitFor(() => expect(mensajeJuntoAlCampo(apellido)).toBe('Usá hasta 100 caracteres.'));
     expect(screen.queryByText(MENSAJE_PEDIDO_RECHAZADO)).toBeNull();
   });
@@ -265,22 +272,438 @@ describe('BuscarFacturas', () => {
     await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso'));
   });
 
-  it('Buscar: mientras busca no envía otro pedido', async () => {
-    let responder: (respuesta: Response) => void = () => {};
-    const servidor = await abrir({
-      [CLAVE]: () =>
-        new Promise<Response>((resolver) => {
-          responder = resolver;
-        }),
-    });
+  it('Buscar: mientras busca, el doble clic no envía otro pedido; Enter lo reemplaza y la vieja no pisa la nueva', async () => {
+    // D-08 de FEAT-013: la guarda `enCurso` se reemplaza por el número de pedido. El botón deshabilitado evita el doble
+    // clic; un Enter mientras tanto envía otra búsqueda, y solo la respuesta de la última se muestra.
+    const primera = diferida(pagina(filasDel(200, 151), 1, 120));
+    const reemplazo = diferida(pagina([FILA_155]));
+    const servidor = await abrir({ [CLAVE]: [primera.respuesta, reemplazo.respuesta] });
 
     buscar();
+    buscar();
     expect(await screen.findByText('Cargando…')).toBeTruthy();
-    fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByRole('button', { name: 'Buscar' }).hasAttribute('disabled')).toBe(true);
-    responder(json(200, pagina([FILA_155]))() as Response);
-
-    await screen.findByRole('table', { name: 'Facturas encontradas' });
     expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(1);
+
+    fireEvent.submit(screen.getByRole('search'));
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Buscar' }).hasAttribute('disabled')).toBe(true);
+
+    await reemplazo.liberar();
+    await screen.findByRole('table', { name: 'Facturas encontradas' });
+    expect(screen.getByRole('button', { name: 'Buscar' }).hasAttribute('disabled')).toBe(false);
+    await primera.liberar();
+    expect(within(tabla()).getAllByRole('row')).toHaveLength(2);
+    expect(screen.queryByText('Página 1 de 3')).toBeNull();
+  });
+});
+
+/** Avanza el reloj falso (solo `setTimeout`) y deja que React procese lo que eso dispare. */
+const avanzar = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+
+/** El texto de cada sugerencia visible. */
+const sugerencias = () => screen.queryAllByRole('option').map((opcion) => opcion.textContent);
+
+/** Abre la pantalla con el reloj real, pasa al reloj falso y pone el foco en el campo indicado. */
+async function abrirEnVivo(rutas: Parameters<typeof servidorFalso>[0], etiqueta = 'Apellido') {
+  const servidor = await abrir(rutas);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const enfocado = campo(etiqueta);
+  act(() => enfocado.focus());
+  return { servidor, enfocado };
+}
+
+/** Otra factura ficticia del mismo cliente, emitida desde el presupuesto 154. */
+const FILA_154 = { ...FILA_155, presupuesto: 154, comprobante: 'Factura B 0003-00000124', fecha: '2026-10-29' };
+
+const SUGERENCIA_155 = `${COMPROBANTE} · Pérez, Ana · 30/10/2026`;
+const SUGERENCIA_154 = 'Factura B 0003-00000124 · Pérez, Ana · 29/10/2026';
+
+describe('BuscarFacturas — búsqueda mientras se escribe (FEAT-013)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('BuscarFacturas_EscribirApellido_SugerenciasYAbrirLaFactura', async () => {
+    // AC-05: tras la pausa, una sola búsqueda llena la tabla y las sugerencias (comprobante, cliente y fecha, sin el
+    // DNI); elegir una abre la factura por el número del presupuesto.
+    const { servidor, enfocado: apellido } = await abrirEnVivo({ [CLAVE]: json(200, pagina([FILA_155, FILA_154])) });
+
+    fireEvent.change(apellido, { target: { value: 'p' } });
+    fireEvent.change(apellido, { target: { value: ' pé ' } });
+    await avanzar(299);
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(0);
+    await avanzar(1);
+
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA).map(cuerpoDel)).toEqual([{ apellido: 'pé', pagina: 1 }]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155, SUGERENCIA_154]);
+    expect(within(tabla()).getAllByRole('row')).toHaveLength(3);
+    expect(apellido.getAttribute('aria-expanded')).toBe('true');
+    expect(campo('Nombre').getAttribute('aria-expanded')).toBe('false');
+    expect(within(apellido.closest('.campo-busqueda')!).getByRole('status').textContent).toBe('2 sugerencias');
+    // R-02 y D-15: ni el texto ni el id de la sugerencia llevan el DNI.
+    for (const opcion of screen.getAllByRole('option')) {
+      expect(opcion.textContent).not.toContain(DNI_ESCRITO);
+      expect(opcion.id).not.toContain(DNI_ESCRITO);
+    }
+    // "Buscar" no queda deshabilitado por la búsqueda en vivo (D-08).
+    expect(screen.getByRole('button', { name: 'Buscar' }).hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(screen.getByRole('option', { name: SUGERENCIA_155 }));
+
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/facturas/155');
+  });
+
+  it('BuscarFacturas_ErrorDeBusqueda_SinSugerencias', async () => {
+    // AC-10: la búsqueda en vivo falla; se ocultan las sugerencias y la tabla, y se ve el mensaje de hoy.
+    const { enfocado: apellido } = await abrirEnVivo({ [CLAVE]: [json(200, pagina([FILA_155])), vacia(500)] });
+
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    await avanzar(300);
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText(MENSAJE_SIN_CONEXION)).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('BuscarFacturas_NumeroEnVivo_FechasYRangoInvalidoNoPiden', async () => {
+    // D-07: el número de comprobante también busca en vivo, combinado con las fechas; cambiar las fechas no dispara y
+    // con el rango invertido no se pide nada en vivo: el error aparece con "Buscar".
+    const { servidor, enfocado: numero } = await abrirEnVivo(
+      { [CLAVE]: json(200, pagina([FILA_155])) },
+      'Número de comprobante',
+    );
+
+    escribir('Desde', '2026-10-01');
+    escribir('Hasta', '2026-10-31');
+    await avanzar(300);
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(0);
+
+    fireEvent.change(numero, { target: { value: '125' } });
+    await avanzar(300);
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA).map(cuerpoDel)).toEqual([
+      { numero: '125', desde: '2026-10-01', hasta: '2026-10-31', pagina: 1 },
+    ]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    escribir('Desde', '2026-11-20');
+    fireEvent.change(numero, { target: { value: '1250' } });
+    await avanzar(300);
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(1);
+    expect(sugerencias()).toEqual([]);
+    expect(mensajeJuntoAlCampo(campo('Desde'))).toBeNull();
+
+    buscar();
+    expect(mensajeJuntoAlCampo(campo('Desde'))).toBe(MENSAJE_DESDE_POSTERIOR);
+    expect(servidor.pedidosA('POST', RUTA_BUSQUEDA)).toHaveLength(1);
+  });
+
+  it('BuscarFacturas_400EnVivo_OcultaSugerenciasSinErrorDelCampo', async () => {
+    // D-07: un 400 en vivo oculta las sugerencias sin mostrar el error del campo.
+    const { enfocado: apellido } = await abrirEnVivo({
+      [CLAVE]: [json(200, pagina([FILA_155])), json(400, { status: 400, errors: { apellido: ['Usá hasta 100 caracteres.'] } })],
+    });
+
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    await avanzar(300);
+
+    expect(sugerencias()).toEqual([]);
+    expect(mensajeJuntoAlCampo(apellido)).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('BuscarFacturas — casos en vivo de la ronda 2 (FEAT-013)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const pedidos = (servidor: ReturnType<typeof servidorFalso>) => servidor.pedidosA('POST', RUTA_BUSQUEDA);
+  const cuerpos = (servidor: ReturnType<typeof servidorFalso>) => pedidos(servidor).map(cuerpoDel);
+  const presupuestosDeLaTabla = () =>
+    within(tabla())
+      .getAllByRole('row')
+      .slice(1)
+      .map((fila) => within(fila).getAllByRole('cell').at(-1)?.textContent);
+  const botonBuscar = () => screen.getByRole('button', { name: 'Buscar' });
+
+  /** Intenta elegir la primera sugerencia con el teclado. */
+  const elegirConEnter = (campoEnfocado: HTMLInputElement) => {
+    fireEvent.keyDown(campoEnfocado, { key: 'ArrowDown' });
+    fireEvent.keyDown(campoEnfocado, { key: 'Enter' });
+  };
+
+  it('BuscarFacturas_UnCaracter_SinPedidoNiSugerencias', async () => {
+    // D-07 y H1: con 1 carácter no pide, las sugerencias anteriores no se ven ni se eligen, y la tabla queda.
+    const { servidor, enfocado: apellido } = await abrirEnVivo({ [CLAVE]: json(200, pagina([FILA_155, FILA_154])) });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    fireEvent.change(apellido, { target: { value: ' p ' } });
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(presupuestosDeLaTabla()).toEqual(['155', '154']);
+  });
+
+  it('BuscarFacturas_CampoVaciado_SinSugerenciasEnElMismoEvento', async () => {
+    // H1: el campo vaciado busca de nuevo, pero durante la pausa y el pedido no deja elegir las sugerencias viejas.
+    const nuevo = diferida(pagina([FILA_154]));
+    const { enfocado: apellido } = await abrirEnVivo({ [CLAVE]: [json(200, pagina([FILA_155])), nuevo.respuesta] });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: '' } });
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    await avanzar(300);
+    expect(sugerencias()).toEqual([]);
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    await nuevo.liberar();
+    expect(presupuestosDeLaTabla()).toEqual(['154']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarFacturas_CampoVaciado_VuelveABuscarConLosOtrosFiltros', async () => {
+    // D-07: el campo que queda vacío vuelve a buscar con el resto de los filtros; sin ningún texto, sin sugerencias.
+    const { servidor, enfocado: nombre } = await abrirEnVivo(
+      {
+        [CLAVE]: [
+          json(200, pagina([FILA_154])),
+          json(200, pagina([FILA_155])),
+          json(200, pagina([FILA_154, FILA_155])),
+          json(200, pagina([FILA_155, FILA_154])),
+        ],
+      },
+      'Nombre',
+    );
+    fireEvent.change(nombre, { target: { value: 'an' } });
+    await avanzar(300);
+    const apellido = campo('Apellido');
+    act(() => apellido.focus());
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    fireEvent.change(apellido, { target: { value: '' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)).toEqual([
+      { nombre: 'an', pagina: 1 },
+      { apellido: 'pé', nombre: 'an', pagina: 1 },
+      { nombre: 'an', pagina: 1 },
+    ]);
+    expect(presupuestosDeLaTabla()).toEqual(['154', '155']);
+
+    act(() => nombre.focus());
+    fireEvent.change(nombre, { target: { value: '' } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)[3]).toEqual({ pagina: 1 });
+    expect(presupuestosDeLaTabla()).toEqual(['155', '154']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarFacturas_RespuestaViejaNoPisaLaNueva', async () => {
+    // AC-09: la respuesta de "pé" llega después que la de "pér": siguen las sugerencias y la tabla de "pér".
+    const vieja = diferida(pagina([FILA_154]));
+    const { servidor, enfocado: apellido } = await abrirEnVivo({
+      [CLAVE]: [vieja.respuesta, json(200, pagina([FILA_155]))],
+    });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    await avanzar(300);
+    expect(cuerpos(servidor)).toEqual([
+      { apellido: 'pé', pagina: 1 },
+      { apellido: 'pér', pagina: 1 },
+    ]);
+
+    await vieja.liberar();
+    await avanzar(0);
+
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+    expect(presupuestosDeLaTabla()).toEqual(['155']);
+  });
+
+  it('BuscarFacturas_BuscarDeshabilitadoSoloEnElEnvioManual', async () => {
+    // D-08: la búsqueda en vivo no deshabilita "Buscar"; el envío manual sí, hasta su respuesta, y la reemplaza.
+    const enVivo = diferida(pagina([FILA_154]));
+    const manual = diferida(pagina([FILA_155]));
+    const { servidor, enfocado: apellido } = await abrirEnVivo({ [CLAVE]: [enVivo.respuesta, manual.respuesta] });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(botonBuscar().hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByText('Cargando…')).toBeNull();
+
+    buscar();
+    expect(pedidos(servidor)).toHaveLength(2);
+    expect(botonBuscar().hasAttribute('disabled')).toBe(true);
+    await enVivo.liberar();
+    await avanzar(0);
+    expect(botonBuscar().hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('table')).toBeNull();
+
+    await manual.liberar();
+    await avanzar(0);
+    expect(botonBuscar().hasAttribute('disabled')).toBe(false);
+    expect(presupuestosDeLaTabla()).toEqual(['155']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarFacturas_SinSesionEnVivo_VuelveAlIngreso', async () => {
+    const { enfocado: apellido } = await abrirEnVivo({ [CLAVE]: vacia(401) });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+
+    expect(screen.getByTestId('ubicacion').textContent).toBe('/ingreso');
+  });
+
+  it('BuscarFacturas_RangoInvalidoDuranteLaPausa_SinPedidoNiSugerencias', async () => {
+    // Verificador H-1: las fechas pasan a un rango invertido mientras corre la pausa: no se pide y se vacían las
+    // sugerencias.
+    const { servidor, enfocado: apellido } = await abrirEnVivo({ [CLAVE]: json(200, pagina([FILA_155])) });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    escribir('Desde', '2026-11-20');
+    escribir('Hasta', '2026-10-01');
+    await avanzar(300);
+
+    expect(pedidos(servidor)).toHaveLength(1);
+    expect(sugerencias()).toEqual([]);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('BuscarFacturas_CampoVaciadoConPedidoEnCurso_NoReponeSugerencias', async () => {
+    // D-23: el pedido de "pé" sigue en curso al vaciar el campo; cuando llega, no repone sus sugerencias.
+    const enCurso = diferida(pagina([FILA_155]));
+    const vaciado = diferida(pagina([FILA_154]));
+    const { servidor, enfocado: apellido } = await abrirEnVivo({ [CLAVE]: [enCurso.respuesta, vaciado.respuesta] });
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(1);
+
+    fireEvent.change(apellido, { target: { value: '' } });
+    await enCurso.liberar();
+    await avanzar(0);
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    await avanzar(300);
+    expect(cuerpos(servidor)[1]).toEqual({ pagina: 1 });
+    await vaciado.liberar();
+    expect(presupuestosDeLaTabla()).toEqual(['154']);
+    expect(sugerencias()).toEqual([]);
+  });
+
+  it('BuscarFacturas_FechasInvalidas_SinSugerenciasEnElMismoEvento', async () => {
+    // D-22: invertir solo las fechas vacía las sugerencias en ese evento, sin pedir, y la respuesta viva en curso no
+    // las repone.
+    const enCurso = diferida(pagina([FILA_155]));
+    const { servidor, enfocado: apellido } = await abrirEnVivo({
+      [CLAVE]: [enCurso.respuesta, json(200, pagina([FILA_155, FILA_154]))],
+    });
+
+    // Con un pedido en curso.
+    fireEvent.change(apellido, { target: { value: 'pé' } });
+    await avanzar(300);
+    escribir('Desde', '2026-11-20');
+    escribir('Hasta', '2026-10-01');
+    await enCurso.liberar();
+    await avanzar(0);
+    expect(sugerencias()).toEqual([]);
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+
+    // Con las sugerencias a la vista.
+    escribir('Desde', '2026-09-01');
+    fireEvent.change(apellido, { target: { value: 'pér' } });
+    await avanzar(300);
+    expect(sugerencias()).toHaveLength(2);
+
+    escribir('Desde', '2026-11-20');
+
+    expect(sugerencias()).toEqual([]);
+    expect(apellido.getAttribute('aria-expanded')).toBe('false');
+    elegirConEnter(apellido);
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    await avanzar(300);
+    expect(pedidos(servidor)).toHaveLength(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('BuscarFacturas_SugerenciaSinDni', async () => {
+    // R-02 y D-15: ni las sugerencias ni el anuncio muestran el DNI, aunque se busque por DNI; nada en la consola, en
+    // el almacenamiento (afterEach) ni en la URL.
+    const consola = (['log', 'info', 'warn', 'error', 'debug', 'trace'] as const).map((metodo) =>
+      vi.spyOn(console, metodo).mockImplementation(() => {}),
+    );
+    const { servidor, enfocado: dni } = await abrirEnVivo({ [CLAVE]: json(200, pagina([FILA_155])) }, 'DNI');
+
+    fireEvent.change(dni, { target: { value: DNI_ESCRITO } });
+    await avanzar(300);
+
+    expect(cuerpos(servidor)).toEqual([{ dni: DNI_ESCRITO, pagina: 1 }]);
+    expect(sugerencias()).toEqual([SUGERENCIA_155]);
+    for (const opcion of screen.getAllByRole('option')) {
+      expect(opcion.textContent).not.toContain(DNI_ESCRITO);
+      expect(opcion.id).not.toContain(DNI_ESCRITO);
+    }
+    const anuncio = within(dni.closest('.campo-busqueda')!).getByRole('status').textContent;
+    expect(anuncio).toBe('1 sugerencia');
+    expect(anuncio).not.toContain(DNI_ESCRITO);
+    expect(dni.getAttribute('autocomplete')).toBe('off');
+    expect(screen.getByTestId('ubicacion').textContent).toBe(RUTA);
+    expect(decodeURIComponent(window.location.href)).not.toContain(DNI_ESCRITO);
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    for (const espia of consola) {
+      expect(espia).not.toHaveBeenCalled();
+    }
+  });
+
+  it('BuscarFacturas_DosEnviosManuales_BuscarSigueDeshabilitadoHastaElUltimo', async () => {
+    // D-08: un Enter reemplaza al envío manual en curso; que el primero termine no vuelve a habilitar "Buscar".
+    const primera = diferida(pagina([FILA_154]));
+    const segunda = diferida(pagina([FILA_155]));
+    await abrir({ [CLAVE]: [primera.respuesta, segunda.respuesta] });
+
+    buscar();
+    fireEvent.submit(screen.getByRole('search'));
+    await primera.liberar();
+    await act(async () => {});
+
+    expect(botonBuscar().hasAttribute('disabled')).toBe(true);
+    await segunda.liberar();
+    await screen.findByRole('table', { name: 'Facturas encontradas' });
+    expect(botonBuscar().hasAttribute('disabled')).toBe(false);
+    expect(presupuestosDeLaTabla()).toEqual(['155']);
   });
 });

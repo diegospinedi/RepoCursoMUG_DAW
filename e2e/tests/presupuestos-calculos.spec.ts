@@ -177,7 +177,8 @@ async function abrirNuevoPresupuesto(page: Page) {
 
 /** Busca el artículo por su descripción y lo agrega como línea. */
 async function agregar(page: Page, articulo: Articulo) {
-  await page.getByLabel('Texto a buscar', { exact: true }).fill(articulo.descripcion);
+  // FEAT-013: el buscador de artículos es un campo con sugerencias; la etiqueta nombra también su lista (D-11).
+  await page.getByRole('combobox', { name: 'Texto a buscar', exact: true }).fill(articulo.descripcion);
   const [respuesta] = await Promise.all([
     page.waitForResponse((r) => r.request().method() === 'GET' && esBusqueda(r.url())),
     page.getByRole('button', { name: 'Buscar', exact: true }).click(),
