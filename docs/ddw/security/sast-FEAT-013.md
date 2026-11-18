@@ -12,7 +12,7 @@ La rama se abrió sobre FEAT-012 (PR #22), así que `master..HEAD` incluye tambi
 propio SAST (`sast-FEAT-012.md`).
 
 Lo propio de FEAT-013 es:
-- **Base de la búsqueda en vivo:** `useBusquedaEnVivo.ts`, `ListaSugerencias.tsx`, `CampoBusqueda` (en `Campo.tsx`),
+- **Base de la búsqueda en vivo:** `useBusquedaEnVivo.ts`, `ListaSugerencias.tsx`, `CampoBusqueda.tsx`,
   `CampoConOpciones.tsx` y `plegar`. En `api/cliente.ts`, la opción de cancelación con `AbortSignal`.
 - **Pantallas:** Artículos, el buscador del presupuesto, Buscar presupuestos, Buscar facturas y Configuración.
 - **Pruebas y helpers de prueba:** `web/src/pruebas/`, la e2e `busqueda-en-vivo` y los specs actualizados.
@@ -40,6 +40,17 @@ El ticket no toca código .NET de producción, ningún `package*.json` o `.cspro
 | F-SAST-15 | ✅ | Un 400 en vivo solo oculta las sugerencias; las fallas muestran los mensajes fijos de hoy, nunca el texto del servidor; un pedido cancelado no deja "Error no controlado" en el log (`tests/Optica.Api.Tests/Catalogo/BusquedaCanceladaTests.cs`, D-16) |
 | F-SAST-16 | ✅ | Sin CVE Medium |
 | F-SAST-17 | ✅ | Sin `eval`, `new Function` ni `setTimeout` con texto; la pausa usa `setTimeout` con una función (`web/src/componentes/useBusquedaEnVivo.ts`) |
+
+## Re-cierre tras el corrective loop de VERIFY
+
+El delta `0087924..HEAD` (commit `0fc3ec9`) solo toca `e2e/tests/busqueda-en-vivo.spec.ts` y `e2e/README.md`:
+- Suma tres e2e para AC-09 y AC-10 que interceptan con `page.route` las búsquedas a la propia Api local. Una retiene
+  la respuesta, otra responde un 500 sintético y otra hace `abort('failed')`.
+- No hay hosts nuevos, secretos, datos personales ni `eval`.
+- La única evaluación en la página es `requestAnimationFrame` fijo (`page.evaluate` sin datos externos).
+- Los avisos de recurso esperados (500 y `net::ERR_FAILED`) se descuentan una vez cada uno; el resto de la consola y la
+  CSP siguen exigiendo cero.
+- `web/src` y `src` no cambian, así que los veredictos de abajo se mantienen.
 
 ## Carga de pedidos (R-01, R-03)
 

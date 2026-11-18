@@ -1,6 +1,6 @@
 # Test run FEAT-013
 
-Esta es la corrida del cierre de CODE. Abarca la suite completa del proyecto: .NET, web, pruebas de unidad de e2e y e2e de
+Esta es la corrida del re-cierre de CODE, después del corrective loop desde VERIFY (AC-14: AC-09 y AC-10 en Chrome y Edge, commit `0fc3ec9`). La corrida del primer cierre (4864/4864) queda en el historial de git de este archivo. Abarca la suite completa del proyecto: .NET, web, pruebas de unidad de e2e y e2e de
 punta a punta. Cubre los 5 bloques de la spec:
 1. La base de la búsqueda en vivo.
 2. Artículos y el buscador del presupuesto.
@@ -15,8 +15,8 @@ corre desde `src/Optica.Api/bin`.
 |---|---|
 | Runner | dotnet test (SDK 10) con xUnit y coverlet; Vitest con cobertura v8 (web); node:test (e2e unidad); Playwright con Chrome y Edge estables |
 | Command | `dotnet build Optica.sln --artifacts-path bin/artifacts-cierre && dotnet test Optica.sln --no-build --artifacts-path bin/artifacts-cierre --collect:"XPlat Code Coverage" && (cd web && npm run lint && npm run test:lint && npm run test:coverage && npm run build) && (cd e2e && npm run test:unidad && npm run test:harness) && dotnet format Optica.sln --verify-no-changes` |
-| Total | 4864 |
-| Passed | 4864 |
+| Total | 4870 |
+| Passed | 4870 |
 | Failed | 0 |
 | Skipped | 0 |
 | Line coverage | 99.17% |
@@ -32,9 +32,9 @@ corre desde `src/Optica.Api/bin`.
 | .NET | 2930: Domain 538, Application 637, Infrastructure 977, Api 778 |
 | Web | 1512, en 36 archivos |
 | e2e de unidad | 164 |
-| e2e de punta a punta | 258: 129 en Chrome y 129 en Edge, en 56 proyectos |
+| e2e de punta a punta | 264: 132 en Chrome y 132 en Edge, en 56 proyectos |
 
-- La e2e de punta a punta tardó 9,0 minutos. Incluye `busqueda-en-vivo`, que es nueva y corre en los dos navegadores,
+- La e2e de punta a punta tardó 9,0 minutos. Incluye `busqueda-en-vivo`, que es nueva y corre en los dos navegadores (11 pruebas por navegador, con las 3 de AC-09 y AC-10 del corrective loop),
   y los 10 specs actualizados por D-18.
 - .NET suma 2 pruebas respecto de FEAT-012:
   - `BusquedaCancelada_NoRegistraErrorNoControlado`, del Block 1, que cubre D-16.
