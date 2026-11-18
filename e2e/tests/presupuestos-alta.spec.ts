@@ -155,7 +155,8 @@ const dni = (page: Page) => page.getByLabel(ETIQUETA_DNI, { exact: true });
 const domicilio = (page: Page) => page.getByLabel(ETIQUETA_DOMICILIO, { exact: true });
 const email = (page: Page) => page.getByLabel(ETIQUETA_EMAIL, { exact: true });
 const telefono = (page: Page) => page.getByLabel(ETIQUETA_TELEFONO, { exact: true });
-const busqueda = (page: Page) => page.getByLabel(ETIQUETA_BUSQUEDA, { exact: true });
+// FEAT-013: el buscador de artículos es un campo con sugerencias; la etiqueta nombra también su lista (D-11).
+const busqueda = (page: Page) => page.getByRole('combobox', { name: ETIQUETA_BUSQUEDA, exact: true });
 const tablaLineas = (page: Page) => page.getByRole('table', { name: TITULO_LINEAS });
 const filasLineas = (page: Page) => tablaLineas(page).locator('tbody tr');
 const tablaResultados = (page: Page) => page.getByRole('table', { name: TITULO_RESULTADOS });

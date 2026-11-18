@@ -79,7 +79,8 @@ test.afterEach(() => {
 });
 
 const campoContrasena = (page: Page) => page.getByLabel('Contraseña', { exact: true });
-const alicuota = (page: Page) => page.getByLabel(ETIQUETA_ALICUOTA, { exact: true });
+// FEAT-013 (D-13, D-18): la alícuota es un campo con filtro; la etiqueta nombra también su lista, así que va por el rol.
+const alicuota = (page: Page) => page.getByRole('combobox', { name: ETIQUETA_ALICUOTA, exact: true });
 const multiplo = (page: Page) => page.getByLabel(ETIQUETA_MULTIPLO, { exact: true });
 const mensajeGrabada = (page: Page) => page.getByRole('status').filter({ hasText: MENSAJE_GRABADA });
 
@@ -241,7 +242,10 @@ test('alicuota 10,5 y luego costo 1.105 con margen 50 graba 1.657,50', async ({ 
   expect(previo.precioVenta).toBe(1815);
 
   const cantidad = await grabarConRecalculo(page, async () => {
-    await alicuota(page).selectOption('10,5');
+    // Escribe parte de la alícuota y elige 10,5 de la lista, como la operadora (FR-13 de FEAT-013).
+    await alicuota(page).fill('10');
+    await page.getByRole('listbox', { name: ETIQUETA_ALICUOTA, exact: true }).getByRole('option', { name: '10,5' }).click();
+    await expect(alicuota(page)).toHaveValue('10,5');
   });
 
   // D-22: la configuración queda en 10,5 con múltiplo 0,01, ningún precio cambia y ninguna versión se incrementa.

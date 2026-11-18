@@ -31,9 +31,11 @@ export interface Muestra {
 
 /**
  * Corre en el navegador. Con `'textos'`, una muestra por cada elemento visible dentro de `raiz` con texto propio, y por
- * cada campo de texto o desplegable con valor. Se dejan afuera los controles deshabilitados (WCAG 1.4.3 los exceptúa),
- * las opciones de los desplegables, los SVG y lo que el navegador no dibuja o mide 1px o menos (textos solo para
- * lectores de pantalla). Con `'fondo'`, una sola muestra de `raiz`, sin texto: sirve para el fondo de un elemento.
+ * cada campo de texto con valor (desde FEAT-013 la web no tiene desplegables `select`: la alícuota y la condición
+ * fiscal son campos de texto con sugerencias, D-13 y D-24). Se dejan afuera los controles deshabilitados (WCAG 1.4.3
+ * los exceptúa), los SVG y lo que el navegador no dibuja o mide 1px o menos (textos solo para lectores de pantalla).
+ * Las sugerencias abiertas son elementos con texto propio y se miden como cualquier otro. Con `'fondo'`, una sola
+ * muestra de `raiz`, sin texto: sirve para el fondo de un elemento.
  */
 export function muestrear(raiz: Element, modo: 'textos' | 'fondo'): Muestra[] {
   const capasDe = (elemento: Element) => {
@@ -55,10 +57,10 @@ export function muestrear(raiz: Element, modo: 'textos' | 'fondo'): Muestra[] {
   }
   const muestras: { texto: string; color: string; capas: ReturnType<typeof capasDe> }[] = [];
   for (const elemento of [raiz, ...raiz.querySelectorAll('*')]) {
-    if (elemento.matches('option, script, style, svg, svg *') || elemento.closest(':disabled, [aria-disabled="true"]')) {
+    if (elemento.matches('script, style, svg, svg *') || elemento.closest(':disabled, [aria-disabled="true"]')) {
       continue;
     }
-    const campo = elemento.matches('input:not([type="file"], [type="radio"], [type="checkbox"], [type="hidden"]), select');
+    const campo = elemento.matches('input:not([type="file"], [type="radio"], [type="checkbox"], [type="hidden"])');
     const propio = campo
       ? (elemento as HTMLInputElement).value.trim()
       : [...elemento.childNodes]

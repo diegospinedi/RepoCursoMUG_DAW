@@ -114,7 +114,12 @@ interface Sesion {
   violacionesCsp: string[];
 }
 
-const campo = (page: Page, etiqueta: string) => page.getByLabel(etiqueta, { exact: true });
+// FEAT-013: el buscador de artículos es un campo con sugerencias; la etiqueta nombra también su lista (D-11), así que
+// va por el rol. Los demás campos siguen por su etiqueta.
+const campo = (page: Page, etiqueta: string) =>
+  etiqueta === 'Texto a buscar'
+    ? page.getByRole('combobox', { name: etiqueta, exact: true })
+    : page.getByLabel(etiqueta, { exact: true });
 const tablaLineas = (page: Page) => page.getByRole('table', { name: TITULO_LINEAS });
 const filasLineas = (page: Page) => tablaLineas(page).locator('tbody tr');
 const celdaTotal = (page: Page) =>

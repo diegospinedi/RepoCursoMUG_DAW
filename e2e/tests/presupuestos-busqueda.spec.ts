@@ -19,6 +19,11 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * completa la base hasta el presupuesto 120 (falla si ya lo pasó) y recién entonces busca sin filtros.
  *
  * Datos personales: los clientes son ficticios, con DNI improbables (99.xxx.xxx) y emails en example.com.
+ *
+ * FEAT-013: Apellido, Nombre y DNI buscan también mientras se escribe (tras una pausa de 300 ms). Estas pruebas siguen
+ * probando "Buscar" y Enter (AC-08 de FEAT-013): esperan la respuesta y no el pedido, porque un pedido en vivo que el
+ * envío manual cancela no tiene respuesta, y la grilla se espera por su contenido. Las sugerencias tienen su propio
+ * archivo, `busqueda-en-vivo.spec.ts`.
  */
 
 /** Contraseña de prueba de esta base, no de nadie. */
@@ -100,7 +105,12 @@ test.afterEach(() => {
   expect(violacionesCsp, 'La SPA no debe violar Content-Security-Policy').toEqual([]);
 });
 
-const campo = (page: Page, etiqueta: string) => page.getByLabel(etiqueta, { exact: true });
+/** Los filtros de texto son campos con sugerencias (FEAT-013): la etiqueta nombra también su lista, así que van por el rol. */
+const FILTROS_DE_TEXTO = ['Apellido', 'Nombre', 'DNI'];
+const campo = (page: Page, etiqueta: string) =>
+  FILTROS_DE_TEXTO.includes(etiqueta)
+    ? page.getByRole('combobox', { name: etiqueta, exact: true })
+    : page.getByLabel(etiqueta, { exact: true });
 const botonBuscar = (page: Page) => page.getByRole('button', { name: 'Buscar', exact: true });
 const tablaResultados = (page: Page) => page.getByRole('table', { name: TITULO_RESULTADOS });
 const filasResultados = (page: Page) => tablaResultados(page).locator('tbody tr');
@@ -212,9 +222,12 @@ async function cargarFiltros(page: Page, filtros: Filtros) {
  */
 async function buscar(page: Page, filtros: Filtros) {
   await cargarFiltros(page, filtros);
-  const [pedido] = await Promise.all([page.waitForRequest(esBusqueda), botonBuscar(page).click()]);
-  const respuesta = await pedido.response();
-  expect(respuesta?.status(), 'La búsqueda tiene que responder 200').toBe(200);
+  const [respuesta] = await Promise.all([
+    page.waitForResponse((r) => esBusqueda(r.request())),
+    botonBuscar(page).click(),
+  ]);
+  const pedido = respuesta.request();
+  expect(respuesta.status(), 'La búsqueda tiene que responder 200').toBe(200);
   expect(new URL(pedido.url()).search).toBe('');
   expect(new URL(page.url()).search).toBe('');
   await expect(botonBuscar(page)).toBeEnabled();

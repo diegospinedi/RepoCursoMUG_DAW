@@ -34,6 +34,9 @@ public sealed class VolumenCatalogoTests(ITestOutputHelper salida)
     private const int MedicionesPorEscenario = 20;
     private static readonly TimeSpan LimiteP95 = TimeSpan.FromSeconds(1);
 
+    /// <summary>D-17 de FEAT-013: 700 ms en la Api más la pausa de 300 ms de la búsqueda en vivo dan el segundo de NFR-01.</summary>
+    private static readonly TimeSpan LimiteP95Armazon = TimeSpan.FromMilliseconds(700);
+
     /// <summary>
     /// Un dato que el dominio rechaza, o una clave repetida, hace fallar la siembra con su propio mensaje y sin insertar
     /// nada: la prueba se detiene ahí, antes de medir.
@@ -228,6 +231,49 @@ public sealed class VolumenCatalogoTests(ITestOutputHelper salida)
             },
             muestras);
         Assert.True(fallas.Count == 0, $"p95 de 1 s o más en: {string.Join(", ", fallas)}.\n{tabla}");
+    }
+
+    /// <summary>
+    /// FEAT-013, NFR-01, AC-13 y D-17: con 10.000 artículos, la búsqueda de "armazón" (lo que escribe la operadora en
+    /// AC-13, con tilde) responde con p95 menor a 700 ms, medido como la respuesta HTTP completa de la Api. Con la pausa
+    /// de 300 ms de la búsqueda en vivo da el segundo de NFR-01. El total confirma que la búsqueda recorre los 2.500
+    /// "Armazón acetato" sembrados (todos activos: los inactivos son los múltiplos de 10, que son de otro tipo), y la
+    /// página trae las 50 filas que la web usa para la tabla y las 8 sugerencias. Corre con el mismo calentamiento y las mismas 20 mediciones que
+    /// <see cref="Volumen10000_Busqueda_P95MenorA1s"/>.
+    /// </summary>
+    [Fact]
+    [Trait("Categoria", "Volumen")]
+    public async Task Volumen_BuscarArmazon_P95MenorA700ms()
+    {
+        using var fabrica = new FabricaApi();
+        using var cliente = fabrica.CrearClienteSinCookies();
+        var cookie = await Http.DefinirAsync(cliente);
+        SiembraCatalogo.Sembrar(CadenaDe(fabrica), SiembraCatalogo.Generar());
+        var ruta = $"{Ruta}?texto={Uri.EscapeDataString("armazón")}&pagina=1";
+
+        for (var i = 0; i < Calentamiento; i++)
+        {
+            await MedirAsync(cliente, cookie, ruta);
+        }
+
+        var tiempos = new List<TimeSpan>(MedicionesPorEscenario);
+        for (var i = 0; i < MedicionesPorEscenario; i++)
+        {
+            var (tiempo, json) = await MedirAsync(cliente, cookie, ruta);
+            Assert.Equal(SiembraCatalogo.Volumen / 4, json.GetProperty("total").GetInt32());
+            Assert.Equal(50, Articulos(json).Count);
+            tiempos.Add(tiempo);
+        }
+
+        tiempos.Sort();
+        var p95 = Percentil(tiempos, 95);
+        var resumen = string.Create(CultureInfo.InvariantCulture,
+            $"armazon | p50 {Percentil(tiempos, 50).TotalMilliseconds:F1} ms | p95 {p95.TotalMilliseconds:F1} ms | " +
+            $"máximo {tiempos[^1].TotalMilliseconds:F1} ms | {tiempos.Count} muestras");
+        salida.WriteLine(resumen);
+
+        Assert.Equal(MedicionesPorEscenario, tiempos.Count);
+        Assert.True(p95 < LimiteP95Armazon, $"p95 de {LimiteP95Armazon.TotalMilliseconds} ms o más: {resumen}");
     }
 
     /// <summary>

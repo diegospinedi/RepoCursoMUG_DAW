@@ -19,6 +19,11 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * última factura Borradores de la primera hasta llegar a 120 facturas (AC-17) y recién entonces busca sin filtros.
  *
  * Datos personales: los clientes son ficticios, con DNI que empiezan con 00 (D-08) y emails en example.com.
+ *
+ * FEAT-013: Número de comprobante, Apellido, Nombre y DNI buscan también mientras se escribe (tras una pausa de 300 ms).
+ * Estas pruebas siguen probando "Buscar" y Enter (AC-08 de FEAT-013): esperan la respuesta y no el pedido, porque un
+ * pedido en vivo que el envío manual cancela no tiene respuesta, y la grilla se espera por su contenido. Las sugerencias
+ * tienen su propio archivo, `busqueda-en-vivo.spec.ts`.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -114,7 +119,12 @@ test.afterEach(() => {
   expect(violacionesCsp, 'La SPA no debe violar Content-Security-Policy').toEqual([]);
 });
 
-const campo = (page: Page, etiqueta: string) => page.getByLabel(etiqueta, { exact: true });
+/** Los filtros de texto son campos con sugerencias (FEAT-013): la etiqueta nombra también su lista, así que van por el rol. */
+const FILTROS_DE_TEXTO = ['Número de comprobante', 'Apellido', 'Nombre', 'DNI'];
+const campo = (page: Page, etiqueta: string) =>
+  FILTROS_DE_TEXTO.includes(etiqueta)
+    ? page.getByRole('combobox', { name: etiqueta, exact: true })
+    : page.getByLabel(etiqueta, { exact: true });
 const botonBuscar = (page: Page) => page.getByRole('button', { name: 'Buscar', exact: true });
 const tablaResultados = (page: Page) => page.getByRole('table', { name: TITULO_RESULTADOS });
 const filasResultados = (page: Page) => tablaResultados(page).locator('tbody tr');
@@ -238,9 +248,12 @@ async function cargarFiltros(page: Page, filtros: Filtros) {
 async function buscar(page: Page, filtros: Filtros): Promise<Request> {
   await cargarFiltros(page, filtros);
   const urlAntes = page.url();
-  const [pedido] = await Promise.all([page.waitForRequest(esBusqueda), botonBuscar(page).click()]);
-  const respuesta = await pedido.response();
-  expect(respuesta?.status(), 'La búsqueda tiene que responder 200').toBe(200);
+  const [respuesta] = await Promise.all([
+    page.waitForResponse((r) => esBusqueda(r.request())),
+    botonBuscar(page).click(),
+  ]);
+  const pedido = respuesta.request();
+  expect(respuesta.status(), 'La búsqueda tiene que responder 200').toBe(200);
   expect(new URL(pedido.url()).search).toBe('');
   expect(page.url()).toBe(urlAntes);
   expect(new URL(page.url()).search).toBe('');
@@ -390,7 +403,9 @@ test('búsqueda por apellido, nombre, DNI, número y fechas', async ({ page }) =
   page.on('request', registrar);
   await buscarYEsperar(page, { nombre: 'maria' }, [gonzalez.comprobante]);
   pedidos.length = 0;
-  await cargarFiltros(page, { desde: manana, hasta: hoy });
+  // El Apellido de la búsqueda final se carga ya, con el rango inválido (las fechas se cargan primero): vaciar Nombre y
+  // escribir "gonzalez" no piden nada en vivo con ese rango (FEAT-013, D-22), y Buscar rechazado cancela la pausa.
+  await cargarFiltros(page, { apellido: 'gonzalez', desde: manana, hasta: hoy });
   await botonBuscar(page).click();
   const desde = campo(page, 'Desde');
   await expect(desde).toHaveAttribute('aria-invalid', 'true');
@@ -400,12 +415,18 @@ test('búsqueda por apellido, nombre, DNI, número y fechas', async ({ page }) =
   await expect(campo(page, 'Hasta')).not.toHaveAttribute('aria-invalid', 'true');
   // La grilla anterior no queda como si fuera el resultado.
   await expect(tablaResultados(page)).toHaveCount(0);
-  // Con el rango corregido, Enter busca: si el rechazo hubiera enviado algo, aparecería acá como un pedido de más.
+  expect(pedidos, 'AC-22 no envía la búsqueda, ni con Buscar ni en vivo').toHaveLength(0);
+  // Con el rango corregido, Enter busca. Solo cambian las fechas, que no buscan en vivo (D-07 de FEAT-013): si el
+  // rechazo hubiera enviado algo, aparecería acá como un pedido de más.
   await cargarFiltros(page, { apellido: 'gonzalez', desde: hoy, hasta: hoy });
-  await Promise.all([page.waitForRequest(esBusqueda), campo(page, 'Apellido').press('Enter')]);
+  await Promise.all([
+    page.waitForResponse((r) => esBusqueda(r.request())),
+    campo(page, 'Apellido').press('Enter'),
+  ]);
   await expect.poll(() => comprobantesDeLaGrilla(page)).toEqual([gonzalez.comprobante]);
   page.off('request', registrar);
   expect(pedidos, 'AC-22 no envía la búsqueda; Enter envía exactamente una').toHaveLength(1);
+  expect(JSON.parse(pedidos[0]!.postData() ?? '{}')).toEqual({ apellido: 'gonzalez', desde: hoy, hasta: hoy, pagina: 1 });
 });
 
 test('una factura a Consumidor Final se encuentra por el DNI del cliente del presupuesto', async ({ page }) => {

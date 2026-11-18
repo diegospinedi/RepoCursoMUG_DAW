@@ -167,6 +167,24 @@ recomendada y la que menos tiempo insuma".
 - `web/src/App.test.tsx` se actualizó (3 líneas) aunque no figuraba en el bloque, por D-18.
 - `e2e/tests/medidas.ts:61` todavía nombra `select` en su selector de campos: se suma al Block 5 junto con los specs de
   D-18.
+
+### D-25: supuestos y deuda aceptada del Block 5 (e2e y rendimiento)
+- Aprobó: el agente, por la delegación del usuario del 2026-11-14, con el PASS del module-verifier y el APROBADO del
+  arch-auditor — 2026-11-18 — Block 5.
+- AC-13 en la e2e mide 1 pedido por pausa y el tiempo desde la última tecla (< 1000 ms y ≥ 300 ms) con pocos artículos;
+  los 10.000 artículos van en `Volumen_BuscarArmazon_P95MenorA700ms` de la Api (D-17). Teclas cada 30 ms.
+- Los errores de consola cuentan desde el ingreso (los 401 previos son esperables); las violaciones de CSP, en toda la
+  prueba.
+- `busqueda-en-vivo.spec.ts` depende del orden (la primera prueba necesita la base vacía; Borradores de relleno hasta el
+  155) y lo declara con modo serie.
+- AC-06 se prueba en la Modificación de un Borrador.
+- `medidas.ts` deja de excluir `select` y `option`: en la web no queda ninguno.
+- D-16 ya estaba cubierta por `BusquedaCancelada_NoRegistraErrorNoControlado` (Block 1); el backend no cambió.
+- `estilo-uniforme.spec.ts` figura en el spec pero no necesitó cambios: usa `medidas.ts`, que sí se actualizó.
+- Deuda aceptada (WARN del arch-auditor): la prueba de AC-13 puede fallar si una pausa entre teclas pasa de 300 ms en
+  una máquina cargada; la prueba de volumen de 700 ms es un `[Fact]` aparte que vuelve a sembrar los 10.000 artículos;
+  los specs viejos con búsqueda manual siguen expuestos a coincidir con un pedido en vivo en PC lentas (AC-22 de
+  `facturas-busqueda.spec.ts` volvió a exigir exactamente 1 pedido); algunas líneas nuevas pasan de 120 columnas.
 - Un 400 en vivo oculta las sugerencias sin mensaje; una falla de red o un 5xx muestran el mensaje general.
 - "Buscar" y la paginación cuentan como envío manual (D-08). Un Enter durante un envío manual ahora envía otra
   búsqueda que reemplaza a la anterior; la respuesta vieja no pisa la nueva.
