@@ -1,7 +1,15 @@
-import { expect, test, type APIRequestContext, type Locator, type Page, type Request } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type Request,
+  type Route,
+} from '@playwright/test';
 
 /**
- * Búsqueda con sugerencias mientras se escribe (FEAT-013: AC-01, AC-03 a AC-08, AC-11 a AC-14 y R-04) de punta a punta,
+ * Búsqueda con sugerencias mientras se escribe (FEAT-013: AC-01 a AC-14 y R-04) de punta a punta,
  * contra la Api real que sirve la SPA compilada, en Chrome y Edge (AC-14, NFR-04).
  *
  * Este archivo tiene su propio proyecto por navegador, con su propia Api y una base nueva. Las pruebas van en orden
@@ -15,12 +23,15 @@ import { expect, test, type APIRequestContext, type Locator, type Page, type Req
  * Datos personales: los clientes son ficticios, con DNI que empiezan con 00 y sin email. Las sugerencias de
  * presupuestos y de facturas no muestran el DNI (R-02, D-15) y el anuncio dice solo la cantidad.
  *
- * Las esperas son por estado o por respuesta. La única medida de tiempo es la de AC-13: el tiempo desde la última tecla
- * hasta que se ven las sugerencias, medido en el navegador (`performance.now()`), sin esperas fijas. El volumen de
- * 10.000 artículos de AC-13 se mide en la Api (`Volumen_BuscarArmazon_P95MenorA700ms`, D-17).
+ * Las esperas son por estado o por respuesta. La excepción es AC-09: para afirmar que algo NO cambió, espera el
+ * final del pedido viejo (`requestfinished` o `requestfailed`) y después dos cuadros del navegador, sin tiempos fijos.
+ * La única medida de tiempo es la de AC-13: el tiempo desde la última tecla hasta que se ven las sugerencias, medido en
+ * el navegador (`performance.now()`), sin esperas fijas. El volumen de 10.000 artículos de AC-13 se mide en la Api
+ * (`Volumen_BuscarArmazon_P95MenorA700ms`, D-17).
  *
  * Cualquier violación de la política de seguridad de contenido, y cualquier error en la consola después de iniciar la
- * sesión, hace fallar la prueba (R-04).
+ * sesión, hace fallar la prueba (R-04). Las únicas excepciones son los avisos de recurso del 500 y de la falla de red
+ * que provocan a propósito las dos pruebas de AC-10: cada una descuenta el suyo una sola vez.
  */
 test.describe.configure({ mode: 'serial' });
 /** Contraseña de prueba de esta base, no de nadie. */
@@ -572,6 +583,169 @@ test('Buscar sigue funcionando', async ({ page }) => {
   ]);
   await expect(page.getByText('No hay facturas que coincidan con la búsqueda.', { exact: true })).toBeVisible();
   await listaCerrada(page, 'Apellido');
+});
+
+/** Las búsquedas de artículos con texto, para `page.route` y `page.unroute` (la misma función en los dos). */
+const esUrlDeBusquedaDeArticulos = (url: URL) => busquedaDeArticulos(url.href) !== null;
+
+/** Espera dos cuadros del navegador: lo que React tenía que dibujar con una respuesta ya recibida está dibujado. */
+const dosCuadros = (page: Page) =>
+  page.evaluate(() => new Promise<void>((listo) => requestAnimationFrame(() => requestAnimationFrame(() => listo()))));
+
+/**
+ * Lo que puede fallar al responder un pedido retenido que la pantalla ya canceló, o con la página ya cerrada: ese error
+ * no es de la prueba. Cualquier otro se relanza.
+ */
+const esErrorDeRutaCancelada = (error: unknown) =>
+  error instanceof Error && /aborted|canceled|cancelled|already handled|has been closed/i.test(error.message);
+
+test('respuesta vieja no pisa la nueva', async ({ page }) => {
+  await ingresar(page);
+  const visores = [
+    await crearArticulo(page.request, 'SG-VO1', 'Visor de respuesta 1'),
+    await crearArticulo(page.request, 'SG-VO2', 'Visor de respuesta 2'),
+  ];
+  const visera = await crearArticulo(page.request, 'SG-VE1', 'Visera de respuesta 1');
+  await abrirDesdeElInicio(page, 'Artículos', 'Artículos');
+
+  // AC-09: la respuesta de "vis" queda retenida hasta que la libera la prueba, después de la de "visor". En el
+  // navegador, la búsqueda nueva cancela el pedido viejo (D-05): lo que ejercita esta prueba es esa cancelación. La
+  // respuesta vieja que llega tarde y se descarta por número de pedido la cubre en Vitest
+  // `useBusquedaEnVivo_RespuestaViejaDescartada`.
+  let liberar: () => void = () => {};
+  const liberada = new Promise<void>((listo) => {
+    liberar = listo;
+  });
+  let avisarRetenida: (pedido: Request) => void = () => {};
+  const retenida = new Promise<Request>((listo) => {
+    avisarRetenida = listo;
+  });
+  await page.route(esUrlDeBusquedaDeArticulos, async (ruta) => {
+    if (busquedaDeArticulos(ruta.request().url()) !== 'vis') {
+      await ruta.continue();
+      return;
+    }
+    avisarRetenida(ruta.request());
+    await liberada;
+    try {
+      await ruta.continue();
+    } catch (error) {
+      // La pantalla ya canceló este pedido: no hay a quién responderle.
+      if (!esErrorDeRutaCancelada(error)) throw error;
+    }
+  });
+
+  try {
+    const campo = combobox(page, 'Texto a buscar');
+    await campo.pressSequentially('vis');
+    const vieja = await retenida;
+    // El final del pedido viejo, del todo (cuerpo leído o pedido fallido), escuchado desde antes de que ocurra.
+    const terminada = Promise.race([
+      page.waitForEvent('requestfinished', { predicate: (pedido) => pedido === vieja, timeout: 0 }),
+      page.waitForEvent('requestfailed', { predicate: (pedido) => pedido === vieja, timeout: 0 }),
+    ]);
+    // Sigue escribiendo: la búsqueda nueva, "visor", responde primero.
+    await campo.pressSequentially('or');
+    const visoresSugeridos = visores.map((v) => `${v.codigo} · ${v.codigoProveedor} · ${v.descripcion}`);
+    expect(await sugerenciasVisibles(page, 'Texto a buscar')).toEqual(visoresSugeridos);
+    const tabla = page.getByRole('table', { name: 'Artículos del catálogo' });
+    await expect.poll(() => columna(tabla, 2)).toEqual(visores.map((v) => v.descripcion));
+
+    // Se libera la respuesta vieja y se espera a que el pedido termine; después, dos cuadros para que React dibuje lo
+    // que hubiera recibido. La tabla y las sugerencias siguen siendo las de "visor".
+    liberar();
+    await terminada;
+    expect(vieja.failure()?.errorText, 'La búsqueda nueva cancela el pedido viejo').toMatch(/ERR_ABORTED/);
+    await dosCuadros(page);
+    expect(await sugerenciasVisibles(page, 'Texto a buscar')).toEqual(visoresSugeridos);
+    expect(await columna(tabla, 2)).toEqual(visores.map((v) => v.descripcion));
+    await expect(tabla).not.toContainText(visera.descripcion);
+    await expect(anuncio(page, 'Texto a buscar')).toHaveText('2 sugerencias');
+    await expect(campo).toHaveValue('visor');
+  } finally {
+    liberar();
+    await page.unroute(esUrlDeBusquedaDeArticulos);
+  }
+});
+
+/**
+ * AC-10: escribe `antes` (que la Api real responde con sugerencias) y completa `despues`, cuya búsqueda falla con
+ * `fallar`. Verifica el mensaje de error de hoy y la lista cerrada (oculta, sin expandir, sin marca y sin anuncio).
+ * Después descuenta el aviso de recurso que el navegador escribe en la consola por esa falla, que es la que la prueba
+ * provoca: solo ese aviso y una sola vez; la regla de ningún error en la consola sigue valiendo para todo lo demás.
+ */
+async function busquedaQueFalla(
+  page: Page,
+  antes: string,
+  despues: string,
+  fallar: (ruta: Route) => Promise<void>,
+  aviso: RegExp,
+) {
+  const fallida = antes + despues;
+  await page.route(esUrlDeBusquedaDeArticulos, async (ruta) => {
+    if (busquedaDeArticulos(ruta.request().url()) === fallida) {
+      await fallar(ruta);
+    } else {
+      await ruta.continue();
+    }
+  });
+  try {
+    const campo = combobox(page, 'Texto a buscar');
+    await campo.pressSequentially(antes);
+    expect(await sugerenciasVisibles(page, 'Texto a buscar')).toHaveLength(2);
+    await expect(anuncio(page, 'Texto a buscar')).toHaveText('2 sugerencias');
+
+    await campo.pressSequentially(despues);
+    const mensaje = page.getByRole('alert').filter({ hasText: 'No se pudo conectar con el sistema. Reintentá.' });
+    await expect(mensaje).toBeVisible();
+    await listaCerrada(page, 'Texto a buscar');
+    await expect(campo).toBeFocused();
+    await expect(page.getByRole('table', { name: 'Artículos del catálogo' })).toHaveCount(0);
+  } finally {
+    await page.unroute(esUrlDeBusquedaDeArticulos);
+  }
+
+  await expect
+    .poll(() => erroresDeConsola.some((texto) => aviso.test(texto)), {
+      message: 'El navegador avisa la falla provocada',
+    })
+    .toBe(true);
+  erroresDeConsola.splice(
+    erroresDeConsola.findIndex((texto) => aviso.test(texto)),
+    1,
+  );
+}
+
+test('una falla de la búsqueda oculta las sugerencias', async ({ page }) => {
+  await ingresar(page);
+  await crearArticulo(page.request, 'SG-FA1', 'Visillo de falla 1');
+  await crearArticulo(page.request, 'SG-FA2', 'Visillo de falla 2');
+  await abrirDesdeElInicio(page, 'Artículos', 'Artículos');
+
+  // AC-10, error de la Api: la búsqueda de "visillo" recibe un 500; las demás llegan a la Api real.
+  await busquedaQueFalla(
+    page,
+    'visi',
+    'llo',
+    (ruta) => ruta.fulfill({ status: 500, contentType: 'application/problem+json', body: '{"status":500}' }),
+    /^Failed to load resource: the server responded with a status of 500\b/,
+  );
+});
+
+test('una falla de red oculta las sugerencias', async ({ page }) => {
+  await ingresar(page);
+  await crearArticulo(page.request, 'SG-RD1', 'Vitral de red 1');
+  await crearArticulo(page.request, 'SG-RD2', 'Vitral de red 2');
+  await abrirDesdeElInicio(page, 'Artículos', 'Artículos');
+
+  // AC-10, error de la red: la búsqueda de "vitral" no llega a la Api (`route.abort('failed')`).
+  await busquedaQueFalla(
+    page,
+    'vitr',
+    'al',
+    (ruta) => ruta.abort('failed'),
+    /^Failed to load resource: net::ERR_FAILED\b/,
+  );
 });
 
 test('sin violaciones de CSP ni error en la consola', async ({ page }) => {

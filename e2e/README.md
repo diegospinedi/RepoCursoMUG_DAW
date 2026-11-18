@@ -338,22 +338,27 @@ la grilla, que tiene que aparecer en menos de 2 s (el volumen de 10.000 presupue
 la Api, D-03). Cada búsqueda verifica que los filtros viajan en el cuerpo y no en la URL. Sus pruebas no dependen del
 orden: cada una deja por la Api la configuración de partida y crea sus artículos con códigos propios (`PB-…`).
 
-`busqueda-en-vivo.spec.ts` (FEAT-013, AC-01, AC-03 a AC-08, AC-11 a AC-14 y R-04) escribe en los cuatro buscadores
-(Artículos, Buscar presupuestos, Facturas y el buscador de artículos del presupuesto) y en los dos campos con filtro de
-Configuración, y verifica las sugerencias (hasta 8, con la tabla filtrada por la misma búsqueda), que elegir una abre el
-artículo, el presupuesto o la factura o agrega la línea, el teclado (flechas, Enter, Escape y Tab, con
-`aria-activedescendant` y `aria-selected`), el anuncio que dice solo la cantidad ("8 sugerencias"), que "Buscar" y Enter
-buscan como antes (con un texto de 1 carácter, que en vivo no se pide), que una condición fiscal que no está en la lista
-no se graba, y que escribir "armazón" seguido hace un solo pedido y muestra las sugerencias en menos de 1 s desde la
-última tecla, medido en el navegador con `performance.now()`. El volumen de 10.000 artículos de AC-13 se mide en la Api
-(`Volumen_BuscarArmazon_P95MenorA700ms`, p95 menor a 700 ms, D-17). Siembra por la Api artículos con una palabra
-propia por prueba, Borradores de relleno hasta el 154 para que el de Pérez sea el 155 (AC-04; falla si la base ya lo
-pasó) y una factura de ARCA simulada; los presupuestos se graban en Borrador y después pasan a Final, y los clientes
-son ficticios, con DNI que empiezan con 00. Las sugerencias de presupuestos y facturas no muestran el DNI (R-02). Una
-descripción con HTML (`<img … onerror=…>`) tiene que verse como texto. Cualquier violación de la CSP, o cualquier error
-en la consola después de iniciar la sesión, hace fallar la prueba. Las pruebas corren en el orden del archivo y la
-primera necesita la base vacía (sus artículos son el 1 al 10, así el 7 de AC-03 es uno de ellos); las demás no dependen
-de lo que dejó otra.
+`busqueda-en-vivo.spec.ts` (FEAT-013, AC-01 a AC-14 y R-04) escribe en los cuatro buscadores (Artículos, Buscar
+presupuestos, Facturas y el buscador de artículos del presupuesto) y en los dos campos con filtro de Configuración, y
+verifica las sugerencias (hasta 8, con la tabla filtrada por la misma búsqueda), que elegir una abre el artículo, el
+presupuesto o la factura o agrega la línea, el teclado (flechas, Enter, Escape y Tab, con `aria-activedescendant` y
+`aria-selected`), el anuncio que dice solo la cantidad ("8 sugerencias"), que "Buscar" y Enter buscan como antes (con un
+texto de 1 carácter, que en vivo no se pide), que una condición fiscal que no está en la lista no se graba, que una
+búsqueda anterior no pisa la tabla ni las sugerencias de la última (AC-09: `page.route` retiene la respuesta vieja hasta
+que la prueba la libera, sin tiempos fijos; en el navegador la búsqueda nueva cancela el pedido viejo, así que la e2e
+cubre la cancelación, y la respuesta que llega tarde y se descarta por número de pedido la cubre
+`useBusquedaEnVivo_RespuestaViejaDescartada` en Vitest), que una búsqueda que falla por un error de la Api (un 500) o de
+la red (`route.abort('failed')`) oculta las sugerencias y muestra el mensaje de error de hoy (AC-10; el aviso de recurso
+de cada falla provocada es el único error de consola que cada prueba descuenta), y que escribir "armazón" seguido hace
+un solo pedido y muestra las sugerencias en menos de 1 s desde la última tecla, medido en el navegador con
+`performance.now()`. El volumen de 10.000 artículos de AC-13 se mide en la Api (`Volumen_BuscarArmazon_P95MenorA700ms`,
+p95 menor a 700 ms, D-17). Siembra por la Api artículos con una palabra propia por prueba, Borradores de relleno hasta
+el 154 para que el de Pérez sea el 155 (AC-04; falla si la base ya lo pasó) y una factura de ARCA simulada; los
+presupuestos se graban en Borrador y después pasan a Final, y los clientes son ficticios, con DNI que empiezan con 00.
+Las sugerencias de presupuestos y facturas no muestran el DNI (R-02). Una descripción con HTML (`<img … onerror=…>`)
+tiene que verse como texto. Cualquier violación de la CSP, o cualquier error en la consola después de iniciar la sesión,
+hace fallar la prueba. Las pruebas corren en el orden del archivo y la primera necesita la base vacía (sus artículos son
+el 1 al 10, así el 7 de AC-03 es uno de ellos); las demás no dependen de lo que dejó otra.
 
 Desde FEAT-013 la alícuota y la condición fiscal de Configuración, "Texto a buscar" y los filtros de texto de las dos
 búsquedas son campos con sugerencias (`role="combobox"`), y su etiqueta nombra también la lista de sugerencias
